@@ -1,0 +1,19 @@
+{
+  "comment": "found by find_driver.py: Z80 RAM blocks located in the ROM; code range from executed Z80 PCs",
+  "name": "qs",
+  "uploads": [
+    {
+      "rom": "0x0784E0",
+      "z80": "0x0000",
+      "len": "0x0DC6"
+    },
+    {
+      "rom": "0x0792A5",
+      "z80": "0x0DCF",
+      "len": "0x0E20"
+    }
+  ],
+  "code": [
+    "0x0000-0x0DC5"
+  ]
+}

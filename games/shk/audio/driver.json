@@ -1,0 +1,8 @@
+{
+  "comment": "found by find_driver.py --capture: Z80 RAM captured as the driver starts (unpacked by the 68K); code range from executed Z80 PCs to the end of the upload",
+  "name": "shk",
+  "capture": true,
+  "code": [
+    "0x0000-0x1169"
+  ]
+}

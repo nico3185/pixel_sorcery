@@ -1,0 +1,1 @@
+{"exe": "build/qs", "mask": "FE00-10000", "oracle": {"toggles": ["A054=0806", "FFEE07=FF@608E"]}, "rom": "qs.md"}

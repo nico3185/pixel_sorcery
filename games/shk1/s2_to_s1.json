@@ -1,0 +1,118 @@
+{
+  "comment": "SHK1, step 2: what is carried over from SHK2 (the player's own shk_sh2.bin) into SH1 REV00, and how. Only addresses and the replacement bytes we write; the code and art are copied at build time by tools/make_image.py. Approach (2026-10-22): SH1's own player object stays (every SH1 object talks to it), and Knuckles' own code is added to it - glide, glide landing/sliding, wall climb, ledge climb, glide start, his landing reset and his animation routine (SHK2's object $01 is at $315328, a SH2 player; the $30E006-$310000 range in the first draft was other objects). SH2 engine calls go to the SH1 routine with the same code shape, or to a shim in k1.s.",
+  "shk2_sha1": "6cd0537a3aee0e012bb86d5837ddff9342595004",
+  "sh1_sha1": "6ddb7de1e17e7f6cdb88927bd906352030daa194",
+  "layout": {
+    "shim": "0x80000",
+    "reloc": "0x82000",
+    "maps": "0x86000",
+    "dplc": "0x8C000",
+    "art": "0xC0000",
+    "art2": "0xE0000",
+    "paltab": "0x95800",
+    "size": "0x100000"
+  },
+  "blocks": {
+    "glide": ["0x3156A6", "0x315D9C", "Knuckles' air mode with $21 set: glide speed, glide states 1-5 (glide, fall, slide, climb, ledge climb), glide animation"],
+    "glidestart": ["0x31653A", "0x3165D4", "end of JumpHeight: A/B/C pressed while jumping starts the glide (Super Knuckles branch disabled until step 7)"],
+    "glidecol": ["0x316936", "0x316AE0", "level collision while gliding: wall hit / landing flags"],
+    "reset": ["0x316CD6", "0x316D64", "ResetOnFloor: radii, status bits, $21 cleared, Knuckles-only animations stopped"],
+    "animate": ["0x316F9A", "0x317414", "Animate + animation scripts (frames in Knuckles' own mapping order)"]
+  },
+  "data": [["0x315C12", "0x315C22"], ["0x315CC2", "0x315CCA"], ["0x3171D2", "0x317414"]],
+  "dead": [["0x31655C", "0x316572", "Super Knuckles transformation check (skipped by the patch at $31655A)"]],
+  "exports": ["0x3156A6", "0x31653A", "0x316CE2", "0x316F9A"],
+  "calls": {
+    "0x316378": ["0x013304", "LevelBound: SH1 Sonic_LevelBound (same shape; S1 camera limits)"],
+    "0x312C9A": ["0x00D5DE", "ObjectMove: S1 SpeedToPos"],
+    "0x3162D0": ["0x013248", "ChgJumpDir: S1 Sonic_JumpDirection"],
+    "0x302F10": ["0x0029DA", "CalcSine"],
+    "0x3031A8": ["0x002CA8", "CalcAngle"],
+    "0x318F38": ["0x014D70", "floor, two sensors (S1 Sonic_Floor's floor call)"],
+    "0x3193AA": ["0x015042", "left wall at x-10"],
+    "0x3191E4": ["0x014EB4", "right wall at x+10"],
+    "0x319256": ["0x014F08", "ceiling, two sensors"],
+    "0x319342": ["0x014FD6", "left wall, two sensors"],
+    "0x319184": ["0x014E50", "right wall, two sensors"],
+    "0x319070": ["0x014E2A", "floor at d2/d3 (ObjFloorDist, second half)"],
+    "0x318FF6": ["K_FloorAt", "floor at d2+x radius / d3: no S1 entry point, shim"],
+    "0x3192E6": ["K_CeilAt", "ceiling at d2-x radius / d3: shim"],
+    "0x319208": ["K_RWallAt", "right wall at d2 / d3+x radius: shim"],
+    "0x3193D2": ["K_LWallAt", "left wall at d2 / d3-x radius: shim"]
+  },
+  "ram": {
+    "0xFFF602": ["0xFFF602", "pad held (same)"],
+    "0xFFF603": ["0xFFF603", "pad pressed (same)"],
+    "0xFFF768": ["0xFFF768", "angle sensor (same)"],
+    "0xFFF7D0": ["0xFFF7D0", "enemy chain bonus (same)"],
+    "0xFFEECC": ["0xFFF72C", "camera top limit (-$100: vertical wrap)"],
+    "0xFFEED8": ["0xFFF73E", "camera look shift"],
+    "0xFFF7AC": ["0xFFFFD8", "glide collision flags (bit 1 airborne, bit 5 wall); free S1 RAM"],
+    "0xFFF7AD": ["0xFFFFD9", "never set in SHK2: stays 0"],
+    "0xFFFFD0": ["0xFFFFDA", "SHK2 option word, 0: glide allowed"],
+    "0xFFFE19": ["0xFFFFDC", "Super flag: 0 until step 7"],
+    "0xFFF66C": ["0xFFFFDE", "S2 look-up delay counter: cleared only"],
+    "0xFFFE2E": ["0xFFFE2E", "S1 speed shoes (written by our patch at $317086)"]
+  },
+  "patches": [
+    {"at": "0x3159D8", "new": "6016", "why": "skip the two S2 collision-table selects ($F796 is S1's collision index pointer)"},
+    {"at": "0x316936", "new": "6016", "why": "same, glide collision"},
+    {"at": "0x315798", "new": "6012", "why": "no spin dust object in S1 ($FFD100 is another object's slot)"},
+    {"at": "0x31655A", "new": "6016", "why": "no Super Knuckles yet (step 7)"},
+    {"at": "0x3158F8", "new": "003E", "why": "move_lock is $3E in S1 ($2E in S2)"},
+    {"at": "0x31594E", "new": "003E", "why": "move_lock is $3E in S1"},
+    {"at": "0x317086", "new": "4A38FE2E6700", "why": "running animation speed with speed shoes: S1 keeps them in $FFFE2E, S2 in status_secondary bit 7"}
+  ],
+  "animations": {
+    "comment": "SH1 animation ID (what S1 objects set) -> SHK2 Knuckles script. IDs $1F-$24 are Knuckles' own (glide etc.) and keep their SHK2 number.",
+    "map": ["0x00", "0x01", "0x02", "0x03", "0x04", "0x05", "0x06", "0x07", "0x08",
+            "0x02", "0x02", "0x02", "0x02",
+            "0x0D", "0x0E", "0x0F", "0x10", "0x11", "0x0E", "0x0F", "0x0E", "0x15", "0x18", "0x17", "0x18", "0x1C", "0x1A", "0x1B", "0x1C", "0x0F", "0x0E",
+            "0x1F", "0x20", "0x21", "0x22", "0x23", "0x24"]
+  },
+  "hud": {
+    "comment": "Lives icon: SHK2's Nemesis art (Knuckles' face and K.T.E, same 12-tile layout as SH1's) replaces SH1's, whose only PLC entry is at $1D660.",
+    "lives_shk2": "0x33AC46",
+    "lives_plc": "0x01D660",
+    "sign_comment": "Signpost: SHK2 overlays the face with its own 24 tiles ($33AF4C, two 3x4 columns like SH1's face, tiles $20-$37 of S1's signpost art $3A53E, loaded only by the PLC entry at $1D978).",
+    "sign_shk2_face": "0x33AF4C",
+    "sign_s1_art": "0x03A53E",
+    "sign_s1_plc": "0x01D978",
+    "sign_face_tile": "0x20",
+    "mon_comment": "1-up monitor: Knuckles' face (the lives icon's first 2x2 tiles, as SHK2's 1-up shows his lives icon) over Sonic's face, tiles $1C-$1F of SH1's monitor art $39658 (only PLC entry at $1D674).",
+    "mon_s1_art": "0x039658",
+    "mon_s1_plc": "0x01D674",
+    "mon_face_tile": "0x1C",
+    "texts_comment": "Text frames in SH1's title-card font (it has K and U): act results frame 0 'SH HAS' (Obj3A, table $CBD8, pointer at $C5D0) and special-stage results frame 8 'SH GOT THEM ALL' -> 'KNUCKLES GOT ALL' (the whole line must fit sprite x offsets -128..127) (Obj7E, table $CC9A, pointer at $C80A); each table is copied with the new frame.",
+    "texts": [
+      {"map": "0x00CBD8", "ptr": "0x00C5D0", "frames": 9, "frame": 0, "text": "KNUCKLES HAS", "space": 16, "at": "0x95000"},
+      {"map": "0x00CC9A", "ptr": "0x00C80A", "frames": 9, "frame": 8, "text": "KNUCKLES GOT ALL", "space": 8, "at": "0x95400"}
+    ]
+  },
+  "title": {
+    "comment": "SHK2-style title on SH1's: the emblem/logo plane drawn 4 rows lower, SHK2's title Knuckles (mapping frames 4 + 5/6/7 of $3109B8, tiles $1B3-$23A of the title sprite art) in TitleSonic's place, SHK2's 'KNUCKLES THE ECHIDNA IN' banner (31-piece frame at $310B78; its art: $33E93E at tile $3FE, $33EF7A at $488) as a fifth Obj0F frame. no palette change: Knuckles is drawn with the nearest colours of SH1's title line 1 (Sonic's blues excepted); the banner's SHK2 line 3 is SH1's title line 0 except black (slot 1 -> 15).",
+    "base": "0x90000",
+    "knux_art": "0x33CEDC",
+    "knux_map": "0x3109B8",
+    "knux_frames": [4, 5, 6, 7],
+    "knux_tiles": ["0x1B3", "0x23B"],
+    "knux_pal": "0x3106A8",
+    "banner_frame": "0x310B78",
+    "banner_art": [["0x33E93E", "0x3FE"], ["0x33EF7A", "0x488"]],
+    "banner_vram_tile": "0x520",
+    "s1_title_pal1": "0x0022A8",
+    "s1_psb_map": "0x00A7C4",
+    "s1_tson_frames": 8
+  },
+  "palette": {
+    "comment": "By default no SH1 palette entry changes: Knuckles' art (and his lives icon, signpost and 1-up faces) is drawn with the nearest colours SH1's line 0 already has, Sonic's blues excepted. The settings option KNUCKLES COLOURS (ROM word toggle at $95FFE, read live by K_ColSync) switches to K_ART2, his own colours in slots 2-5 of these palettes, written into the palette buffers at run time (PALTAB); water versions shifted the way S1 shifts Sonic's. Slots 14/15 (SHK2 $0AE/$08E) stay on the nearest S1 colour: S1 badniks and planes use both.",
+    "knuckles": "0x30253E",
+    "dry": ["0x002388", "0x0026C8", "0x0028E8", "0x002928"],
+    "wet": [["0x002468", "0x002388"], ["0x002828", "0x002388"], ["0x0027A8", "0x002388"], ["0x002848", "0x002388"]],
+    "remap": "0x317540",
+    "art": "0x1200E0",
+    "dplc": "0x14BD0A",
+    "maps": "0x14A8D6",
+    "frames": 251
+  }
+}

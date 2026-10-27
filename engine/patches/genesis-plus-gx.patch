@@ -1,0 +1,138 @@
+diff --git a/core/io_ctrl.c b/core/io_ctrl.c
+index 3434327..8c36ac9 100644
+--- a/core/io_ctrl.c
++++ b/core/io_ctrl.c
+@@ -371,6 +371,8 @@ void io_reset(void)
+  *                                                                           *
+  *****************************************************************************/
+ 
++void (*io_pad_write_hook)(int port, unsigned int data, unsigned int ctrl) = 0;
++
+ void io_68k_write(unsigned int offset, unsigned int data)
+ {
+   switch (offset)
+@@ -389,6 +391,8 @@ void io_68k_write(unsigned int offset, unsigned int data)
+         D1 : D1 pin output level (1=high, 0=low)
+         D0 : D0 pin output level (1=high, 0=low)
+       */
++      /* PixelSorcery: controller poll hook (input record/replay, RAM checkpoints) */
++      if (io_pad_write_hook) io_pad_write_hook(offset - 1, data, io_reg[offset + 3]);
+       io_reg[offset] = data;
+       port[offset-1].data_w(data, io_reg[offset + 3]);
+       return;
+diff --git a/core/io_ctrl.h b/core/io_ctrl.h
+index 2867694..b17ca97 100644
+--- a/core/io_ctrl.h
++++ b/core/io_ctrl.h
+@@ -59,6 +59,7 @@ extern void io_init(void);
+ extern void io_reset(void);
+ extern void io_68k_write(unsigned int offset, unsigned int data);
+ extern unsigned int io_68k_read(unsigned int offset);
++extern void (*io_pad_write_hook)(int port, unsigned int data, unsigned int ctrl);   /* PixelSorcery */
+ extern void io_z80_write(unsigned int offset, unsigned int data, unsigned int cycles);
+ extern unsigned int io_z80_read(unsigned int offset);
+ extern void io_gg_write(unsigned int offset, unsigned int data);
+diff --git a/core/memz80.c b/core/memz80.c
+index bdd876a..023a995 100644
+--- a/core/memz80.c
++++ b/core/memz80.c
+@@ -152,6 +152,9 @@ unsigned char z80_memory_r(unsigned int address)
+ 
+       /* read from 68k banked area */
+       address = zbank | (address & 0x7FFF);
++#ifdef HOOK_CPU
++      if (cpu_hook) cpu_hook(HOOK_Z80_R, 1, address, 0);   /* PixelSorcery: Z80 reads of 68K space */
++#endif
+       if (zbank_memory_map[address >> 16].read)
+       {
+         return (*zbank_memory_map[address >> 16].read)(address);
+diff --git a/core/sound/psg.c b/core/sound/psg.c
+index ca4d422..c945582 100644
+--- a/core/sound/psg.c
++++ b/core/sound/psg.c
+@@ -222,10 +222,15 @@ int psg_context_load(uint8 *state)
+   return bufferptr;
+ }
+ 
++int (*psg_write_hook)(unsigned int clocks, unsigned int data) = 0;
++
+ void psg_write(unsigned int clocks, unsigned int data)
+ {
+   int index;
+ 
++  /* PixelSorcery: native PSG takes the write (returns 1 to bypass this core) */
++  if (psg_write_hook && psg_write_hook(clocks, data)) return;
++
+   /* PSG chip synchronization */
+   if (clocks > psg.clocks)
+   {
+diff --git a/core/sound/psg.h b/core/sound/psg.h
+index 9e73777..0cbf3af 100644
+--- a/core/sound/psg.h
++++ b/core/sound/psg.h
+@@ -54,6 +54,7 @@ extern void psg_reset(void);
+ extern int psg_context_save(uint8 *state);
+ extern int psg_context_load(uint8 *state);
+ extern void psg_write(unsigned int clocks, unsigned int data);
++extern int (*psg_write_hook)(unsigned int clocks, unsigned int data);   /* PixelSorcery */
+ extern void psg_config(unsigned int clocks, unsigned int preamp, unsigned int panning);
+ extern void psg_end_frame(unsigned int clocks);
+ 
+diff --git a/core/z80/z80.c b/core/z80/z80.c
+index 74d5053..e537b07 100644
+--- a/core/z80/z80.c
++++ b/core/z80/z80.c
+@@ -3399,6 +3399,8 @@ void z80_init(const void *config, int (*irqcallback)(int))
+ /****************************************************************************
+  * Do a reset
+  ****************************************************************************/
++void (*z80_reset_hook)(void) = 0;
++
+ void z80_reset(void)
+ {
+   PC = 0x0000;
+@@ -3412,13 +3414,21 @@ void z80_reset(void)
+   Z80.after_ei = FALSE;
+ 
+   WZ=PCD;
++
++  /* PixelSorcery: notify the recompiled sound driver runtime */
++  if (z80_reset_hook) z80_reset_hook();
+ }
+ 
+ /****************************************************************************
+  * Run until given cycle count 
+  ****************************************************************************/
++void (*z80_run_hook)(unsigned int cycles) = 0;
++
+ void z80_run(unsigned int cycles)
+ {
++  /* PixelSorcery: a recompiled sound driver replaces the Z80 core entirely */
++  if (z80_run_hook) { z80_run_hook(cycles); return; }
++
+   while( Z80.cycles < cycles )
+   {
+     /* check for IRQs before each instruction */
+@@ -3429,6 +3439,9 @@ void z80_run(unsigned int cycles)
+     }
+ 
+     Z80.after_ei = FALSE;
++#ifdef HOOK_CPU
++    if (cpu_hook) cpu_hook(HOOK_Z80_E, 0, PCD, 0);   /* PixelSorcery: Z80 trace for recomp checks */
++#endif
+     R++;
+     EXEC_INLINE(op,ROP());
+   }
+diff --git a/core/z80/z80.h b/core/z80/z80.h
+index 578277a..4408431 100644
+--- a/core/z80/z80.h
++++ b/core/z80/z80.h
+@@ -67,6 +67,8 @@ extern unsigned char (*z80_readport)(unsigned int port);
+ extern void z80_init(const void *config, int (*irqcallback)(int));
+ extern void z80_reset (void);
+ extern void z80_run(unsigned int cycles);
++extern void (*z80_reset_hook)(void);   /* PixelSorcery */
++extern void (*z80_run_hook)(unsigned int cycles);   /* PixelSorcery */
+ extern void z80_get_context (void *dst);
+ extern void z80_set_context (void *src);
+ extern void z80_set_irq_line(unsigned int state);

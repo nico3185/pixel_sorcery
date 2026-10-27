@@ -1,0 +1,1 @@
+{"exe": "build/shk1", "mask": "FC00-FE00", "rom": "shk1.bin", "oracle": {"toggles": ["95FFE=0001"]}}

@@ -1,0 +1,111 @@
+PixelSorcery - notices
+======================
+
+PixelSorcery statically recompiles Sega Mega Drive / Genesis games into native
+programs. It is a hobbyist, non-commercial project. Its code is licensed under
+the PolyForm Noncommercial License 1.0.0 (see LICENSE; the code inherited from
+genrecomp stays MIT). The games are not part of it and are not covered by that
+licence.
+
+
+1. The games: bring your own, keep them to yourself
+---------------------------------------------------
+
+No ROM, and nothing derived from a ROM, is in this repository or its history:
+no game code (recompiled C, disassembly), no graphics, sound, level data,
+title labels or attract clips, no recordings of play. The repository holds the
+tools and the per-title configuration (addresses, seeds, hooks) only.
+
+Everything game-specific is made on the player's machine, from the player's own
+ROM dumps, at build or first-run time (games/*/src/recomp/, the launchers'
+labels and clips under Application Support/PixelSorcery/, Mega CD images).
+
+A built game - a native port, a launcher app (which bundles the ports), a
+compilation disc - contains code translated from the player's ROMs. That code
+remains the copyright of its owners (Sega, Disney and the other rights holders
+named in each title). Build and play it yourself; do not share, upload or sell
+built games, apps or discs.
+
+
+2. Trademarks
+-------------
+
+Sega, Mega Drive, Genesis and Mega CD are trademarks of Sega; the Sega games
+listed in README.md and their characters are trademarks of Sega, the Disney
+games listed there and their characters are trademarks of Disney. Names are
+used only to identify the games. This project is not affiliated with or
+endorsed by Sega, Disney or any other rights holder, and ships none of their
+artwork or logos.
+
+
+3. Third-party components
+-------------------------
+
+genrecomp - MIT
+  https://github.com/sp00nznet/genrecomp
+  The engine (engine/) is a fork of genrecomp. Copyright (c) 2026 sp00nznet.
+  Its licence is kept in engine/LICENSE.
+
+Genesis Plus GX - non-commercial licence (not MIT)
+  https://github.com/ekeeke/Genesis-Plus-GX
+  Git submodule (engine/ext/Genesis-Plus-GX), not copied into this repository.
+  Copyright (c) 1998-2003 Charles MacDonald, (c) 2007-2026 Eke-Eke; portions
+  copyright Nicola Salmoria and the MAME team.
+  Used only by the reference and verification builds: the reference player,
+  the tracer and each title's *_oracle program (the self-checks compare the
+  native port against it). The native ports and the launcher apps do not
+  include it (genrecomp_native has its own CPU glue, video, YM2612/PSG
+  synthesis and Z80 driver recompilation). Binaries that do include it may be
+  shared but "may not be sold, nor may they be used in a commercial product or
+  activity". Components inside it carry their own licences, notably the Nuked
+  OPN2 YM2612 core (LGPL-2.1-or-later). Full text:
+  engine/LICENSES/Genesis-Plus-GX.txt.
+
+SDL (Simple DirectMedia Layer) - zlib licence
+  https://www.libsdl.org - window, input, audio. The macOS apps bundle the SDL2
+  compatibility library (sdl2-compat) and SDL3, both zlib-licensed.
+
+zlib - zlib licence
+  https://zlib.net - PNG output (frame dumps, screenshots).
+
+Capstone - BSD 3-clause
+  https://www.capstone-engine.org - 68000 disassembly in the Python tools
+  (installed into a local virtual environment, not distributed).
+
+
+4. Credits for ideas and research
+---------------------------------
+
+Mickey & Donald Collection - MIT
+  https://github.com/Darhkfox/MickeyAndDonaldCollection, copyright (c) 2026
+  Darhkfox. Its reverse-engineering notes (docs/re_qs_wide.md,
+  docs/re_woi_wide.md) gave the RAM and routine addresses used by this
+  project's QS and WOI widescreen hooks, checked here
+  against the games; its launcher's live game previews inspired the
+  launchers' attract clips. No code was copied.
+
+Sonic community disassemblies (Sonic Retro and contributors)
+  The names and meanings of SH1, 2, 3 and SHK RAM variables and routines
+  used in comments and hooks (Game_paused, camera and level layout variables,
+  object fields) follow the community's disassembly conventions.
+
+Coverage measurement (engine/tools/kpi.py, KPI "reference coverage")
+  On the owner's machine, kpi.py reads lists of code addresses published by
+  other Genesis recompilation and reverse-engineering projects (the
+  segagenesisrecomp family's disassembly label and function lists, the Mickey &
+  Donald Collection notes) to count how many of the routines they know as code
+  our generated C covers. Only those counts are committed (docs/kpi/); the lists
+  are read in place, never copied here, and never fed to the recompiler.
+  docs/kpi/references.json holds their local paths only.
+
+Not used: segagenesisrecomp (PolyForm Noncommercial) - no code from it is in
+this repository.
+
+
+5. SHK1 (games/shk1)
+--------------------------------------
+
+Our own combination, not a Sega product. Its ROM image is built on the
+player's machine from their SH1 (REV00) and SHK2 (SHK + SH2) dumps (tools/make_image.py); the repository holds only our
+own 68000 code (k1.s, k1.srec), addresses and mappings. The built image and the
+port made from it fall under section 1: keep them to yourself.

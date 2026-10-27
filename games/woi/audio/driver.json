@@ -1,0 +1,24 @@
+{
+  "comment": "found by find_driver.py: Z80 RAM blocks located in the ROM; code range from executed Z80 PCs; blocks under 64 bytes dropped (coincidental matches)",
+  "name": "woi",
+  "uploads": [
+    {
+      "rom": "0x0F60E4",
+      "z80": "0x0000",
+      "len": "0x0DD0"
+    },
+    {
+      "rom": "0x0F6EB5",
+      "z80": "0x0E01",
+      "len": "0x0C87"
+    },
+    {
+      "rom": "0x0A66D9",
+      "z80": "0x1E4B",
+      "len": "0x007A"
+    }
+  ],
+  "code": [
+    "0x0000-0x0DCF"
+  ]
+}

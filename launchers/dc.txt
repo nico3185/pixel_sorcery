@@ -1,0 +1,8 @@
+# DC Collection: the shelf for the Disney recompilations (engine/tools/make_launcher.sh launchers/dc.txt)
+# game ID|NAME|YEAR|PLAYERS|LABEL FRAME (title screen)|DEMO FRAME (attract clip start)|ROM FILE NAME
+name DC Collection
+header DC COLLECTION
+accent F0B030
+game coi|COI|1990|1|3870|4700|coi.md
+game qs|QS|1991|1|3150|3960|qs.md
+game woi-us|WOI-US|1992|1-2|3700|4000|woi_us.bin|woi-us|woi

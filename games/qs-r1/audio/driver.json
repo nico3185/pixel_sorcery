@@ -1,0 +1,19 @@
+{
+  "comment": "found by find_driver.py: Z80 RAM blocks located in the ROM. The driver code block is byte-identical to REV00's ($784E0 there), so the code range is REV00's (executed Z80 PCs)",
+  "name": "qs-r1",
+  "uploads": [
+    {
+      "rom": "0x1384E0",
+      "z80": "0x0000",
+      "len": "0x0DC6"
+    },
+    {
+      "rom": "0x1392A5",
+      "z80": "0x0DCF",
+      "len": "0x0E26"
+    }
+  ],
+  "code": [
+    "0x0000-0x0DC5"
+  ]
+}

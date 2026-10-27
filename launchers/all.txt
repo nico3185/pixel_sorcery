@@ -1,0 +1,16 @@
+# PixelSorcery: every native title on one shelf (engine/tools/make_launcher.sh launchers/all.txt)
+# game ID|NAME|YEAR|PLAYERS|LABEL FRAME|DEMO FRAME|ROM FILE NAME[|PORT[|SETTINGS]]
+name PixelSorcery
+header PIXELSORCERY
+accent E0201C
+game sh1|SH1|1991|1|600|1300|sh1.bin
+game sh2|SH2|1992|1-2|960|1500|sh2.bin
+game sh3|SH3|1994|1-2|720|2100|sh3.bin
+game shk|SHK|1994|1|900|1920|shk.bin
+game sh3k|SH3K|1994|1-2|720|2100|sh3k.bin
+game shk2|SHK2|1994|1|900|1250|shk_sh2.bin
+game shk1|SHK1|1991|1|600|1300|shk1.bin
+game shbs|SHBS|1994|1|300|200|shk_sh1.bin|shk
+game coi|COI|1990|1|3870|4700|coi.md
+game qs|QS|1991|1|3150|3960|qs.md
+game woi-us|WOI-US|1992|1-2|3700|4000|woi_us.bin|woi-us|woi

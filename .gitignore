@@ -1,0 +1,33 @@
+# ROMs and anything generated from them never go in this repo
+*.bin
+*.md.rom
+*.gen
+*.smd
+*.sfc
+*.smc
+*.z64
+games/*/src/recomp/
+games/*/disasm/
+# Third-party input movies (download with the .dl info files)
+*.gmv
+*.bk2
+# Build output and local tooling
+build*/
+.venv/
+__pycache__/
+*.log
+*.o
+.DS_Store
+
+# Play sessions: per-poll inputs and logs (local)
+games/*/sessions/
+games/*/movies/*.polls
+games/*/movies/*.ck
+games/*/movies/*.audio
+games/*/movies/*.states/
+games/*/movies/play-*
+
+# Robustness harness output and long recordings (local)
+robust_report.md
+games/*/recordings/
+.claude/worktrees/

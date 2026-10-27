@@ -1,0 +1,31 @@
+genrecomp — third-party attribution
+===================================
+
+genrecomp's own code is MIT licensed (see LICENSE). Its reference and
+verification builds (the genrecomp library: the reference player, the tracer,
+each title's *_oracle program) link the component below, which is not MIT and
+is other people's work, credited as such. The native runtime (genrecomp_native:
+the shipped ports and the launcher apps) does not include it.
+
+
+Genesis Plus GX — non-commercial licence
+----------------------------------------
+
+  https://github.com/ekeeke/Genesis-Plus-GX
+  Git submodule at ext/Genesis-Plus-GX (not copied into this repository).
+
+  Copyright (c) 1998-2003 Charles MacDonald
+  Copyright (c) 2007-2026 Eke-Eke
+  Some portions copyright Nicola Salmoria and the MAME team
+
+  Redistributions "may not be sold, nor may they be used in a commercial
+  product or activity". That applies to the binaries that link it (the
+  reference and verification builds above): they can be shared, not sold.
+  Recompiled games themselves are never shared: they contain code translated
+  from the player's own ROMs (see the repository's NOTICE).
+
+  Components inside Genesis Plus GX that genrecomp compiles carry their own
+  licences, reproduced in the same file. In particular the Nuked OPN2 YM2612
+  core (core/sound/ym3438.c) is LGPL-2.1-or-later.
+
+  Full text, verbatim from the submodule: LICENSES/Genesis-Plus-GX.txt

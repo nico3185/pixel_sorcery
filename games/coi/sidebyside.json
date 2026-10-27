@@ -1,0 +1,1 @@
+{"exe": "build/coi", "mask": "FE00-10000,F370-F372", "oracle": {"cheats": ["9F6C=4E71"], "toggles": ["F325=03", "F323=03", "F321=05"]}, "wide_objects_logic": true, "rom": "coi.md"}

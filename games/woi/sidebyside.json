@@ -1,0 +1,1 @@
+{"exe": "build/woi", "mask": "FE00-10000", "oracle": {"cheats": ["F0EA=600A", "F094=6004", "F0CC=601A", "F030=4E75"]}, "rom": "woi.md"}

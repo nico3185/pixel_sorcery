@@ -1,0 +1,12 @@
+{
+  "comment": "Z80 sound driver image, as uploaded by the 68K routine at $079EE0 (bus request + reset held, four block copies, reset released). Code is $0000-$0EEF; $0F00+ is data.",
+  "name": "coi",
+  "uploads": [
+    {"rom": "0x0784B0", "z80": "0x0000", "len": "0x0EF0"},
+    {"rom": "0x0793A0", "z80": "0x0F00", "len": "0x0880"},
+    {"rom": "0x079C20", "z80": "0x1900", "len": "0x02C0"},
+    {"rom": "0x079F76", "z80": "0x1C00", "len": "0x000F"}
+  ],
+  "code": ["0x0000-0x0EEF"],
+  "mailbox": {"music": "0x1C0C", "sfx": "0x1C0A", "flag": "0x1C08", "fade": "0x1C12", "ctl": "0x1C13"}
+}
