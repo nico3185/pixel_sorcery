@@ -10,6 +10,9 @@
  *   header TEXT        the big title at the top
  *   accent RRGGBB      the family's colour (selection glow, PRESS START)
  *   game ID|NAME|YEAR|PLAYERS|LABEL FRAME|DEMO FRAME|ROM FILE NAME[|PORT[|SETTINGS]]   one per cartridge
+ *   stack ID ID ...    optional: versions of one game in one column (the first on top, e.g. a game,
+ *                      then its lock-on versions); the shelf is then a grid - left/right the games, up/down
+ *                      the versions, stacked behind the cartridge. Games in no stack: a column each.
  *   (PORT: the games/ title whose executable make_launcher.sh bundles as ID, default ID;
  *   SETTINGS: the folder of the title's settings.ini - its ps_menu title - default PORT)
  * Shelf settings (Tab, or Y / Back on a pad): aspect ratio, widescreen enemies, modern water,
@@ -23,7 +26,7 @@
  * ~/Library/Application Support/PixelSorcery/ID on macOS, as make_app.sh's apps) keeps the ROM
  * (asked for once), label.bmp, demo.bmp and the play sessions (sessions/DATE.{polls,log}).
  * --roms DIR: look there for ROM FILE NAME first (development). PS_LAUNCHER_HOME=dir replaces
- * PREF (tests). Keys: left/right, Return/Z/Space play, Tab settings, F or F11 fullscreen, Esc
+ * PREF (tests). Keys: left/right, up/down (versions), Return/Z/Space play, Tab settings, F or F11 fullscreen, Esc
  * quits; gamepads: d-pad or stick, A/Start play, Y/Back settings; mouse: click a cartridge, wheel. */
 #include <SDL.h>
 #include <math.h>
@@ -67,6 +70,10 @@ typedef struct {
 
 static Game G[MAXG];
 static int NG;
+/* the grid: columns of versions (stack lines), the version shown in each column */
+static int s_ncol, s_nrow[MAXG], s_cell[MAXG][MAXG], s_cur[MAXG], s_colof[MAXG], s_rowof[MAXG];
+static float s_vpos[MAXG];                          /* each column's version, animated */
+static char s_stack[MAXG][256]; static int s_nstack;
 static char s_name[128] = "PixelSorcery", s_header[64] = "COLLECTION", s_gamesdir[1024], s_romdir[1024];
 static uint32_t s_accent = 0xE0201C;
 static SDL_Renderer *R;
@@ -265,6 +272,7 @@ static int load_config(const char *path) {
         if (!strncmp(line, "name ", 5)) { snprintf(s_name, sizeof s_name, "%s", line + 5); trim(s_name); }
         else if (!strncmp(line, "header ", 7)) { snprintf(s_header, sizeof s_header, "%s", line + 7); trim(s_header); }
         else if (!strncmp(line, "accent ", 7)) s_accent = (uint32_t)strtoul(line + 7, NULL, 16);
+        else if (!strncmp(line, "stack ", 6) && s_nstack < MAXG) snprintf(s_stack[s_nstack++], sizeof s_stack[0], "%s", line + 6);
         else if (!strncmp(line, "game ", 5) && NG < MAXG) {
             Game *g = &G[NG]; char *f[9] = { 0 }; int n = 0;
             for (char *tok = strtok(line + 5, "|"); tok && n < 9; tok = strtok(NULL, "|")) { trim(tok); f[n++] = tok; }
@@ -278,6 +286,23 @@ static int load_config(const char *path) {
         }
     }
     fclose(f);
+    for (int i = 0; i < NG; i++) s_colof[i] = -1;
+    for (int i = 0; i < NG; i++) {                  /* columns in the order of their first game */
+        if (s_colof[i] >= 0) continue;
+        int c = s_ncol++;
+        s_cell[c][0] = i; s_nrow[c] = 1; s_colof[i] = c; s_rowof[i] = 0;
+        for (int k = 0; k < s_nstack; k++) {
+            char buf[256]; snprintf(buf, sizeof buf, "%s", s_stack[k]);
+            int ids[MAXG], n = 0, mine = 0;
+            for (char *tok = strtok(buf, " \t"); tok && n < MAXG; tok = strtok(NULL, " \t"))
+                for (int j = 0; j < NG; j++) if (!strcmp(G[j].id, tok)) { ids[n++] = j; mine |= j == i; }
+            if (!mine) continue;
+            s_nrow[c] = 0;
+            for (int r = 0; r < n; r++)
+                if (s_colof[ids[r]] < 0 || ids[r] == i) { s_cell[c][s_nrow[c]] = ids[r]; s_colof[ids[r]] = c; s_rowof[ids[r]] = s_nrow[c]++; }
+            break;
+        }
+    }
     return NG > 0;
 }
 
@@ -647,14 +672,18 @@ static float s_clip_fade, s_clip_t;                 /* the selected cartridge's 
 static SDL_Texture *bgtex, *fgtex;
 
 static float s_launch;                               /* start animation 0..1 (0: none) */
+/* version distance of game i from its column's shown version: the others stack behind it,
+ * peeking out above (earlier versions) and below (later ones) */
+static float cart_vdist(int i) { return s_rowof[i] - s_vpos[s_colof[i]]; }
 static void cart_place(int i, float pos, float t, int sel, SDL_FRect *r, float *dim) {
-    float d = i - pos, ad = fabsf(d);
-    float sc = 1.0f - (ad < 2 ? ad : 2) * 0.2f;
+    float d = s_colof[i] - pos, ad = fabsf(d);
+    float v = cart_vdist(i), av = fabsf(v) < 2 ? fabsf(v) : 2;
+    float sc = (1.0f - (ad < 2 ? ad : 2) * 0.2f) * (1.0f - av * 0.12f);
     float cx = W / 2 + d * 128 - (d > 0 ? 1 : -1) * (ad > 1 ? (ad - 1) * 22 : 0);
     r->w = CW * sc; r->h = CH * sc;
-    r->x = cx - r->w / 2; r->y = 58 + (CH - r->h) * 0.55f;
+    r->x = cx - r->w / 2; r->y = 58 + (CH - r->h) * 0.55f + v * (v < 0 ? 24 : 9) * (1.0f - (ad < 2 ? ad : 2) * 0.2f);
     if (i == sel) r->y += sinf(t * 2.6f) * 2.0f - 3.0f * (1 - (ad < 1 ? ad : 1));
-    *dim = 1.0f - (ad < 1.6f ? ad : 1.6f) * 0.38f;
+    *dim = (1.0f - (ad < 1.6f ? ad : 1.6f) * 0.38f) * (1.0f - (av < 1 ? av : 1) * 0.5f);
     if (s_launch > 0) {                                /* the chosen cartridge drops into the slot */
         if (i == sel) { float k = s_launch < 0.2f ? -s_launch * 40 : (s_launch - 0.2f) * (s_launch - 0.2f) * 420; r->y += k; }
         else *dim *= 1 - s_launch;
@@ -680,6 +709,7 @@ static void draw_bg(float pos, float t) {
         }
     /* shadows under the cartridges */
     for (int i = 0; i < NG; i++) {
+        if (fabsf(cart_vdist(i)) >= 0.5f) continue;
         SDL_FRect r; float dim; cart_place(i, pos, t, -1, &r, &dim);
         float cx = r.x + r.w / 2, cy = r.y + r.h + 6, rx = r.w * 0.55f, ry = 5;
         for (int y = (int)(cy - ry); y <= (int)(cy + ry); y++)
@@ -761,11 +791,13 @@ static void draw_fg(int sel, float t, const char *msg) {
     Game *g = &G[sel];
     text_c(&b, W / 2, 219, g->name, text_w(g->name, 2) > W - 20 ? 1 : 2, 0xFFFFFF, 0xC8CCD8, 1);
     char info[96]; snprintf(info, sizeof info, "%s   %s %s", g->year, g->players, strcmp(g->players, "1") ? "PLAYERS" : "PLAYER");
+    if (s_nrow[s_colof[sel]] > 1)                   /* which version of the game */
+        snprintf(info + strlen(info), sizeof info - strlen(info), "   VERSION %d/%d", s_rowof[sel] + 1, s_nrow[s_colof[sel]]);
     text_c(&b, W / 2, 237, info, 1, 0x9AA4BA, 0x9AA4BA, 1);
     /* page dots */
-    for (int i = 0; i < NG; i++) {
-        int x = W / 2 - NG * 5 + i * 10 + 3;
-        rect(&b, x, 211, 4, 4, i == sel ? s_accent | 0xFF000000u : rgb(70, 70, 80));
+    for (int c = 0; c < s_ncol; c++) {
+        int x = W / 2 - s_ncol * 5 + c * 10 + 3;
+        rect(&b, x, 211, 4, 4, c == s_colof[sel] ? s_accent | 0xFF000000u : rgb(70, 70, 80));
     }
     /* footer */
     rect_a(&b, 0, H - 17, W, 17, 0x000000, 170);
@@ -773,7 +805,7 @@ static void draw_fg(int sel, float t, const char *msg) {
     const char *act = !g->have_rom ? "START  CHOOSE ROM" : "START  PLAY";
     if (msg && *msg) text_c(&b, W / 2, H - 12, msg, 1, s_accent, s_accent, 0);
     else {
-        text(&b, 10, H - 12, "< >  SELECT", 1, 0xB0B4C0, 0xB0B4C0, 0);
+        text(&b, 10, H - 12, s_nrow[s_colof[sel]] > 1 ? "< >  GAME   UP DOWN  VERSION" : "< >  SELECT", 1, 0xB0B4C0, 0xB0B4C0, 0);
         text_c(&b, W / 2, H - 12, act, 1, ((int)(t * 2) & 1) ? 0xFFFFFF : s_accent, ((int)(t * 2) & 1) ? 0xFFFFFF : s_accent, 0);
         text(&b, W - 10 - text_w("TAB  SETTINGS   ESC  QUIT", 1), H - 12, "TAB  SETTINGS   ESC  QUIT", 1, 0xB0B4C0, 0xB0B4C0, 0);
     }
@@ -788,13 +820,15 @@ static void present(float pos, float t, int sel, const char *msg) {
     SDL_SetRenderDrawColor(R, 0, 0, 0, 255);
     SDL_RenderClear(R);
     SDL_RenderCopy(R, bgtex, NULL, NULL);
-    int order[MAXG]; for (int i = 0; i < NG; i++) order[i] = i;  /* far cartridges first */
-    for (int a = 0; a < NG; a++) for (int b2 = a + 1; b2 < NG; b2++)
-        if (fabsf(order[b2] - pos) > fabsf(order[a] - pos)) { int x = order[a]; order[a] = order[b2]; order[b2] = x; }
-    for (int k = 0; k < NG; k++) {
+    int order[MAXG], no = 0;                         /* far cartridges first, stacked versions behind */
+    float far[MAXG];
+    for (int i = 0; i < NG; i++) if (fabsf(cart_vdist(i)) < 2.2f) { far[i] = fabsf(s_colof[i] - pos) * 4 + fabsf(cart_vdist(i)); order[no++] = i; }
+    for (int a = 0; a < no; a++) for (int b2 = a + 1; b2 < no; b2++)
+        if (far[order[b2]] > far[order[a]]) { int x = order[a]; order[a] = order[b2]; order[b2] = x; }
+    for (int k = 0; k < no; k++) {
         int i = order[k];
         SDL_FRect r; float dim; cart_place(i, pos, t, sel, &r, &dim);
-        if (i == sel && fabsf(i - pos) < 0.5f) {           /* glow around the selected cartridge */
+        if (i == sel && fabsf(s_colof[i] - pos) < 0.5f && fabsf(cart_vdist(i)) < 0.5f) {           /* glow around the selected cartridge */
             SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_ADD);
             float p = 0.6f + 0.4f * sinf(t * 4.0f);
             for (int e = 4; e >= 1; e--) {
@@ -877,6 +911,7 @@ int main(int argc, char **argv) {
 
     int sel = 0, quit = 0, running = 0;
     float pos = 0, t = 0;
+    for (int c = 0; c < s_ncol; c++) { s_cur[c] = 0; s_vpos[c] = 0; }
     Uint32 last = SDL_GetTicks(), hold_t = 0; int hold = 0;
     char msg[128] = ""; Uint32 msg_until = 0;
     if (getenv("PS_LAUNCHER_WAV")) {                /* tests: 16 s of the shelf music as a WAV */
@@ -904,7 +939,9 @@ int main(int argc, char **argv) {
         SDL_WaitThread(s_labels, NULL); s_labels = NULL;
         for (int i = 0; i < NG; i++) { build_cart(&G[i]); if (G[i].demo_state == 1) load_clip(&G[i]); }
         if (getenv("PS_LAUNCHER_CLIP")) { s_clip_fade = 1; s_clip_t = (float)atof(getenv("PS_LAUNCHER_CLIP")); }
-        sel = getenv("PS_LAUNCHER_SEL") ? atoi(getenv("PS_LAUNCHER_SEL")) : 0; pos = (float)sel;
+        sel = getenv("PS_LAUNCHER_SEL") ? atoi(getenv("PS_LAUNCHER_SEL")) : 0;
+        if (sel < 0 || sel >= NG) sel = 0;
+        s_cur[s_colof[sel]] = s_rowof[sel]; s_vpos[s_colof[sel]] = (float)s_rowof[sel]; pos = (float)s_colof[sel];
         if (getenv("PS_LAUNCHER_PANEL")) s_panel = atoi(getenv("PS_LAUNCHER_PANEL"));
         if (getenv("PS_LAUNCHER_CHOOSE") && build_choices(&G[sel]) > 1) s_choose = 0;
         s_noflip = 1; present(pos, 0.3f, sel, "");
@@ -916,7 +953,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     while (!quit) {
-        SDL_Event e; int move = 0, go = 0, click = -1;
+        SDL_Event e; int move = 0, vmove = 0, go = 0, click = -1;
         while (SDL_PollEvent(&e)) {
             if (running) { if (e.type == SDL_QUIT) quit = 1; continue; }   /* the game has the input */
             switch (e.type) {
@@ -962,6 +999,8 @@ int main(int argc, char **argv) {
                 case SDLK_TAB: case SDLK_s: s_panel = 0; snd_start(); break;
                 case SDLK_LEFT: case SDLK_a: move = -1; break;
                 case SDLK_RIGHT: case SDLK_d: move = 1; break;
+                case SDLK_UP: case SDLK_w: vmove = -1; break;
+                case SDLK_DOWN: vmove = 1; break;
                 case SDLK_RETURN: case SDLK_SPACE: case SDLK_z: case SDLK_KP_ENTER: if (!e.key.repeat) go = 1; break;
                 case SDLK_ESCAPE: quit = 1; break;
                 case SDLK_f: case SDLK_F11:
@@ -992,6 +1031,8 @@ int main(int argc, char **argv) {
                 if (e.cbutton.button == SDL_CONTROLLER_BUTTON_Y || e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) { s_panel = 0; snd_start(); break; }
                 if (e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) { move = -1; hold = -1; hold_t = SDL_GetTicks() + 380; }
                 if (e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) { move = 1; hold = 1; hold_t = SDL_GetTicks() + 380; }
+                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP) vmove = -1;
+                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) vmove = 1;
                 if (e.cbutton.button == SDL_CONTROLLER_BUTTON_A || e.cbutton.button == SDL_CONTROLLER_BUTTON_START) go = 1;
                 break;
             case SDL_CONTROLLERBUTTONUP:
@@ -1002,6 +1043,11 @@ int main(int argc, char **argv) {
                     int d = e.caxis.value < -16000 ? -1 : e.caxis.value > 16000 ? 1 : 0;
                     if (d && d != hold) { move = d; hold_t = SDL_GetTicks() + 380; }
                     hold = d;
+                } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+                    static int vhold;
+                    int d = e.caxis.value < -16000 ? -1 : e.caxis.value > 16000 ? 1 : 0;
+                    if (d && d != vhold) vmove = d;
+                    vhold = d;
                 }
                 break;
             case SDL_MOUSEWHEEL: move = e.wheel.y > 0 || e.wheel.x < 0 ? -1 : e.wheel.y < 0 || e.wheel.x > 0 ? 1 : 0; break;
@@ -1010,18 +1056,23 @@ int main(int argc, char **argv) {
                     for (int i = 0; i < NG; i++) {
                         SDL_FRect r; float dim; cart_place(i, pos, t, sel, &r, &dim);
                         if (e.button.x >= r.x && e.button.x < r.x + r.w && e.button.y >= r.y && e.button.y < r.y + r.h &&
-                            (click < 0 || fabsf(i - pos) < fabsf(click - pos))) click = i;
+                            fabsf(cart_vdist(i)) < 2.2f &&
+                            (click < 0 || fabsf(s_colof[i] - pos) * 4 + fabsf(cart_vdist(i)) < fabsf(s_colof[click] - pos) * 4 + fabsf(cart_vdist(click)))) click = i;
                     }
                 }
                 break;
             }
         }
         if (!running && hold && SDL_GetTicks() > hold_t) { move = hold; hold_t = SDL_GetTicks() + 140; }
-        if (click >= 0) { if (click == sel) go = 1; else { sel = click; snd_move(); } }
-        if (move && (s_panel >= 0 || s_choose >= 0)) move = 0;
-        if (move) {
-            int n = sel + move;
-            if (n >= 0 && n < NG) { sel = n; snd_move(); } else snd_nope();
+        if (click >= 0) { if (click == sel) go = 1; else { sel = click; s_cur[s_colof[sel]] = s_rowof[sel]; snd_move(); } }
+        if (s_panel >= 0 || s_choose >= 0) move = vmove = 0;
+        if (move) {                                     /* another game: the version shown in its column */
+            int c = s_colof[sel] + move;
+            if (c >= 0 && c < s_ncol) { sel = s_cell[c][s_cur[c]]; snd_move(); } else snd_nope();
+        }
+        if (vmove) {                                    /* another version of this game */
+            int c = s_colof[sel], r = s_rowof[sel] + vmove;
+            if (r >= 0 && r < s_nrow[c]) { s_cur[c] = r; sel = s_cell[c][r]; snd_move(); } else snd_nope();
         }
         if (go == 1 && !running && s_panel < 0 && s_choose < 0 && G[sel].have_rom && build_choices(&G[sel]) > 1) {
             s_choose = 0; snd_move(); go = 0;            /* continue or a save: ask first */
@@ -1078,7 +1129,8 @@ int main(int argc, char **argv) {
             s_clip_fade += (target - s_clip_fade) * (1 - expf(-dt * (target > 0 ? 3.0f : 14.0f)));
             if (still > 1.2f) s_clip_t += dt;
         }
-        pos += (sel - pos) * (1 - expf(-dt * 12));
+        pos += (s_colof[sel] - pos) * (1 - expf(-dt * 12));
+        for (int c = 0; c < s_ncol; c++) s_vpos[c] += (s_cur[c] - s_vpos[c]) * (1 - expf(-dt * 12));
         if (msg_until && now > msg_until) { *msg = 0; msg_until = 0; }
         present(pos, t, sel, msg);
     }

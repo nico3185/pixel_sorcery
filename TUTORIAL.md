@@ -1,7 +1,7 @@
 # Tutorial
 
 Mac (Apple Silicon) with Homebrew: `brew install cmake ninja sdl2 python`. Your own ROM in
-`../roms/coi.md` (or set `CASTLE_ROM`). Paths below are from the repo root.
+`../roms/coi.md` (or set `ROM`). Paths below are from the repo root.
 
 ## 1. Play
 
@@ -9,7 +9,7 @@ Mac (Apple Silicon) with Homebrew: `brew install cmake ninja sdl2 python`. Your 
 ./play.sh                            # lists the titles
 ./play.sh coi                     # one game: builds if needed (regenerates when the recompiler changed)
 ./play.sh shk1                       # SHK1: its ROM is built from your SH1 + SHK2 dumps
-./launch.sh                          # the Sonic and Disney shelf apps (ROMs from ../roms)
+./launch.sh                          # the `sh` and `dc` shelf apps (ROMs from ../roms)
 ./launch.sh sh                    # one shelf: sh, dc or all
 ```
 

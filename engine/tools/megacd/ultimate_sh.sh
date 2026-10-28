@@ -1,20 +1,21 @@
 #!/bin/zsh
-# ultimate_sh.sh SONICCD.cue MENU.png [OUTDIR]: the "Ultimate SH" Mega CD disc.
+# ultimate_sh.sh DISC.cue MENU.png [OUTDIR]: the compilation Mega CD disc of the sh titles.
+# For your own use only: the disc holds code and data from your games - never share it.
 #
 # Inputs, all yours (nothing of them goes into the repository):
-#   SONICCD.cue  SHCD (Europe) - its data track is the disc's base (files, security
-#                block) and its audio tracks are the disc's audio tracks
+#   DISC.cue     your Mega CD disc of the series (Europe) - its data track is the disc's base
+#                (files, security block) and its audio tracks are the disc's audio tracks
 #   MENU.png     the game-select picture (4x2 cards; MENU_UNFRAME=x0,y0,x1,y1 removes a
 #                highlight baked into the picture, default 92,176,432,504)
-#   ROM          SH1 (REV00), default ../roms/sh1.bin
-#   ROM2         SH2 (REV01), default ../roms/sh2.bin (card 2: Emerald Hill for now)
-#   ROM3         SH3 (USA), default ../roms/sh3.bin (card 3: title to Angel Island act 1)
-#   ROM4         SHK, default ../roms/shk.bin (card 4: title to Mushroom Hill act 1)
-#   ROM5         SHK + SH1 (lock-on dump, evidence only), default
-#                ../roms/shk_sh1.bin (card 5: SHBS; the disc image is SHK's code with
-#                SH1's header, from ROM, where SHK reads the locked-on cartridge)
-#   ROM7         SH3K (lock-on dump), default ../roms/sh3k.bin (card 7: Angel Island)
-# Steps: evidence runs of SH1 on the tracer (level select, every zone, running right and
+#   ROM          sh1 (REV00), default ../roms/sh1.bin
+#   ROM2         sh2 (REV01), default ../roms/sh2.bin (card 2: its first level for now)
+#   ROM3         sh3 (USA), default ../roms/sh3.bin (card 3: title to its first act)
+#   ROM4         shk, default ../roms/shk.bin (card 4: title to its first act)
+#   ROM5         shk + sh1 (lock-on dump, evidence only), default ../roms/shk_sh1.bin
+#                (card 5: shbs; the disc image is shk's code with sh1's header, from
+#                ROM, where shk reads the locked-on cartridge)
+#   ROM7         sh3k (lock-on dump), default ../roms/sh3k.bin (card 7: its first act)
+# Steps: evidence runs of sh1 on the tracer (level select, every zone, running right and
 # jumping; plus your recorded sessions in games/sh1/sessions), relocation (relocate.py),
 # the BuildSprites helper, menu art, disc (build_disc.py). Output: OUTDIR/ultimate.iso +
 # ultimate.cue (about 7 minutes; default ~/Library/Application Support/PixelSorcery/megacd/ultimate).

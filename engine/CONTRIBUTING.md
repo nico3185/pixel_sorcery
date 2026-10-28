@@ -61,9 +61,11 @@ compatible with MIT (MIT, BSD, zlib, Apache-2.0, public domain).
 
 ## Where to ask
 
-[The sp00nznet recomp Discord](https://discord.gg/CRpzGWZFcu).
+Open an issue or a pull request on PixelSorcery's repository.
 
 ## Licence
 
-MIT. By submitting a contribution you agree that it is released under the
-same licence.
+PixelSorcery's own code is under the PolyForm Noncommercial License 1.0.0
+(the root LICENSE); files kept from upstream genrecomp stay MIT (engine/LICENSE).
+By submitting a contribution you agree that it is released under the licence
+of the files it changes.

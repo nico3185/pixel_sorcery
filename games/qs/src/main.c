@@ -1,6 +1,5 @@
 /*
- * QS Starring Mickey Mouse and Donald Duck -- statically recompiled
- * on PixelSorcery. The frame is driven from the engine's scanline clock: at VBlank it
+ * games/qs -- statically recompiled on PixelSorcery. The frame is driven from the engine's scanline clock: at VBlank it
  * calls qs_vblank(), which raises the game's VBlank interrupt and presents the frame.
  * Entry, stack and vectors come from the ROM's vector table.
  */

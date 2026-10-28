@@ -65,6 +65,58 @@ static void sh_popin_scan(uint16_t base, int stride, int count, int xoff, int ca
         prev[i] = id;
     }
 }
+/* PS_WIDE_STATS: rings the ring manager keeps out of its window although they sit in the wide
+ * view (SH2 engine: layout $FFE800, 6-byte entries {state, x, y} sorted by x, window
+ * [$FFF712, $FFF714)) - frames x rings, the measure for the ring window hooks */
+static long s_sh_ringmiss, s_sh_ringside;
+static void sh_ringmiss_report(void) { fprintf(stderr, "wide: ring-frames in the side areas %ld, missing (outside the ring window) %ld\n", s_sh_ringside, s_sh_ringmiss); }
+static void sh2_ring_scan(void) {
+    static int on = -1; static long last = -1; extern long ps_frames;
+    if (on < 0) { on = getenv("PS_WIDE_STATS") != NULL; if (on) atexit(sh_ringmiss_report); }
+    int ps_wide_max_extra(void);
+    int e = sh_wide_active() ? ps_wide_max_extra() : 0;
+    if (!on || !e || ps_frames == last) return;
+    last = ps_frames;
+    int cx = (int16_t)bus_ram_read16(0xEE00), cy = (int16_t)bus_ram_read16(0xEE04);
+    uint16_t lo = bus_ram_read16(0xF712), hi = bus_ram_read16(0xF714);
+    for (uint16_t a = 0xE802; a < 0xEE00; a += 6) {
+        int x = (int16_t)bus_ram_read16(a) - cx, y = (int16_t)bus_ram_read16((uint16_t)(a + 2)) - cy;
+        if ((uint16_t)(x + cx) == 0xFFFF) break;                         /* end of the layout */
+        if (!bus_ram_read16((uint16_t)(a - 2)) && (x < -8 || x >= 328) && x >= -e - 8 && x < 320 + e + 8 && y >= -8 && y < 232) s_sh_ringside++;
+        if (bus_ram_read16((uint16_t)(a - 2)) || a < lo || a >= hi) {
+            if (!bus_ram_read16((uint16_t)(a - 2)) && x >= -e - 8 && x < 320 + e + 8 && y >= -8 && y < 232)
+                s_sh_ringmiss++;
+        }
+    }
+}
+/* SH3 engine: the level's ring list in ROM, 4-byte entries {x, y} sorted by x, window
+ * [$FFEE42, $FFEE46) (ROM pointers, collected rings' state only inside it): the rings just
+ * outside the window on either side that sit in the wide view */
+static void sh3_ring_scan(void) {
+    static int on = -1; static long last = -1; extern long ps_frames;
+    if (on < 0) { on = getenv("PS_WIDE_STATS") != NULL; if (on) atexit(sh_ringmiss_report); }
+    int ps_wide_max_extra(void);
+    int e = sh_wide_active() ? ps_wide_max_extra() : 0;
+    if (!on || !e || ps_frames == last) return;
+    last = ps_frames;
+    int cx = (int16_t)bus_ram_read16(0xEE78), cy = (int16_t)bus_ram_read16(0xEE7C);
+    uint32_t lo = (uint32_t)bus_ram_read16(0xEE42) << 16 | bus_ram_read16(0xEE44);
+    uint32_t hi = (uint32_t)bus_ram_read16(0xEE46) << 16 | bus_ram_read16(0xEE48);
+    if (lo >= 0x400000 || hi >= 0x400000 || hi < lo) return;
+    for (int side = 0; side < 2; side++)
+        for (int i = 0; i < 64; i++) {
+            uint32_t a = side ? hi + i * 4u : lo - (i + 1) * 4u;
+            uint16_t rx = bus_read16(a);
+            if (rx == 0xFFFF || (!side && rx == 0)) break;            /* the list's end markers */
+            int x = (int16_t)rx - cx, y = (bus_read16(a + 2) & 0x0FFF) - cy;
+            if (side ? x >= 320 + e + 8 : x < -e - 8) break;
+            if (y >= -8 && y < 232) { s_sh_ringmiss++; s_sh_ringside++; }
+        }
+    for (uint32_t a = lo; a < hi && a < lo + 0x400; a += 4) {        /* in the window: the side areas */
+        int x = (int16_t)bus_read16(a) - cx, y = (bus_read16(a + 2) & 0x0FFF) - cy;
+        if ((x < -8 || x >= 328) && x >= -e - 8 && x < 320 + e + 8 && y >= -8 && y < 232) s_sh_ringside++;
+    }
+}
 static void sh1_wide_camera(int *x, int *y) {
     *x = (int16_t)bus_ram_read16(0xFF10); *y = (int16_t)bus_ram_read16(0xFF14);
     ps_wide_snap_camera(x, y);
@@ -74,11 +126,13 @@ static void sh2_wide_camera(int *x, int *y) {
     *x = (int16_t)bus_ram_read16(0xEE60); *y = (int16_t)bus_ram_read16(0xEE64);
     ps_wide_snap_camera(x, y);
     sh_popin_scan(0xB000, 0x40, 128, 8, *x);          /* objects: slots $FFB000-$FFCFFF */
+    sh2_ring_scan();
 }
 static void sh3_wide_camera(int *x, int *y) {
     *x = (int16_t)bus_ram_read16(0xEE78); *y = (int16_t)bus_ram_read16(0xEE7C);
     ps_wide_snap_camera(x, y);
     sh_popin_scan(0xB000, 0x4A, 110, 0x10, *x);       /* objects: $4A-byte slots from $FFB000 */
+    sh3_ring_scan();
 }
 
 /* the name-table word of 8x8 cell (tx, ty) inside block b, the block flipped by fx/fy */

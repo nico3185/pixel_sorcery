@@ -29,7 +29,7 @@ def main():
         print(f'{a[2]}: 256 KB patch ROM')
         return
     sk, cart = open(a[0], 'rb').read(), open(a[1], 'rb').read()
-    if len(sk) != 0x200000 or sk[0x150:0x160] != b'SH & KNUCKLES':
+    if len(sk) != 0x200000 or sk[0x180:0x18E] != b'GM MK-1563 -00':     # SHK: its header serial
         sys.exit(f'{a[0]}: not a SHK ROM')
     img = sk + cart
     if cart[0x180:0x18E] in (b'GM 00001051-00', b'GM 00001051-01', b'GM 00001051-02'):   # SH2

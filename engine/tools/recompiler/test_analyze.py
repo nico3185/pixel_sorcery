@@ -39,6 +39,44 @@ def main():
     finally:
         os.unlink(path)
 
+    # Routine table: move.w $20A(pc,d0.w),d1 ; jsr $20A(pc,d1.w) ; rts ; table -> $20E, $210
+    code = bytes.fromhex('323B0008' '4EBB1004' '4E75' '00040006' '4E75' '4E75')
+    path = rom_with(code)
+    try:
+        rom = analyze.GenesisROM(path)
+        a = analyze.M68KAnalyzer(rom)
+        a.analyze()
+        assert a.pc_call_tables.get(0x204) == [0x20E, 0x210], a.pc_call_tables
+        assert 0x20E in a.instructions and 0x210 in a.instructions, 'routine table entries not followed'
+        assert 0x20A not in a.instructions, 'routine table decoded as code'
+    finally:
+        os.unlink(path)
+
+    # Negative entries: rts ; move.w $20C(pc,d0.w),d1 ; jsr $20C(pc,d1.w) ; rts ;
+    # table $FFF4 (-> $200), $0004 (-> $210) ; rts
+    code = bytes.fromhex('4E75' '323B0008' '4EBB1004' '4E75' 'FFF40004' '4E75')
+    path = rom_with(code)
+    try:
+        rom = analyze.GenesisROM(path)
+        a = analyze.M68KAnalyzer(rom)
+        a.EXPLICIT_SEEDS = {0x202: 'caller'}
+        a.analyze()
+        assert a.pc_call_tables.get(0x206) == [0x200, 0x210], a.pc_call_tables
+    finally:
+        os.unlink(path)
+
+    # jmp into a list of bra.w: jmp $206(pc,d0.w) ; bra.w $20E ; bra.w $210 ; rts ; rts
+    code = bytes.fromhex('4EFB0004' '4E71' '60000006' '60000004' '4E75' '4E75')
+    path = rom_with(code)
+    try:
+        rom = analyze.GenesisROM(path)
+        a = analyze.M68KAnalyzer(rom)
+        a.analyze()
+        assert 0x20A in a.instructions and 0x20E in a.instructions and 0x210 in a.instructions, \
+            sorted(a.instructions)
+    finally:
+        os.unlink(path)
+
     p = a._parse_absolute_addr
     assert p('$df2a4(pc), a4') == 0xDF2A4
     assert p('$ffff0000.l, a3') == 0xFF0000

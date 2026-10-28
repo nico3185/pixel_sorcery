@@ -150,6 +150,14 @@ bool func_table_jsr(uint32_t m68k_addr, uint32_t ret) {
     return true;
 }
 
+/* An RTE at the frame of the exception being handled ends the handler (m68k.c), from whatever
+ * depth it runs: a routine the handler called can drop its return address and branch to the
+ * handler's exit (SH1's VBlank on a lag frame). Every frame deeper than the handler's C
+ * caller (depth d) returns, as for an RTS into an outer frame. */
+int func_table_depth(void) { return s_call_depth; }
+void func_table_unwind_to(int d) { if (s_call_depth > d + 1) s_unwind = d; }
+void func_table_unwind_done(int d) { if (s_unwind == d) s_unwind = -1; }
+
 /* An RTS to an address no C frame expects and no function starts at (the code dropped return
  * addresses its interpreted callers pushed): recorded here; the interpreter, whose own pending
  * returns are not C frames, resumes there at the matching level (m68k_interp.c). */

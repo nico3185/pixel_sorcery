@@ -38,7 +38,9 @@ print('const unsigned char *ps_z80_game_image = ps_z80_game_image_data;')
 print('unsigned int ps_z80_game_image_len = %d;' % end)
 PY
 fi
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null && ninja -C build >/dev/null
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null && if [[ -n ${PS_BUILD_PROGRESS:-} ]]; then
+  ninja -C build ${PS_JOBS:+-j $PS_JOBS}             # build UI: ninja's [done/total] lines on stdout
+else ninja -C build ${PS_JOBS:+-j $PS_JOBS} >/dev/null; fi   # PS_JOBS: cores (build_all.sh -j)
 native=$(find build -maxdepth 1 -type f -perm -u+x ! -name '*.*' ! -name '*_oracle' | head -1)   # shipped port
 exe=${native}_oracle                         # same game code on the GPGX-backed runtime (compare modes)
 args=(--headless --frames $frames); [[ -f selfcheck.args ]] && args+=(${(z)"$(<selfcheck.args)"})

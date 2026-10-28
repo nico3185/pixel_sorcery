@@ -1,0 +1,160 @@
+{
+ "_doc": "SH1 level select: Up, Down, Left, Right on the title screen, then A+Start; Down moves the cursor ($FFFF82), Start loads the item; level loaded when game mode $FFF600 = $0C (special stage $10). engine/tools/level_starts.py",
+ "code": [
+  [
+   560,
+   "UP",
+   3
+  ],
+  [
+   570,
+   "DOWN",
+   3
+  ],
+  [
+   580,
+   "LEFT",
+   3
+  ],
+  [
+   590,
+   "RIGHT",
+   3
+  ],
+  [
+   620,
+   "A+START",
+   10
+  ]
+ ],
+ "move": {
+  "first": 760,
+  "every": 16,
+  "button": "DOWN",
+  "len": 3
+ },
+ "select": {
+  "after": 40,
+  "button": "START",
+  "len": 3
+ },
+ "items": {
+  "0": "GHZ1",
+  "1": "GHZ2",
+  "2": "GHZ3",
+  "3": "MZ1",
+  "4": "MZ2",
+  "5": "MZ3",
+  "6": "SYZ1",
+  "7": "SYZ2",
+  "8": "SYZ3",
+  "9": "LZ1",
+  "10": "LZ2",
+  "11": "LZ3",
+  "12": "SLZ1",
+  "13": "SLZ2",
+  "14": "SLZ3",
+  "15": "SBZ1",
+  "16": "SBZ2",
+  "17": "SBZ3",
+  "18": "FZ",
+  "19": "SS1"
+ },
+ "check": {
+  "mode": "FFF600",
+  "value": "0C",
+  "settle": 240,
+  "load_max": 900,
+  "zone": "FFFE10"
+ },
+ "also": [
+  [
+   30,
+   "RIGHT",
+   1500
+  ],
+  [
+   60,
+   "C",
+   12
+  ],
+  [
+   150,
+   "C",
+   12
+  ],
+  [
+   240,
+   "C",
+   12
+  ],
+  [
+   330,
+   "C",
+   12
+  ],
+  [
+   420,
+   "C",
+   12
+  ],
+  [
+   510,
+   "C",
+   12
+  ],
+  [
+   600,
+   "C",
+   12
+  ],
+  [
+   690,
+   "C",
+   12
+  ],
+  [
+   780,
+   "C",
+   12
+  ],
+  [
+   870,
+   "C",
+   12
+  ],
+  [
+   960,
+   "C",
+   12
+  ],
+  [
+   1050,
+   "C",
+   12
+  ],
+  [
+   1140,
+   "C",
+   12
+  ],
+  [
+   1230,
+   "C",
+   12
+  ],
+  [
+   1320,
+   "C",
+   12
+  ],
+  [
+   1410,
+   "C",
+   12
+  ]
+ ],
+ "item_mode": {
+  "19": "10"
+ }
+}
