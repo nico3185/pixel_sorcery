@@ -49,6 +49,18 @@
  *           cell every 120 frames of it: exploration goes on from where they got to. Progress
  *           is then the checkpoint's order in the play, then the score gained since it (room
  *           numbers, X... are not in play order across rooms).
+ * Coverage mode (engine/tools/cover_loop.sh): --cover-base FILE (a PS_PCCOVER bitmap: the
+ * instructions recordings already ran) makes novelty = 68000 instructions nobody executed yet:
+ * a frame that runs one adds a cell (with --cell variables too, as usual), the cell is picked
+ * in proportion to the new code it and its bursts found. No waiting for hints. Options:
+ *   --polls FILE [--anchor-every F]  replay a recording (per poll, as sidebyside.py does) from
+ *                         power-on, a cell every F frames of it (default 600): exploration
+ *                         branches off anywhere along a person's play
+ *   --camera SHIFT        cell variables any title has: the camera (plane-A scroll X, Y) >> SHIFT
+ *   --seconds N           stop after N seconds (wall clock)   --max-cells N (default 3000)
+ *   --routes K            at the end, DIR/cover_NN.polls: the K routes (power-on, per poll,
+ *                         PS_POLL_REPLAY format) that together reach the most new code,
+ *                         DIR/cover.txt their gains, DIR/found.bin the new code (bitmap)
  * ADDRs are 68K RAM (hex). The --press script reaches the start (frame F): menus, passwords;
  * or --movie FILE (an earlier route.txt) plays up to F (default: its end).
  * A score term ADDR:SIZE:WEIGHT:BASE counts (BASE - value) * WEIGHT while the value is not 0:
@@ -62,6 +74,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifdef _WIN32
 __declspec(dllimport) void __stdcall Sleep(unsigned long ms);   /* kernel32; no windows.h clashes */
 #define sleep(s) Sleep((s) * 1000ul)
@@ -103,8 +116,15 @@ static int parse_vars(const char *s, var_t *v, int max) {
     return n;
 }
 
+static int s_cam = -1;    /* --camera SHIFT: the VDP's plane-A scroll (camera X, Y) >> SHIFT is a cell variable */
 static uint64_t cell_key(void) {
     uint64_t h = 1469598103934665603ull;
+    if (s_cam >= 0) {
+        unsigned hs = *(uint16_t *)(vram + (((reg[13] & 0x3F) << 10) & 0xFFFE));
+        unsigned vs = *(uint16_t *)(vsram);
+        h = (h ^ ((0x10000 - hs) & 0x3FF) >> s_cam) * 1099511628211ull;
+        h = (h ^ (vs & 0x3FF) >> s_cam) * 1099511628211ull;
+    }
     for (int i = 0; i < s_ncell; i++) {
         unsigned v = ram(s_cell[i].addr, s_cell[i].size);
         v = s_cell[i].arg >= 0 ? v >> s_cell[i].arg : v;
@@ -134,7 +154,51 @@ typedef struct {
     int tried, found;
     int rank;                /* checkpoint of a person's play it descends from (--anchors), 0: none */
     unsigned vals[8];
+    uint32_t *pl; long pln;  /* coverage mode: the polls from the parent's state (P1 << 16 | P2) */
+    unsigned th;             /* port A TH as last driven, at this state */
+    long gain, fbits;        /* new instructions reached on arrival here / by bursts from here */
 } cell_t;
+
+/* ---- coverage mode (--cover-base) ---- */
+static int s_cover;
+static uint8_t *s_known;                 /* bit per even ROM address: ran in a recording or here */
+static uint8_t *s_found;                 /* found here */
+static long s_newbits;
+static unsigned s_romsz;
+static uint32_t *s_pl; static long s_pln, s_plcap, s_plmark;   /* polls since the last restore */
+static unsigned s_pth = 0x40;
+static uint32_t *s_rp; static long s_rpn, s_rpi; static uint32_t s_rcur;   /* --polls replay */
+static long s_max_cells = 3000;
+#ifdef HOOK_CPU
+static void cov_hook(hook_type_t type, int width, unsigned int address, unsigned int value) {
+    (void)width; (void)value;
+    if (type != HOOK_M68K_E) return;
+    unsigned pc = address & 0xFFFFFF;
+    if (pc >= s_romsz) return;
+    uint8_t m = (uint8_t)(1u << ((pc >> 1) & 7));
+    if (!(s_known[pc >> 4] & m)) { s_known[pc >> 4] |= m; s_found[pc >> 4] |= m; s_newbits++; }
+}
+#endif
+static void pl_push(uint32_t v) {
+    if (s_pln == s_plcap) s_pl = realloc(s_pl, (size_t)(s_plcap = s_plcap ? s_plcap * 2 : 1 << 16) * sizeof *s_pl);
+    s_pl[s_pln++] = v;
+}
+/* the poll events of engine/src/ps_poll.c (TH 0->1 on port A): record what the game read, or
+ * feed a recording the way PS_POLL_REPLAY does, so a route replays exactly in sidebyside.py */
+static void cov_pad_hook(int port, unsigned int data, unsigned int ctrl) {
+    if (s_rp) { input.pad[0] = (uint16)(s_rcur >> 16); input.pad[4] = (uint16)s_rcur; }
+    if (port != 0) return;
+    unsigned th = (ctrl & 0x40) ? (data & 0x40) : 0x40;
+    if (!th && s_pth && s_rp && s_rpn) {
+        long n = s_rpi < s_rpn ? s_rpi : s_rpn - 1;
+        s_rcur = s_rp[n]; input.pad[0] = (uint16)(s_rcur >> 16); input.pad[4] = (uint16)s_rcur;
+    }
+    if (th && !s_pth) {
+        if (s_rp) { s_rcur = s_rpi < s_rpn ? s_rp[s_rpi] : 0; s_rpi++; input.pad[0] = (uint16)(s_rcur >> 16); input.pad[4] = (uint16)s_rcur; }
+        pl_push((uint32_t)input.pad[0] << 16 | input.pad[4]);
+    }
+    s_pth = th;
+}
 
 static cell_t *s_cells;
 static long s_anchor_raw[1 << 14];   /* score_now() at each checkpoint */
@@ -187,6 +251,13 @@ static int add_cell(uint64_t key, int parent, const uint16_t *in, int n) {
     c->rank = parent >= 0 ? s_cells[parent].rank : 0;
     c->score = s_ranked ? (long)c->rank * 10000000 + score_now() - s_anchor_raw[c->rank] : score_now();
     c->depth = (parent >= 0 ? s_cells[parent].depth : 0) + n;
+    if (s_cover) {
+        c->pln = s_pln - s_plmark;
+        c->pl = malloc((size_t)(c->pln ? c->pln : 1) * sizeof *c->pl);
+        if (c->pln) memcpy(c->pl, s_pl + s_plmark, (size_t)c->pln * sizeof *c->pl);
+        s_plmark = s_pln;
+        c->th = s_pth;
+    }
     for (int i = 0; i < s_ncell; i++) c->vals[i] = ram(s_cell[i].addr, s_cell[i].size);
     s_ncells++;
     if (!s_hash || (unsigned)s_ncells * 2 >= s_hcap) hash_rebuild();
@@ -195,6 +266,7 @@ static int add_cell(uint64_t key, int parent, const uint16_t *in, int n) {
 }
 
 static void restore(int i) {
+    s_pln = s_plmark = 0; s_pth = s_cells[i].th;
     zs_unpack(s_tmp, STATE_SIZE, s_cells[i].st, s_cells[i].stlen);
     state_load(s_tmp);
 }
@@ -375,7 +447,7 @@ static int policy_burst(uint16_t *out, int max) {
 /* drop the archive's newest cells (from index `keep` on) */
 static void drop_cells(int keep) {
     if (keep >= s_ncells) return;
-    for (int i = keep; i < s_ncells; i++) { free(s_cells[i].in); free(s_cells[i].st); }
+    for (int i = keep; i < s_ncells; i++) { free(s_cells[i].in); free(s_cells[i].st); free(s_cells[i].pl); }
     s_ncells = keep;
     hash_rebuild();
 }
@@ -383,8 +455,10 @@ static void drop_cells(int keep) {
 /* play inputs from cell `from`; new cells join the archive. Stops on damage (unless
  * allowed) or a lost life; then, and after 60 idle frames of look-ahead, cells reached in
  * the 120 frames before a lost life are dropped: they are a fall already under way. */
+static long s_seen_bits;
 static int play(int from, const uint16_t *in, int n, int force_add) {
     restore(from);
+    s_seen_bits = s_newbits;
     unsigned lives0 = s_lives.size ? ram(s_lives.addr, s_lives.size) : 0;
     unsigned hp0 = s_health.size ? ram(s_health.addr, s_health.size) : 0;
     int first = s_ncells, parent = from, start = 0, k, lost_at = -1;
@@ -393,10 +467,14 @@ static int play(int from, const uint16_t *in, int n, int force_add) {
         step(in[k]);
         if (s_lives.size && ram(s_lives.addr, s_lives.size) < lives0) { lost_at = k; break; }
         if (!s_allow_damage && s_health.size && ram(s_health.addr, s_health.size) < hp0) break;
-        uint64_t key = cell_key();
-        if (find_cell(key) < 0 || (force_add && k == n - 1)) {
+        int keyed = s_ncell || s_cam >= 0;
+        uint64_t key = keyed ? cell_key() : 0;
+        long gain = s_newbits - s_seen_bits;
+        if (gain || (keyed && find_cell(key) < 0 && (!s_cover || s_ncells < s_max_cells)) || (force_add && k == n - 1)) {
             at[s_ncells - first] = k;
+            if (gain && !keyed) key = 0x8000000000000000ull | (uint64_t)s_ncells;
             parent = add_cell(key, parent, in + start, k + 1 - start);
+            s_cells[parent].gain = gain; s_seen_bits = s_newbits;
             start = k + 1;
         }
     }
@@ -426,6 +504,13 @@ static int top_cells(int *out, int n) {
 }
 
 static int pick(void) {
+    if (s_cover) {   /* in proportion to the new code found on arrival and from there since */
+        double tot = 0;
+        for (int i = 0; i < s_ncells; i++) tot += (1.0 + s_cells[i].gain + 2.0 * s_cells[i].fbits) / (1.0 + s_cells[i].tried);
+        double r = tot * rand() / RAND_MAX;
+        for (int i = 0; i < s_ncells; i++) if ((r -= (1.0 + s_cells[i].gain + 2.0 * s_cells[i].fbits) / (1.0 + s_cells[i].tried)) <= 0) return i;
+        return s_ncells - 1;
+    }
     /* half the time the best few cells (push the frontier), else rarely tried ones */
     if (rand() % 2) {
         int top[8], nt = top_cells(top, 8);
@@ -438,6 +523,39 @@ static int pick(void) {
     return s_ncells - 1;
 }
 
+/* the K routes reaching the most new code (greedy: each next one counts only cells not yet
+ * in an earlier one), DIR/cover_NN.polls, + DIR/cover.txt, DIR/found.bin */
+static void write_cover_routes(int k) {
+    char p[1100];
+    uint8_t *used = calloc((size_t)s_ncells, 1);
+    snprintf(p, sizeof p, "%s/cover.txt", s_dir);
+    FILE *sum = fopen(p, "w");
+    for (int r = 0; r < k; r++) {
+        long bv = 0; int bc = -1;
+        for (int i = 0; i < s_ncells; i++) {
+            if (!s_cells[i].gain || used[i]) continue;
+            long v = 0;
+            for (int j = i; j >= 0; j = s_cells[j].parent) if (!used[j]) v += s_cells[j].gain;
+            if (v > bv) { bv = v; bc = i; }
+        }
+        if (bc < 0) break;
+        int chain[1 << 16], n = 0;
+        for (int j = bc; j >= 0 && n < (1 << 16); j = s_cells[j].parent) { chain[n++] = j; used[j] = 1; }
+        snprintf(p, sizeof p, "%s/cover_%02d.polls", s_dir, r);
+        FILE *f = fopen(p, "w");
+        long polls = 0;
+        while (f && n--) for (long q = 0; q < s_cells[chain[n]].pln; q++, polls++)
+            fprintf(f, "%04X %04X\n", s_cells[chain[n]].pl[q] >> 16, s_cells[chain[n]].pl[q] & 0xFFFF);
+        if (f) fclose(f);
+        if (sum) fprintf(sum, "cover_%02d.polls gain %ld polls %ld frames %ld\n", r, bv, polls, s_cells[bc].depth);
+    }
+    if (sum) fclose(sum);
+    free(used);
+    snprintf(p, sizeof p, "%s/found.bin", s_dir);
+    FILE *f = fopen(p, "wb");
+    if (f) { fwrite(s_found, 1, 0x400000 / 16, f); fclose(f); }
+}
+
 int main(int argc, char *argv[]) {
     const char *rom = NULL;
     long start = 0, stuck_after = 3000, max_iters = 0, plateau = 0;
@@ -447,6 +565,7 @@ int main(int argc, char *argv[]) {
     const char *start_state = NULL, *prefix_route = NULL, *anchors = NULL;
     long anchor_every = 120;
     unsigned seed = 1;
+    const char *cover_base = NULL, *polls_file = NULL; long seconds = 0; int routes = 8;
     char *pargv[512]; int pargc = 0;
     pargv[pargc++] = argv[0]; pargv[pargc++] = "--headless";
     for (int i = 1; i < argc; i++) {
@@ -477,6 +596,12 @@ int main(int argc, char *argv[]) {
             if (sscanf(v, "%x=%x", &patch_a[npatch], &patch_v[npatch]) == 2) npatch++;
             i++;
         }
+        else if (!strcmp(a, "--cover-base")) { cover_base = v; s_cover = 1; i++; }
+        else if (!strcmp(a, "--polls")) { polls_file = v; i++; }
+        else if (!strcmp(a, "--seconds")) { seconds = atol(v); i++; }
+        else if (!strcmp(a, "--max-cells")) { s_max_cells = atol(v); i++; }
+        else if (!strcmp(a, "--camera")) { s_cam = atoi(v); i++; }
+        else if (!strcmp(a, "--routes")) { routes = atoi(v); i++; }
         else if (!strcmp(a, "--seed")) { seed = (unsigned)atol(v); i++; }
         else if (!strcmp(a, "--prior")) { if (!load_prior(v)) { fprintf(stderr, "explore: no prior in %s\n", v); return 1; } i++; }
         else if (!strcmp(a, "--prior-mix")) { s_prior_mix = atoi(v); i++; }
@@ -488,7 +613,7 @@ int main(int argc, char *argv[]) {
         }
         else rom = a;
     }
-    if (!rom || (!try_state && !save_state && (!*s_dir || !s_ncell))) { fprintf(stderr, "usage: see explore.c\n"); return 1; }
+    if (!rom || (!try_state && !save_state && (!*s_dir || (!s_ncell && !s_cover)))) { fprintf(stderr, "usage: see explore.c\n"); return 1; }
     if (!s_nbtn) { s_btn[0] = GEN_BTN_C; s_btn[1] = GEN_BTN_B; s_nbtn = 2; }
     srand(seed);
     pargv[pargc] = NULL;
@@ -502,6 +627,30 @@ int main(int argc, char *argv[]) {
     system_init();
     system_reset();
     s_tmp = malloc(STATE_SIZE);
+    if (s_cover) {
+#ifdef HOOK_CPU
+        s_romsz = cart.romsize < 0x400000 ? cart.romsize : 0x400000;
+        s_known = calloc(1, 0x400000 / 16); s_found = calloc(1, 0x400000 / 16);
+        FILE *bf = fopen(cover_base, "rb");
+        if (bf) { size_t got = fread(s_known, 1, 0x400000 / 16, bf); (void)got; fclose(bf); }
+        set_cpu_hook(cov_hook);
+        io_pad_write_hook = cov_pad_hook;
+        if (polls_file) {
+            FILE *f = fopen(polls_file, "r");
+            if (!f) { fprintf(stderr, "explore: cannot open %s\n", polls_file); return 1; }
+            unsigned a, b; long cap = 1 << 16;
+            s_rp = malloc((size_t)cap * sizeof *s_rp);
+            while (fscanf(f, "%x %x", &a, &b) == 2) {
+                if (s_rpn == cap) s_rp = realloc(s_rp, (size_t)(cap *= 2) * sizeof *s_rp);
+                s_rp[s_rpn++] = (uint32_t)a << 16 | (b & 0xFFFF);
+            }
+            fclose(f);
+        }
+#else
+        fprintf(stderr, "explore: --cover-base needs a build with -DGENRECOMP_TRACE=ON (HOOK_CPU)\n");
+        return 1;
+#endif
+    }
     s_ztmp = malloc(zs_bound(STATE_SIZE));
 
     if (try_state) {   /* --try: from a stuck state, play inputs, screenshots + cell variables */
@@ -593,7 +742,19 @@ int main(int argc, char *argv[]) {
         printf("state at frame %ld -> %s\n", s_frame, save_state);
         return 0;
     }
-    add_cell(cell_key(), -1, NULL, 0);
+    if (s_rp) {   /* --polls: the recording from power-on, a cell every --anchor-every frames */
+        add_cell(cell_key(), -1, NULL, 0);
+        int parent = 0; long f0 = 0, added = 0;
+        static uint16_t none[1 << 17];
+        while (s_rpi < s_rpn) {
+            step(0);
+            if (s_frame - f0 >= anchor_every) { parent = add_cell(cell_key() ^ (uint64_t)s_frame << 40, parent, none, (int)(s_frame - f0)); f0 = s_frame; added++; }
+        }
+        s_rp = NULL;
+        if (s_frame > f0) { parent = add_cell(cell_key() ^ (uint64_t)s_frame << 40, parent, none, (int)(s_frame - f0)); added++; }
+        event("POLLS %ld polls of %s, %ld frames, %ld cells along it", s_rpn, polls_file, s_frame, added);
+    } else
+        add_cell(cell_key(), -1, NULL, 0);
     event("START frame %ld score %ld", start, s_cells[0].score);
     if (anchors) {   /* a person's play: a checkpoint cell every --anchor-every frames of it */
         FILE *af = fopen(anchors, "r");
@@ -614,6 +775,7 @@ int main(int argc, char *argv[]) {
         event("ANCHORS %d checkpoints from %s, last score %ld", added, anchors, s_cells[parent].score);
     }
 
+    time_t t0 = time(NULL);
     static uint16_t in[1 << 17];
     long it = 0, last_new = 0, stuck_n = 0, last_better = 0, best_score = s_cells[0].score;
     int best = 0;
@@ -622,8 +784,11 @@ int main(int argc, char *argv[]) {
         s_cells[c].tried++;
         int n = s_npol && rand() % 100 < s_pol_pct ? policy_burst(in, 1 << 17)
               : s_npc && rand() % 100 < s_prior_mix ? prior_burst(in, 1 << 17) : random_burst(in, 1 << 17);
+        if (s_cover && rand() % 16 == 0) for (int k = 0; k < 3 && k < n; k++) in[k] = GEN_BTN_START;   /* menus, pause */
+        long nb = s_newbits;
         int added = play(c, in, n, 0);
         s_cells[c].found += added;
+        s_cells[c].fbits += s_newbits - nb;
         it++;
         if (added) last_new = it;
         int b = best_cell();
@@ -638,6 +803,12 @@ int main(int argc, char *argv[]) {
             FILE *f = fopen(p, "a");
             if (f) { fprintf(f, "it %ld cells %d best %d score %ld depth %ld\n", it, s_ncells, best, s_cells[best].score, s_cells[best].depth); fclose(f); }
         }
+        if (s_cover && ((seconds && time(NULL) - t0 >= seconds) || (max_iters && it >= max_iters))) {
+            write_cover_routes(routes);
+            event("END it %ld cells %d new instructions %ld", it, s_ncells, s_newbits);
+            return 0;
+        }
+        if (s_cover) continue;   /* no hints: the loop script restarts from elsewhere */
         if (max_iters && it >= max_iters) { write_route(best); event("END it %ld cells %d best %d score %ld", it, s_ncells, best, s_cells[best].score); return 0; }
         if (s_cells[best].score > best_score) { best_score = s_cells[best].score; last_better = it; }
         if (it - last_new < stuck_after && (!plateau || it - last_better < plateau)) continue;

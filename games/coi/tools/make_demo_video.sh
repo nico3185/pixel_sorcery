@@ -25,12 +25,13 @@ clip ultra 21:9
 clip menu 16:9 PS_MENU_DEMO=1
 
 # title cards (text rendered with Pillow's built-in font)
-$py - $out <<'PY'
+$py - $out ${0:A:h}/../../../launchers/all.txt <<'PY'
 import sys
 from PIL import Image, ImageDraw, ImageFont
 out = sys.argv[1]
+name = next((l.split('|')[1] for l in open(sys.argv[2]) if l.startswith('game coi|')), 'PixelSorcery').upper()   # the shelf's name
 cards = {
-  'title': ['CASTLE OF ILLUSION', 'native Mac port - PixelSorcery', 'recompiled 68000 + Z80 code, own video and sound, no emulation'],
+  'title': [name, 'native Mac port - PixelSorcery', 'recompiled 68000 + Z80 code, own video and sound, no emulation'],
   'narrow': ['1. Original 4:3', 'cycle-exact: identical to the original game, poll by poll'],
   'wide': ['2. 16:9 widescreen', 'level edges from a per-room world cache, enemies live past the edges'],
   'ultra': ['3. 21:9', 'any aspect ratio: 16:10, 16:9, 21:9, 32:9'],

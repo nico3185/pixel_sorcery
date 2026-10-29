@@ -15,6 +15,7 @@
 #include <stdlib.h>
 
 static uint32_t s_iframe;   /* exception frame being handled (interrupt, TRAP, ...): its RTE returns */
+static int s_iframe_depth;   /* C call depth where its handler was called */
 
 M68kContext g_m68k;
 
@@ -75,9 +76,11 @@ void recomp_m68k_exception(uint8_t vector) {
      * here. The original RTE would pop SR and PC from the supervisor stack,
      * but since we called via C function call, we need to clean up the
      * exception frame we pushed above. */
-    uint32_t outer = s_iframe; s_iframe = g_m68k.a[7];
+    uint32_t outer = s_iframe; int outer_d = s_iframe_depth;
+    s_iframe = g_m68k.a[7]; s_iframe_depth = func_table_depth();
     func_table_call(handler_addr);
-    s_iframe = outer;
+    func_table_unwind_done(s_iframe_depth);
+    s_iframe = outer; s_iframe_depth = outer_d;
 
     /* Pop the exception frame: SR (word) then PC (long) */
     uint16_t restored_sr = bus_read16(g_m68k.a[7]);
@@ -122,7 +125,7 @@ uint32_t g_m68k_rte_target;                 /* last RTE used as a jump */
  * (SH3 resumes its decompressor that way): pop them, true with the PC. */
 bool m68k_rte(uint32_t *pc) {
     uint32_t sp = g_m68k.a[7];
-    if (s_iframe && sp == s_iframe) return false;
+    if (s_iframe && sp == s_iframe) { func_table_unwind_to(s_iframe_depth); return false; }
     uint16_t sr = bus_read16(sp);
     *pc = g_m68k_rte_target = bus_read32(sp + 2) & 0xFFFFFF;
     g_m68k.a[7] = sp + 6;
@@ -157,9 +160,11 @@ void recomp_m68k_interrupt(uint8_t level) {
     g_m68k.a[7] = frame;
     bus_write16(frame, sr); bus_write32(frame + 2, pc);
     { void bus_irq_ack(uint8_t level); bus_irq_ack(level); }   /* VDP: pending flag cleared on acknowledge */
-    uint32_t outer = s_iframe; s_iframe = frame;
+    uint32_t outer = s_iframe; int outer_d = s_iframe_depth;
+    s_iframe = frame; s_iframe_depth = func_table_depth();
     func_table_call(bus_read32((uint32_t)(24 + level) * 4));
-    s_iframe = outer;
+    func_table_unwind_done(s_iframe_depth);
+    s_iframe = outer; s_iframe_depth = outer_d;
     uint32_t ret = bus_read32(frame + 2) & 0xFFFFFF;
     uint32_t a7_after = g_m68k.a[7];
     g_m68k = saved;

@@ -1,4 +1,5 @@
-# ROMs and anything generated from them never go in this repo
+# ROMs and anything generated from them never go in this repo (public_export.py also refuses
+# large binaries and any file matching a known dump's SHA-1 in engine/tools/roms.json)
 *.bin
 *.md.rom
 *.gen
@@ -6,11 +7,38 @@
 *.sfc
 *.smc
 *.z64
+*.68k
+*.sms
+*.gg
+*.32x
+*.rom
+roms/
+# .md is also a Mega Drive ROM extension: Markdown only where the documentation lives
+/*.md
+!/README.md
+!/TUTORIAL.md
+!/BACKLOG.md
+!/HANDOFF.md
+!/PRODUCT.md
+games/**/*.md
+# discs, BIOS images, saves, archives
+*.iso
+*.cue
+*.chd
+*.img
+*.srm
+*.sav
+*.brm
+*.zip
+*.7z
 games/*/src/recomp/
 games/*/disasm/
-# Third-party input movies (download with the .dl info files)
+# Third-party input movies and recorded polls
 *.gmv
 *.bk2
+*.polls
+# Local paths of reference material
+docs/kpi/references.json
 # Build output and local tooling
 build*/
 .venv/

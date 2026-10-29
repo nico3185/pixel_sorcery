@@ -125,6 +125,7 @@ class M68KAnalyzer:
         self.xrefs_to = defaultdict(set)
         self.labels = {}
         self.jump_tables = {}           # addr -> list of target addrs
+        self.pc_call_tables = {}        # jsr T(pc,dN.w) addr -> routines of its table
         self.pc_switches = {}           # JMP addr -> case targets (see _pc_switch)
 
     # Per-title settings; see load_config(). Seeds are entry points descent
@@ -412,6 +413,21 @@ class M68KAnalyzer:
 
             self.instructions[addr] = (mnemonic, op_str, size, code)
 
+            if base in self.CALL_MNEMONICS and '(pc,' in op_str.replace(' ', '').lower():
+                # Routine table: 'jsr T(pc,dN.w)' after 'move.w T(pc,dM.w),dN' (the sh titles' objects'
+                # Index tables); each entry is a routine, called. Without this only the
+                # entries some recording ran were converted.
+                cases = self._pc_switch(addr, op_str)
+                for t in cases or ():
+                    self.xrefs_to[t].add(addr)
+                    self.call_graph[start_addr].add(t)
+                    targets.append((t, True))
+                    self.labels.setdefault(t, f"sub_{t:06X}")
+                if cases:
+                    self.pc_call_tables[addr] = cases
+                addr += insn.size
+                continue
+
             if base in self.CALL_MNEMONICS:
                 target = self._extract_branch_target(insn, addr)
                 if target is not None:
@@ -426,6 +442,8 @@ class M68KAnalyzer:
             elif base == 'jmp' and '(pc,' in op_str.replace(' ', '').lower():
                 # Computed jump through a PC-relative index: a switch table
                 cases = self._pc_switch(addr, op_str)
+                if not cases:
+                    self._branch_table(addr, op_str, targets)
                 if cases:
                     self.pc_switches[addr] = cases
                     for t in cases:
@@ -482,18 +500,55 @@ class M68KAnalyzer:
         prev = self.instructions.get(addr - 4)
         if not prev or not prev[0].startswith('move.w') or f'${base:x}(pc' not in prev[1].replace(' ', ''):
             return None
+        # Entries may be negative: routines placed before the table (SH2 $03B66E: $FFAE, $0038).
+        # A negative-only table has no end from its cases: at most 64 entries, each a plausible start.
         cases, i, end = [], base, None
-        while i + 2 <= self.rom.size and (end is None or i < end) and len(cases) < 256:
+        while i + 2 <= self.rom.size and (end is None or i < end) and len(cases) < (256 if end else 64):
             t = base + struct.unpack('>h', self.rom.data[i:i + 2])[0]
-            if t & 1 or not (base < t < base + 0x10000):
+            if t & 1 or t == base or not (base - 0x1000 <= t < base + 0x10000) or t < 0x200:
                 break
-            if cases and t - base > 4 * (max(cases) - base) + 0x200:
+            span = max([c - base for c in cases if c > base], default=0)
+            if cases and t > base and t - base > 4 * span + 0x200:
                 break      # data after the table (SHK2 $3124A4: 4 routines, then
                            # $1010.. words that would split code mid-instruction at $3164B4)
+            if t < base and not (t in self.instructions or self._decodes(t)):
+                break
             cases.append(t)
-            end = t if end is None else min(end, t)
+            if t > base:
+                end = t if end is None else min(end, t)
             i += 2
         return cases or None
+
+    def _branch_table(self, addr, op_str, targets):
+        """'jmp T(pc,dN.w)' into a list of branch instructions (SH2's game modes at $0003F4:
+        jmp.l entries; bra.w lists): every entry is code, followed by descent."""
+        m = re.match(r'\s*\$([0-9a-fA-F]+)\(pc', op_str)
+        if not m:
+            return
+        t = int(m.group(1), 16)
+        op = self.rom.read16(t) if t + 2 <= self.rom.size else 0
+        stride = {0x6000: 4, 0x4EF9: 6, 0x4EB9: 6}.get(op)
+        if not stride:
+            return
+        for k in range(64):
+            e = t + k * stride
+            if e + 2 > self.rom.size or self.rom.read16(e) != op:
+                break
+            self.xrefs_to[e].add(addr)
+            targets.append((e, False))
+            self.labels.setdefault(e, f"loc_{e:06X}")
+
+    def _decodes(self, t, n=4):
+        """t starts n valid instructions (or an earlier flow end)."""
+        a = t
+        for _ in range(n):
+            ins = next(self.cs.disasm(bytes(self.rom.data[a:a + 10]), a, count=1), None)
+            if ins is None:
+                return False
+            if ins.mnemonic in ('rts', 'rte') or ins.mnemonic.startswith(('bra', 'jmp')):
+                return True
+            a += ins.size
+        return True
 
     def _extract_branch_target(self, insn, addr):
         """Extract absolute target address from branch/call instruction."""

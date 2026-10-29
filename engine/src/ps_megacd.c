@@ -1,7 +1,8 @@
 /*
  * Mega CD on the Genesis Plus GX backend (reference player, tracer): BIOS paths and backup RAM.
- * BIOS: PS_SCD_BIOS=DIR (default ~/Downloads/Sega Mega CD BIOS), the Model 1 BIOS of each
- * region (GPGX picks it from the disc; GENRECOMP_REGION forces one). Backup RAM - the internal
+ * BIOS: PS_SCD_BIOS=DIR (default Application Support/PixelSorcery/bios), the Model 1 BIOS of each
+ * region dumped from your own console, as scd_us.bin, scd_eu.bin, scd_jp.bin (GPGX picks one from
+ * the disc; GENRECOMP_REGION forces one). Backup RAM - the internal
  * 8 KB and the 512 KB RAM cartridge GPGX plugs in when booting from CD - is formatted with Sega's
  * standard directory header when new (games otherwise stop at "RAM cartridge is not initialized")
  * and kept in Application Support/PixelSorcery/megacd/{scd,cart}.brm by players (not by tools).
@@ -15,11 +16,11 @@
 
 void ps_megacd_bios(void) {
     const char *dir = getenv("PS_SCD_BIOS"), *home = getenv("HOME");
-    char def[512]; snprintf(def, sizeof def, "%s/Downloads/Sega Mega CD BIOS", home ? home : ".");
+    char def[512]; snprintf(def, sizeof def, "%s/Library/Application Support/PixelSorcery/bios", home ? home : ".");
     if (!dir || !*dir) dir = def;
-    snprintf(CD_BIOS_US, sizeof CD_BIOS_US, "%s/Sega CD (U) - Model 1 v1.10 (1992).bin", dir);
-    snprintf(CD_BIOS_EU, sizeof CD_BIOS_EU, "%s/Mega-CD (E) - Model 1 v1.00 (1992).bin", dir);
-    snprintf(CD_BIOS_JP, sizeof CD_BIOS_JP, "%s/Mega-CD (J) - Model 1 v1.00p (1991).bin", dir);
+    snprintf(CD_BIOS_US, sizeof CD_BIOS_US, "%s/scd_us.bin", dir);
+    snprintf(CD_BIOS_EU, sizeof CD_BIOS_EU, "%s/scd_eu.bin", dir);
+    snprintf(CD_BIOS_JP, sizeof CD_BIOS_JP, "%s/scd_jp.bin", dir);
 }
 
 static void brm_path(const char *name, char *out, size_t n) {

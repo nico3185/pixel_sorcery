@@ -17,7 +17,7 @@ Part of the sp00nznet recomp family (xboxrecomp, ps3recomp, snesrecomp,
 lynxrecomp, ...) and follows its shared house style: the same CLI flags, a
 headless mode, and no game data or generated code in any repo.
 
-## Status
+## Status (upstream genrecomp, before the fork)
 
 **Alpha, unversioned.** Two titles play, both built by the shared
 recompiler in `tools/recompiler/`: Pigskin Footbrawl reaches full one-player
@@ -29,12 +29,6 @@ verified by ear, and there is no conformance harness yet (see
 |---|---|---|
 | Jerry Glanville's Pigskin Footbrawl | [sp00nznet/pigskin](https://github.com/sp00nznet/pigskin) | In game: menus and full matches play |
 | General Chaos | [sp00nznet/genchaos](https://github.com/sp00nznet/genchaos) | In game: menus, squad selection, battles, battle report |
-
-## Screenshots
-
-Pigskin Footbrawl, recompiled, recorded headless with `--record`:
-
-![Pigskin Footbrawl in game](docs/screenshots/pigskin-ingame.png)
 
 ## Getting Started
 
@@ -143,17 +137,19 @@ for every push and PR.
 
 ## License
 
-genrecomp's code is [MIT](LICENSE). It links Genesis Plus GX, whose licence
-forbids selling or commercial use, so **any binary built with genrecomp is
-non-commercial**. Details and the full text: [NOTICE](NOTICE).
+The code kept from upstream genrecomp is [MIT](LICENSE); PixelSorcery's own code
+is under the PolyForm Noncommercial License 1.0.0 (the root LICENSE). Genesis Plus
+GX, whose licence forbids selling or commercial use, is linked only into the
+reference and verification builds, not into the native ports. Details: the root
+NOTICE.
 
 Generated source and game data never go in this repo or any title's repo: you
 supply your own ROM and run the generator locally.
 
 ## Credits
 
-- Genesis Plus GX: Charles MacDonald, Eke-Eke, and contributors. Every chip
-  genrecomp exposes is their work.
+- Genesis Plus GX: Charles MacDonald, Eke-Eke, and contributors - the reference
+  every port is checked against, and the backend of the verification builds.
 - Nuked OPN2 (YM2612, inside Genesis Plus GX): Alexey Khokholov.
 
 ## Contributors

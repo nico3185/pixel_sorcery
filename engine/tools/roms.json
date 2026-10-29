@@ -1,0 +1,17 @@
+{
+  "_comment": "The dumps each title is recompiled from, recognised in any folder by content (build_ui.py): serial = the cartridge header at $180 (serial2: the locked-on cartridge's at $200180), sha1 = the exact dump the port is verified against. file: its name in ../roms, where play.sh, launch.sh and the build expect it. lockon: made by lockon.py from SHK and a second cartridge (patch: SHK2's patch chip); made: built by our own tool from other dumps.",
+  "sh1":                {"file": "sh1.bin",          "serial": "GM 00001009-00", "size": 524288,  "sha1": "6ddb7de1e17e7f6cdb88927bd906352030daa194"},
+  "sh2":                {"file": "sh2.bin",          "serial": "GM 00001051-01", "size": 1048576, "sha1": "8bca5dcef1af3e00098666fd892dc1c2a76333f9"},
+  "sh3":                {"file": "sh3.bin",          "serial": "GM MK-1079 -00", "size": 2097152, "sha1": "75e9c4705259d84112b3e697a6c00a0813d47d71"},
+  "shk":                 {"file": "shk.bin",           "serial": "GM MK-1563 -00", "size": 2097152, "sha1": "88d6499d874dcb5721ff58d76fe1b9af811192e3"},
+  "sh3k":               {"file": "sh3k.bin",         "serial": "GM MK-1563 -00", "serial2": "GM MK-1079 -00", "size": 4194304, "sha1": "cfbf98c36c776677290a872547ac47c53d2761d6", "lockon": ["shk", "sh3"]},
+  "shk2":                  {"file": "shk_sh2.bin",    "serial": "GM MK-1563 -00", "serial2": "GM 00001051-01", "size": 3407872, "sha1": "6cd0537a3aee0e012bb86d5837ddff9342595004", "lockon": ["shk", "sh2"], "patch": "shk2_patch"},
+  "shk2_patch":            {"file": "shk2_patch.bin",      "size": 262144,  "sha1": "70429f1d80503a0632f603bf762fe0bbaa881d22", "part": true},
+  "shk1":               {"file": "shk1.bin",         "made": ["sh1", "shk2"]},
+  "coi":    {"file": "coi.md",           "serial": "Gk 00001015-00", "size": 524288,  "sha1": "4ac3687634a5acc55ac7f156c6de9749158713e4"},
+  "qs":             {"file": "qs.md",        "serial": "GM 00004054-00", "size": 524288,  "sha1": "3acacac6c20d9b5f9ddeacb82b82b3039c4e2485"},
+  "qs-r1":       {"file": "qs_r1.bin", "serial": "GM 00004054-01", "size": 1310720, "sha1": "1b1421f57669e149ccced2d751a6de83ca941932"},
+  "woi-us": {"file": "woi_us.bin",         "serial": "GM MK-1070 -00", "size": 1048576, "sha1": "adb0a2edebb6f978c3217075a2f29003a8b025c6"},
+  "dc":     {"file": "dc.md", "serial": "GM MK-1197-00 ", "size": 1048576, "sha1": "991e22d7f258cba94306d16d5dd37172a34da9d3"},
+  "woi":     {"file": "woi.md",              "serial": "GM MK-1070 -50", "size": 1048576, "sha1": "4b7aa8de517516edd9ee5288124f77238fc9ba6b"}
+}

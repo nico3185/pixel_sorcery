@@ -1,6 +1,6 @@
 #!/bin/zsh
 # ./play.sh TITLE [options] — play the latest build of a title: native renderer + recompiled Z80 sound driver.
-# TITLE is a directory in games/ (or a unique prefix: coi, sh3k, ...); ./play.sh alone lists them.
+# TITLE: its code (sh2, shk2, coi, ...), its games/ folder or a unique prefix; ./play.sh alone lists them.
 # Builds first if needed. ROM: $ROM, else ../roms/<"rom" in games/TITLE/sidebyside.json>, else
 # ../roms/TITLE.{md,bin,gen}.
 # Extra args go to the game (e.g. --fullscreen). The native port has no emulator: compare against
@@ -10,18 +10,13 @@
 #   only a minute is given). The new session file contains the replayed part too.
 set -e
 here=${0:A:h}
-titles=(${(f)"$(cd $here/games && for d in */; do [[ -f $d/sidebyside.json ]] && print ${d%/}; done)"})
+ROOT=$here; source $here/engine/tools/titles.zsh
 if [[ $# -eq 0 ]]; then
-  print "usage: ./play.sh TITLE [options]   (./play.sh TITLE --help)"; print "titles:"
-  for t in $titles; do print "  $t"; done; exit 0
+  print "usage: ./play.sh TITLE [options]   (./play.sh TITLE --help)"; print "titles (the code, a name or a unique prefix):"
+  ps_list; exit 0
 fi
-title=$1; shift
-case $title in shk1|shk1) title=shk1 ;; sh3k) title=sh3k ;; esac   # common names
-if (( ! ${titles[(Ie)$title]} )); then                     # a unique prefix will do
-  m=(${(M)titles:#$title*})
-  (( $#m == 1 )) || { print -u2 "unknown or ambiguous title '$title' (${m:-none}); titles: $titles"; exit 2; }
-  title=$m[1]
-fi
+title=$(ps_resolve $1) || { print -u2 "unknown or ambiguous title '$1'; ./play.sh lists them"; exit 2; }
+shift
 cfg=$here/games/$title/sidebyside.json
 exe=$(python3 -c "import json;print(json.load(open('$cfg')).get('exe','build/$title'))")
 romdef=$(python3 -c "import json;print(json.load(open('$cfg')).get('rom',''))")
@@ -65,7 +60,7 @@ if [[ ${1:-} == --resume ]]; then
   print "resuming $sess at minute $min"
 fi
 game=$here/games/$title
-rom=${ROM:-${CASTLE_ROM:-}}
+rom=${ROM:-}
 [[ -z $rom && $title == shk1 ]] && $game/tools/ensure_rom.sh $here/../roms   # built from the dumps
 if [[ -z $rom ]]; then
   for c in $romdef $title.md $title.bin $title.gen; do [[ -n $c && -f $here/../roms/$c ]] && { rom=$here/../roms/$c; break; }; done

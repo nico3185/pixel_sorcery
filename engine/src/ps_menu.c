@@ -556,8 +556,10 @@ void ps_menu_run(uint8_t *frame, int width) {
         k[1] = ks[SDL_SCANCODE_DOWN] || (pad & 0x02);
         k[2] = ks[SDL_SCANCODE_LEFT] || (pad & 0x04);
         k[3] = ks[SDL_SCANCODE_RIGHT] || (pad & 0x08);
-        k[4] = ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_Z] || (pad & 0x40) || (pad & 0x80);
-        k[5] = ks[SDL_SCANCODE_ESCAPE] || ks[SDL_SCANCODE_F1] || ks[SDL_SCANCODE_TAB];
+        k[4] = ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_Z] || (pad & 0x40);
+        /* resume from anywhere in the list: Start (still held as the game reads the pad, so a
+         * paused game unpauses in the same press) or C (the button that opened the menu) */
+        k[5] = ks[SDL_SCANCODE_ESCAPE] || ks[SDL_SCANCODE_F1] || ks[SDL_SCANCODE_TAB] || (pad & 0x80) || (pad & 0x20);
         bool up = k[0] && !prev[0], down = k[1] && !prev[1], left = k[2] && !prev[2],
              right = k[3] && !prev[3], ok = k[4] && !prev[4], back = k[5] && !prev[5];
         memcpy(prev, k, sizeof prev);
@@ -593,7 +595,7 @@ void ps_menu_run(uint8_t *frame, int width) {
         }
         if (first > 0) draw_text(buf, width, GEN_RENDER_HEIGHT, x0 + 190, y0, "^", 0xFFE070);
         if (first + rows < n) draw_text(buf, width, GEN_RENDER_HEIGHT, x0 + 190, y0 + (rows - 1) * 11, "v", 0xFFE070);
-        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, GEN_RENDER_HEIGHT - 14, "ARROWS: CHOOSE  ENTER: TOGGLE  F1: CLOSE", 0x707080);
+        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, GEN_RENDER_HEIGHT - 14, "ENTER/A: TOGGLE   START/C/F1: RESUME", 0x707080);
         platform_show_frame(buf, width);
         SDL_Delay(16);
     }

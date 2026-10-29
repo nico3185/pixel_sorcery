@@ -40,7 +40,7 @@ engine-level view.
 - Timing-exact DMA and the mid-frame raster effects that depend on it.
 - Windows and Linux as tested platforms (they build; play-testing happens on macOS).
 - Mega CD (second 68000) as a native engine: in progress for the compilation disc; 32X
-  (two SH-2s) for Knuckles' Chaotix.
+  (two SH-2s) for the 32X titles.
 
 ## Out of scope
 

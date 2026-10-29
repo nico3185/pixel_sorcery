@@ -55,7 +55,10 @@ Genesis Plus GX - non-commercial licence (not MIT)
   the tracer and each title's *_oracle program (the self-checks compare the
   native port against it). The native ports and the launcher apps do not
   include it (genrecomp_native has its own CPU glue, video, YM2612/PSG
-  synthesis and Z80 driver recompilation). Binaries that do include it may be
+  synthesis and Z80 driver recompilation); the one thing they take from it is
+  the 68000 instruction timings - the recompiler reads Genesis Plus GX's cycle
+  table (core/m68k/m68ki_cycles.h) at build time and writes the counts into
+  the generated C. Binaries that do include it may be
   shared but "may not be sold, nor may they be used in a commercial product or
   activity". Components inside it carry their own licences, notably the Nuked
   OPN2 YM2612 core (LGPL-2.1-or-later). Full text:
@@ -99,7 +102,8 @@ Coverage measurement (engine/tools/kpi.py, KPI "reference coverage")
   docs/kpi/references.json holds their local paths only.
 
 Not used: segagenesisrecomp (PolyForm Noncommercial) - no code from it is in
-this repository.
+this repository; the 68000 interpreter's tiered design (m68k_interp.c) was an
+inspiration only, its code is PixelSorcery's own.
 
 
 5. SHK1 (games/shk1)

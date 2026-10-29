@@ -87,10 +87,10 @@ static void coi_vblank(void) {
     genrecomp_end_frame();
 
     s_frame_count++;
-    if (getenv("CASTLE_VDP") && s_frame_count % 60 == 0)
+    if (getenv("PS_VDP_DBG") && s_frame_count % 60 == 0)
         printf("Frame %d VDP reg1=$%02X SR=$%04X\n", s_frame_count, g_ps_vdp.reg[1], m68k_get_sr());
-    /* CASTLE_STACK=1: where is the main thread, every second */
-    if (getenv("CASTLE_STACK") && s_frame_count % 60 == 0) {
+    /* PS_STACK_DBG=1: where is the main thread, every second */
+    if (getenv("PS_STACK_DBG") && s_frame_count % 60 == 0) {
         printf("Frame %d (SP=$%08X) ", s_frame_count, g_m68k.a[7]);
         func_table_dump_stack(stdout);
         fflush(stdout);

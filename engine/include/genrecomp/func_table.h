@@ -32,6 +32,11 @@ void        func_table_tail(uint32_t m68k_addr);
  * frame's continuation (stack-dropping returns): the caller must return
  * immediately. Generated code: if (!func_table_jsr(t, ret)) return; */
 bool        func_table_jsr(uint32_t m68k_addr, uint32_t ret);
+/* C call depth, and the unwind an RTE at an exception's own frame starts from deeper frames:
+ * frames deeper than d + 1 (the handler's) return; func_table_unwind_done(d) once back at d. */
+int         func_table_depth(void);
+void        func_table_unwind_to(int d);
+void        func_table_unwind_done(int d);
 
 /* Resumable interior entry: a function entered through a resume wrapper
  * (an RTS into the middle of it) jumps to this PC first. 0 = normal entry. */

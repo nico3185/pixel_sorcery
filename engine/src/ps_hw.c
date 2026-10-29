@@ -102,7 +102,7 @@ static void sram_detect(void) {
     if (s_sram_start == 0xFF0000) return;          /* work RAM declared as save RAM: none */
     if (s_sram_start >= 0x800000) s_sram_start = 0x200000;
     s_sram_on = true;
-    /* GPGX leaves out a ROM named "SH THE HEDGEHOG 3" without padding; SH3's header has
+    /* GPGX leaves out one title by its header name without padding; that title's header has
      * padding spaces in the name, so no dump is left out and neither is any here */
     if (s_sram_start >= s_rom_size) s_sram_bank = (int)(s_sram_start >> 16);
 }

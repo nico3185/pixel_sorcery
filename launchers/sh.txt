@@ -14,3 +14,7 @@ game shk2|SHK2|1994|1|900|1250|shk_sh2.bin
 # from the player's SH1 (REV00) and SHK + SH2 dumps
 game shk1|SHK1|1991|1|600|1300|shk1.bin
 game shbs|SHBS|1994|1|300|200|shk_sh1.bin|shk
+# the grid: a column per game, its versions up/down (the game first, then its lock-on versions)
+stack sh1 shk1 shbs
+stack sh2 shk2
+stack sh3 sh3k shk
