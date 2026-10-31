@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixelSorcery</title>
+<meta name="description" content="PixelSorcery turns Sega Mega Drive / Genesis games into native programs: a static recompiler (68000 and Z80 to C) with its own video and sound, verified against the original at every controller poll. Mac app available. No ROMs included.">
+<meta property="og:title" content="PixelSorcery">
+<meta property="og:description" content="Mega Drive / Genesis games statically recompiled to native C, verified against the original. No ROMs included.">
+<meta property="og:image" content="https://nico3185.github.io/pixel_sorcery/logo.png">
+<meta property="og:type" content="website">
+<link rel="icon" href="favicon.png">
+<style>
+  :root {
+    --bg: #0b0d1a; --panel: #141833; --text: #e8e6f5; --muted: #a7a3c7;
+    --gold: #f6c544; --blue: #6c8cff; --line: #262b52;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { text-align: center; }
+  header img { width: min(320px, 70vw); height: auto; }
+  h1 { font-size: 2.2rem; margin: 8px 0 4px; color: var(--gold); letter-spacing: .02em; }
+  .tag { color: var(--muted); margin: 0 auto 24px; max-width: 620px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 20px 0 8px; }
+  .btn { display: inline-block; padding: 12px 20px; border-radius: 10px; text-decoration: none;
+         font-weight: 600; border: 1px solid var(--line); color: var(--text); background: var(--panel); }
+  .btn.primary { background: var(--gold); color: #1a1500; border-color: var(--gold); }
+  .small { color: var(--muted); font-size: .9rem; text-align: center; }
+  h2 { color: var(--gold); font-size: 1.3rem; margin: 40px 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card b { color: var(--blue); }
+  ol { padding-left: 22px; }
+  li { margin: 6px 0; }
+  code { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: .9em; }
+  a { color: var(--blue); }
+  footer { margin-top: 48px; color: var(--muted); font-size: .9rem; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="logo.png" alt="PixelSorcery logo: a wizard casting sparkles before a castle">
+    <h1>PixelSorcery</h1>
+    <p class="tag">Sega Mega Drive / Genesis games rebuilt as native programs: decompiled, recompiled
+      to C, and run on their own video, sound and input code, with no emulator in the loop.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/nico3185/pixel_sorcery/releases/latest">Download for Mac</a>
+      <a class="btn" href="https://github.com/nico3185/pixel_sorcery">Source on GitHub</a>
+    </div>
+    <p class="small">macOS 14+ on Apple silicon · unsigned (System Settings → Privacy &amp; Security → Open Anyway) · no ROMs included</p>
+  </header>
+
+  <h2>How it works</h2>
+  <ol>
+    <li><b>Point it at your own dumps.</b> The app recognises each game by its checksum.</li>
+    <li><b>Recompile.</b> The 68000 game code and the Z80 sound driver are translated to C.</li>
+    <li><b>Build.</b> That C is compiled with the native runtime into a program for your Mac.</li>
+    <li><b>Play.</b> Widescreen, instant save states, controller mapping and a settings menu come with it.</li>
+  </ol>
+
+  <h2>Checked against the original</h2>
+  <div class="grid">
+    <div class="card"><b>Every poll.</b> Recorded play sessions and full-game input recordings are replayed on
+      the port and on Genesis Plus GX. Work RAM must match at every controller poll.</div>
+    <div class="card"><b>Mixed runs.</b> The same replays run again with part of the code in a 68000
+      interpreter, which proves the hand-over between compiled and interpreted code is exact.</div>
+    <div class="card"><b>Measured coverage.</b> How much of each game's code has run in a verified replay is
+      measured per title, and level-select recordings push it further.</div>
+  </div>
+
+  <h2>Native, no emulation</h2>
+  <div class="grid">
+    <div class="card"><b>68000 and Z80</b>: recompiled C.</div>
+    <div class="card"><b>Video (VDP)</b>: its own renderer, with Metal on macOS.</div>
+    <div class="card"><b>Sound (YM2612 + PSG)</b>: its own synthesis.</div>
+  </div>
+
+  <h2>No game included</h2>
+  <p>PixelSorcery ships no ROMs and no code or data made from them. Every game is built on the player's
+    machine, from a dump of a cartridge they own. Free for non-commercial use
+    (<a href="https://polyformproject.org/licenses/noncommercial/1.0.0/">PolyForm Noncommercial</a>).</p>
+
+  <footer>PixelSorcery is a hobby project, unaffiliated with any game publisher. ·
+    <a href="https://github.com/nico3185/pixel_sorcery">github.com/nico3185/pixel_sorcery</a></footer>
+</main>
+</body>
+</html>
