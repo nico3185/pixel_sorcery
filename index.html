@@ -36,6 +36,13 @@
   li { margin: 6px 0; }
   code { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: .9em; }
   a { color: var(--blue); }
+  table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; }
+  td:nth-child(2) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .bar { display: inline-block; width: 90px; height: 8px; margin-right: 10px; border-radius: 4px; vertical-align: middle;
+         background: linear-gradient(to right, var(--gold) var(--p), var(--line) var(--p)); }
+  @media (max-width: 520px) { .bar { width: 48px; } th, td { padding: 8px 6px; } }
   footer { margin-top: 48px; color: var(--muted); font-size: .9rem; text-align: center; }
 </style>
 </head>
@@ -48,16 +55,18 @@
       to C, and run on their own video, sound and input code, with no emulator in the loop.</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/nico3185/pixel_sorcery/releases/latest">Download for Mac</a>
+      <a class="btn primary" href="https://github.com/nico3185/pixel_sorcery/releases/latest">Download for Linux (.deb)</a>
       <a class="btn" href="https://github.com/nico3185/pixel_sorcery">Source on GitHub</a>
     </div>
-    <p class="small">macOS 14+ on Apple silicon · unsigned (System Settings → Privacy &amp; Security → Open Anyway) · no ROMs included</p>
+    <p class="small">Mac: macOS 14+ on Apple silicon, unsigned (System Settings → Privacy &amp; Security → Open Anyway) ·
+      Linux: Debian / Ubuntu, <code>sudo apt install ./pixelsorcery_0.1.0_all.deb</code>, then <code>pixelsorcery</code> · no ROMs included</p>
   </header>
 
   <h2>How it works</h2>
   <ol>
-    <li><b>Point it at your own dumps.</b> The app recognises each game by its checksum.</li>
+    <li><b>Point it at your own dumps.</b> PixelSorcery recognises each game by its checksum.</li>
     <li><b>Recompile.</b> The 68000 game code and the Z80 sound driver are translated to C.</li>
-    <li><b>Build.</b> That C is compiled with the native runtime into a program for your Mac.</li>
+    <li><b>Build.</b> That C is compiled with the native runtime into a program for your computer.</li>
     <li><b>Play.</b> Widescreen, instant save states, controller mapping and a settings menu come with it.</li>
   </ol>
 
@@ -70,6 +79,29 @@
     <div class="card"><b>Measured coverage.</b> How much of each game's code has run in a verified replay is
       measured per title, and level-select recordings push it further.</div>
   </div>
+
+  <h2>Game coverage</h2>
+  <p>Share of each game's converted code that has run in a replay verified against the original
+    (31 October 2026). Code that hasn't run yet still works: it falls back to the built-in 68000
+    interpreter, so lower coverage costs speed, not correctness.</p>
+  <table>
+    <thead><tr><th>Game</th><th>Code verified</th><th>Mac / Linux app</th></tr></thead>
+    <tbody>
+      <tr><td>Sonic the Hedgehog 2</td><td><span class="bar" style="--p:60.87%"></span>60.9%</td><td>yes</td></tr>
+      <tr><td>Sonic the Hedgehog</td><td><span class="bar" style="--p:59.29%"></span>59.3%</td><td>yes</td></tr>
+      <tr><td>QuackShot (REV00)</td><td><span class="bar" style="--p:52.10%"></span>52.1%</td><td>yes</td></tr>
+      <tr><td>Knuckles in Sonic 2</td><td><span class="bar" style="--p:52.36%"></span>52.4%</td><td>yes</td></tr>
+      <tr><td>Castle of Illusion</td><td><span class="bar" style="--p:51.25%"></span>51.3%</td><td>yes</td></tr>
+      <tr><td>QuackShot (REV01)</td><td><span class="bar" style="--p:45.99%"></span>46.0%</td><td>yes</td></tr>
+      <tr><td>Sonic &amp; Knuckles</td><td><span class="bar" style="--p:35.66%"></span>35.7%</td><td>yes</td></tr>
+      <tr><td>Sonic 3 &amp; Knuckles</td><td><span class="bar" style="--p:35.39%"></span>35.4%</td><td>yes</td></tr>
+      <tr><td>Sonic the Hedgehog 3</td><td><span class="bar" style="--p:31.29%"></span>31.3%</td><td>yes</td></tr>
+      <tr><td>Knuckles in Sonic 1 (our own)</td><td><span class="bar" style="--p:28.01%"></span>28.0%</td><td>yes</td></tr>
+      <tr><td>World of Illusion (USA)</td><td><span class="bar" style="--p:27.42%"></span>27.4%</td><td>yes</td></tr>
+      <tr><td>World of Illusion (Europe)</td><td><span class="bar" style="--p:20.93%"></span>20.9%</td><td>yes</td></tr>
+      <tr><td>Sonic CD (Mega CD)</td><td>runs compiled, on the emulator core</td><td>not yet</td></tr>
+    </tbody>
+  </table>
 
   <h2>Native, no emulation</h2>
   <div class="grid">
