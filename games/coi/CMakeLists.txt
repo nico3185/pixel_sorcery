@@ -28,5 +28,7 @@ target_link_libraries(coi PRIVATE genrecomp_native)
 
 # coi_oracle: same game code on the Genesis Plus GX-backed runtime, for the in-process
 # compare modes (PS_RENDERER=compare, PS_AUDIO=compare) used by recomp.sh
-add_executable(coi_oracle $<TARGET_OBJECTS:coi_code>)
-target_link_libraries(coi_oracle PRIVATE genrecomp)
+if(TARGET genrecomp)   # absent when the engine is built without Genesis Plus GX
+    add_executable(coi_oracle $<TARGET_OBJECTS:coi_code>)
+    target_link_libraries(coi_oracle PRIVATE genrecomp)
+endif()

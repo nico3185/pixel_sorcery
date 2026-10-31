@@ -5,10 +5,12 @@
 # games/TITLE/sidebyside.json (SHCD: the disc's .cue under roms/cd/), else TITLE.{md,bin,gen}.
 # Extra args go to the game (e.g. --fullscreen). The native port has no emulator: compare against
 # the original with engine/tools/sidebyside.py (it runs the GPGX-based *_oracle / tracer builds).
+# Play a stored release instead (engine/tools/release.sh; no build, so it works while the code
+# changes): ./play.sh TITLE --release [TAG] (default the latest); ./play.sh TITLE --releases lists them.
 # Resume a recorded session: ./play.sh TITLE --resume [SESSION.polls] MINUTE
 #   replays that session up to MINUTE at full speed, then you play on (latest session if
 #   only a minute is given). The new session file contains the replayed part too.
-set -e
+set -e; setopt pipefail
 here=${0:A:h}
 ROOT=$here; source $here/engine/tools/titles.zsh
 if [[ $# -eq 0 ]]; then
@@ -52,6 +54,19 @@ if [[ ${1:-} == --list ]]; then
   done
   exit 0
 fi
+releases=${PS_RELEASES:-$HOME/Library/Application Support/PixelSorcery/releases}
+if [[ ${1:-} == --releases ]]; then
+  for d in "$releases"/r*(N/) "$releases"/*(N/); do
+    [[ -e $d/$title ]] || continue; print "  ${d:t}  $(sed -n 's/^date //p' $d/manifest.txt)"
+  done | sort -u; exit 0
+fi
+release=
+if [[ ${1:-} == --release ]]; then
+  rel=latest; [[ -n ${2:-} && -d $releases/${2:-} ]] && { rel=$2; shift; }; shift
+  release=$(print -l "$releases"/$rel/$title/*(N.) | head -1)
+  [[ -n $release ]] || { print -u2 "no release of $title in $releases/$rel (engine/tools/release.sh makes one)"; exit 1; }
+  r=$releases/$rel; print "release ${r:A:t}: $release"
+fi
 resume=
 if [[ ${1:-} == --resume ]]; then
   if [[ $# -ge 3 && $2 == *.polls ]]; then sess=${2:A}; min=$3; shift 3
@@ -67,10 +82,11 @@ if [[ -z $rom ]]; then
   for c in $romdef $title.md $title.bin $title.gen; do [[ -n $c && -f $romdir/$c ]] && { rom=$romdir/$c; break; }; done
 fi
 [[ -f $rom ]] || { print -u2 "ROM not found for $title (set ROM=path)"; exit 1; }
-if [[ ! -f $game/recomp.json ]]; then             # a disc (SHCD): its own generator, then build
+if [[ -n $release ]]; then exe=$release            # a stored release: nothing to build
+elif [[ ! -f $game/recomp.json ]]; then             # a disc (SHCD): its own generator, then build
   [[ -x $game/tools/generate.sh ]] && $game/tools/generate.sh $rom
   cmake -S $game -B $game/build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
-  ninja -C $game/build >/dev/null
+  NINJA_STATUS="[%f/%t] " ninja -C $game/build | $here/engine/tools/progress.zsh "$(ps_name $title 2>/dev/null || print $title): building"
 elif [[ ! -d $game/src/recomp ]] || [[ -z "$(ls $game/src/recomp 2>/dev/null)" ]]; then
   $here/engine/tools/recomp.sh $rom $game          # generate + build + self-check
 else
@@ -81,7 +97,7 @@ else
     $py $here/engine/tools/recompiler/generate.py $rom -o $game/src/recomp -c $game/recomp.json >/dev/null
   fi
   cmake -S $game -B $game/build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
-  ninja -C $game/build >/dev/null
+  NINJA_STATUS="[%f/%t] " ninja -C $game/build | $here/engine/tools/progress.zsh "$(ps_name $title 2>/dev/null || print $title): building"
 fi
 cd $game
 # Every session is replayable: inputs per controller poll + full log (misses, bad returns).
@@ -90,4 +106,4 @@ export PS_POLL_RECORD=${PS_POLL_RECORD:-sessions/$stamp.polls}
 exec 2> >(tee sessions/$stamp.log >&2)
 print "session: $game/sessions/$stamp.{polls,log}"
 [[ -n $resume ]] && export PS_RESUME=$resume
-exec env PS_RENDERER=${PS_RENDERER:-native} PS_Z80=${PS_Z80:-recomp} ./$exe "$@" $rom
+exec env PS_RENDERER=${PS_RENDERER:-native} PS_Z80=${PS_Z80:-recomp} ${exe:A} "$@" $rom

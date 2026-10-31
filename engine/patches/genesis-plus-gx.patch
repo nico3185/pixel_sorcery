@@ -1,3 +1,16 @@
+diff --git a/core/debug/cpuhook.h b/core/debug/cpuhook.h
+index 1fea3ec..a890266 100644
+--- a/core/debug/cpuhook.h
++++ b/core/debug/cpuhook.h
+@@ -80,7 +80,7 @@ typedef enum {
+ 
+ /* CPU hook is called on read, write, and execute.
+  */
+-void (*cpu_hook)(hook_type_t type, int width, unsigned int address, unsigned int value);
++extern void (*cpu_hook)(hook_type_t type, int width, unsigned int address, unsigned int value);
+ 
+ /* Use set_cpu_hook() to assign a callback that can process the data provided
+  * by cpu_hook().
 diff --git a/core/io_ctrl.c b/core/io_ctrl.c
 index 3434327..8c36ac9 100644
 --- a/core/io_ctrl.c

@@ -134,11 +134,27 @@ def norm_name(n):
     return n
 
 
+def as_dict(recs):
+    """robust.json's recordings: robust.sh writes a list [{"recording", "compiled": "MATCH: ... at
+    all N polls", "mixed": "MATCH"|...}], --results a dict keyed by recording"""
+    if not isinstance(recs, list):
+        return recs
+    conv = {}
+    for r in recs:
+        c, m = r.get('compiled', ''), r.get('mixed', '')
+        n = re.search(r'at all (\d+) polls', c)
+        conv[r['recording']] = {'compiled': 'MATCH' if c.startswith('MATCH') else c,
+                                'mixed': {'all': 'MATCH' if m.startswith('MATCH') else m},
+                                'polls': int(n.group(1)) if n else 0}
+    return conv
+
+
 def import_results(spec):
     t, files = spec.split('=', 1)
     game = os.path.join(REPO, 'games', t)
     path = os.path.join(game, 'build', 'robust.json')
     rob = json.load(open(path)) if os.path.exists(path) else {'recordings': {}, 'sources': []}
+    rob['recordings'] = as_dict(rob['recordings']); rob.setdefault('sources', [])
     for f in files.split(','):
         for k, v in parse_results(f).items():
             old = rob['recordings'].get(k, {'polls': 0, 'mixed': {}})
@@ -158,17 +174,7 @@ def replay_kpi(game):
     path = os.path.join(game, 'build', 'robust.json')
     if not os.path.exists(path):
         return None
-    recs = json.load(open(path))['recordings']
-    if isinstance(recs, list):
-        # robust.sh's format: [{"recording", "compiled": "MATCH: ... at all N polls", "mixed": "MATCH"|...}]
-        conv = {}
-        for r in recs:
-            c, m = r.get('compiled', ''), r.get('mixed', '')
-            n = re.search(r'at all (\d+) polls', c)
-            conv[r['recording']] = {'compiled': 'MATCH' if c.startswith('MATCH') else c,
-                                    'mixed': {'all': 'MATCH' if m.startswith('MATCH') else m},
-                                    'polls': int(n.group(1)) if n else 0}
-        recs = conv
+    recs = as_dict(json.load(open(path))['recordings'])
     comp = [k for k, v in recs.items() if v.get('compiled') == 'MATCH']
     mixed = [k for k, v in recs.items() if v.get('compiled') == 'MATCH' and v['mixed']
              and all(x == 'MATCH' for x in v['mixed'].values())]

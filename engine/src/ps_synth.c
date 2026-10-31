@@ -116,7 +116,7 @@ static int32_t s_psg_acc[MAX_FM]; static uint16_t s_psg_cnt[MAX_FM];
 static int keycode(int fnum, int block)
 {
     int f11 = (fnum >> 10) & 1, f10 = (fnum >> 9) & 1, f9 = (fnum >> 8) & 1, f8 = (fnum >> 7) & 1;
-    int n3 = (f11 & (f10 | f9 | f8)) | (!f11 & f10 & f9 & f8);
+    int n3 = (f11 & (f10 | f9 | f8)) | ((f11 ^ 1) & f10 & f9 & f8);
     return (block << 2) | (f11 << 1) | n3;
 }
 

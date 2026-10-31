@@ -28,5 +28,7 @@ target_link_libraries(qs_r1 PRIVATE genrecomp_native)
 
 # qs_r1_oracle: same game code on the Genesis Plus GX-backed runtime, for the in-process
 # compare modes (PS_RENDERER=compare, PS_AUDIO=compare) used by recomp.sh
-add_executable(qs_r1_oracle $<TARGET_OBJECTS:qs_r1_code>)
-target_link_libraries(qs_r1_oracle PRIVATE genrecomp)
+if(TARGET genrecomp)   # absent when the engine is built without Genesis Plus GX
+    add_executable(qs_r1_oracle $<TARGET_OBJECTS:qs_r1_code>)
+    target_link_libraries(qs_r1_oracle PRIVATE genrecomp)
+endif()

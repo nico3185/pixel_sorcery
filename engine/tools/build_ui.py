@@ -26,10 +26,21 @@ PREFS = os.path.expanduser('~/Library/Application Support/PixelSorcery/build_ui.
 EXTS = ('.bin', '.md', '.gen', '.68k', '.sgd')
 
 
+# without Genesis Plus GX's sources (the Mac app's tree) only native ports build: no self-check,
+# and no title whose runtime still needs the emulator core (SHCD)
+NATIVE_ONLY = not os.path.exists(os.path.join(ROOT, 'engine', 'ext', 'Genesis-Plus-GX', 'core', 'system.c'))
+
+
+def native_port(folder):
+    try: return 'genrecomp_native' in open(os.path.join(ROOT, 'games', folder, 'CMakeLists.txt')).read()
+    except OSError: return False
+
+
 def titles():
     """[(folder, code, name)] in shelf order, from titles.zsh (the names play.sh shows)"""
     out = subprocess.run(['zsh', '-c', f'ROOT={ROOT!r}; source {TOOLS}/titles.zsh; ps_tsv'], capture_output=True, text=True).stdout
-    return [tuple(l.split('\t')) for l in out.splitlines() if l.count('\t') == 2]
+    return [tuple(l.split('\t')) for l in out.splitlines() if l.count('\t') == 2
+            and (not NATIVE_ONLY or native_port(l.split('\t')[0]))]
 
 
 def shelf(name):
@@ -262,11 +273,23 @@ class Job:
 
 
 # ------------------------------------------------------------------ engine for the build window
+def built(t):
+    """the time of TITLE's native build (sidebyside.json's "exe", else build/TITLE), 0 when none"""
+    g = os.path.join(ROOT, 'games', t)
+    try: exe = json.load(open(os.path.join(g, 'sidebyside.json'))).get('exe', 'build/' + t)
+    except (OSError, ValueError): exe = 'build/' + t
+    try: return int(os.path.getmtime(os.path.join(g, exe)))
+    except OSError: return 0
+
+
 def engine():
     """--engine: the build window (ps_launcher --build) draws, this does the work. Commands on
-    stdin, one a line: scan FOLDER | start CORES PROCS CHECK TITLE... | stop | quit. State on
-    stdout four times a second, a line each, ended by E:
-      S|folder|running|scanning|cpus     T|folder|code|name|rom state|rom detail|stage|done|total|seconds|result
+    stdin, one a line: scan FOLDER | start CORES PROCS CHECK TITLE... | play TITLE | stop | quit.
+    play: ./play.sh TITLE in its own session (the last build; play.sh builds first if it is missing
+    or stale), its output in games/TITLE/play.log. State on stdout four times a second, a line
+    each, ended by E:
+      S|folder|running|scanning|cpus|native only     T|folder|code|name|rom state|rom detail|stage|done|total|seconds|result|built
+      (built: the native build's time, 0 when there is none)
       N|note (the last few)"""
     import queue
     T = titles(); state = {'folder': ROMS, 'plan': {}, 'scanning': False}
@@ -306,19 +329,25 @@ def engine():
                 if os.path.isdir(f): threading.Thread(target=rescan, args=(os.path.abspath(f),), daemon=True).start()
                 else: note(f'no folder {f}')
             elif c[0] == 'start' and len(c) >= 4 and not any(j.stage != 'done' for j in jobs.values()):
-                threading.Thread(target=start, args=(int(c[1]), int(c[2]), c[3] == '1', c[4:]), daemon=True).start()
+                threading.Thread(target=start, args=(int(c[1]), int(c[2]), c[3] == '1' and not NATIVE_ONLY, c[4:]), daemon=True).start()
+            elif c[0] == 'play' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
+                log = open(os.path.join(ROOT, 'games', c[1], 'play.log'), 'w')
+                subprocess.Popen([os.path.join(ROOT, 'play.sh'), c[1]], cwd=ROOT, stdin=subprocess.DEVNULL,
+                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                note(f'playing {c[1]}')
             elif c[0] == 'stop':
                 stop.set(); [j.kill() for j in jobs.values()]; note('stopped')
         except queue.Empty:
             pass
         running = any(j.stage != 'done' for j in jobs.values())
-        out = [f'S|{state["folder"]}|{int(running)}|{int(state["scanning"])}|{os.cpu_count() or 4}']
+        out = [f'S|{state["folder"]}|{int(running)}|{int(state["scanning"])}|{os.cpu_count() or 4}|{int(NATIVE_ONLY)}']
         for t, code, name in T:
             st, d = state['plan'].get(t, ('missing', ''))
             j = jobs.get(t)
             el = int(((j.t1 or time.time()) - j.t0) if j and j.t0 else 0)
             out.append('|'.join(['T', t, code, name, st, os.path.basename(str(d).split('::')[-1]),
-                                 (j.stage if j else ''), str(j.n if j else 0), str(j.m if j else 0), str(el), (j.result if j else '')]))
+                                 (j.stage if j else ''), str(j.n if j else 0), str(j.m if j else 0), str(el), (j.result if j else ''),
+                                 str(built(t))]))
         out += [f'N|{n}' for n in notes] + ['E']
         try: sys.stdout.write('\n'.join(x.replace('\n', ' ') for x in out) + '\n'); sys.stdout.flush()
         except BrokenPipeError: stop.set(); [j.kill() for j in jobs.values()]; return

@@ -1,0 +1,181 @@
+{
+ "_doc": "SH3 level select: on the title animation (the pad is read on irregular frames, so per controller read: unit poll) Up, Up, Down, Down, Up, Up, Up, Up (checker $4288, table $42CA, sets $FFD0/$FFD2 = 0101), then Up on the title menu and Start (game mode $28); Down moves, Start loads. engine/tools/level_starts.py Items 8-9, 14-17 are zones not on this cart, 24-28 special stages and the sound test (not levels).",
+ "unit": "poll",
+ "code": [
+  [
+   70,
+   "UP",
+   1
+  ],
+  [
+   72,
+   "UP",
+   1
+  ],
+  [
+   74,
+   "DOWN",
+   1
+  ],
+  [
+   76,
+   "DOWN",
+   1
+  ],
+  [
+   78,
+   "UP",
+   1
+  ],
+  [
+   80,
+   "UP",
+   1
+  ],
+  [
+   82,
+   "UP",
+   1
+  ],
+  [
+   84,
+   "UP",
+   1
+  ],
+  [
+   500,
+   "UP",
+   4
+  ],
+  [
+   520,
+   "START",
+   4
+  ]
+ ],
+ "move": {
+  "first": 900,
+  "every": 16,
+  "button": "DOWN",
+  "len": 3
+ },
+ "select": {
+  "after": 40,
+  "button": "START",
+  "len": 3
+ },
+ "check": {
+  "mode": "FFF600",
+  "value": "0C",
+  "settle": 240,
+  "load_max": 900,
+  "zone": "FFFE10"
+ },
+ "items": {
+  "0": "AIZ1",
+  "1": "AIZ2",
+  "2": "HCZ1",
+  "3": "HCZ2",
+  "4": "MGZ1",
+  "5": "MGZ2",
+  "6": "CNZ1",
+  "7": "CNZ2",
+  "10": "ICZ1",
+  "11": "ICZ2",
+  "12": "LBZ1",
+  "13": "LBZ2",
+  "18": "ALZ",
+  "19": "BPZ",
+  "20": "DPZ",
+  "21": "CGZ",
+  "22": "EMZ",
+  "23": "Z13"
+ },
+ "also": [
+  [
+   30,
+   "RIGHT",
+   1500
+  ],
+  [
+   60,
+   "C",
+   12
+  ],
+  [
+   150,
+   "C",
+   12
+  ],
+  [
+   240,
+   "C",
+   12
+  ],
+  [
+   330,
+   "C",
+   12
+  ],
+  [
+   420,
+   "C",
+   12
+  ],
+  [
+   510,
+   "C",
+   12
+  ],
+  [
+   600,
+   "C",
+   12
+  ],
+  [
+   690,
+   "C",
+   12
+  ],
+  [
+   780,
+   "C",
+   12
+  ],
+  [
+   870,
+   "C",
+   12
+  ],
+  [
+   960,
+   "C",
+   12
+  ],
+  [
+   1050,
+   "C",
+   12
+  ],
+  [
+   1140,
+   "C",
+   12
+  ],
+  [
+   1230,
+   "C",
+   12
+  ],
+  [
+   1320,
+   "C",
+   12
+  ],
+  [
+   1410,
+   "C",
+   12
+  ]
+ ]
+}

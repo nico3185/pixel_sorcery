@@ -73,6 +73,7 @@ typedef struct PsOverlay {
     uint32_t key; int state;             /* runtime: key last checked, 1 resident, -1 not */
 } PsOverlay;
 void func_table_add_overlay(PsOverlay *ov);
+const char *func_table_last_overlay(void);   /* the overlay last called into, or NULL */
 extern uint32_t (*func_table_overlay_key)(uint32_t addr);
 extern uint8_t g_ps_overlay_wram_code[0x1000];
 

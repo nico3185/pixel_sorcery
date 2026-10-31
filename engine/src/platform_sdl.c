@@ -79,7 +79,7 @@ static uint64_t s_poll_t, s_vsync_t;
  * through platform_queue_audio's resampler. Otherwise (present does not block, as in some
  * windowed setups, or a display that is not a multiple of 60 Hz) frame_sync's deadline paces
  * at 59.92 Hz, vsync still on: no tearing either way. PS_VSYNC=0: no vsync at all. */
-static bool s_metal;                   /* Metal presenter (present_metal.m), paced by CVDisplayLink */
+static bool s_metal;                   /* Metal presenter (present_metal.m), paced by the display link */
 /* Renderer preference (macOS): PS_PRESENTER=metal|opengl, else the settings menu's choice,
  * kept for every title in .../PixelSorcery/display.ini (read before the window opens,
  * which is before a title's own settings load). Default: OpenGL. */
@@ -117,6 +117,7 @@ void metal_present_frame(const uint8_t *xrgb, int w, int h, double poll_ms_ago);
 double metal_latency_ms(void);
 void metal_queue_stats(double *avg_inflight, int *max_inflight, double *commit_to_screen_ms);
 long metal_drained(void);
+long metal_untimed(void);
 uint64_t metal_wait_vblank(uint64_t n);
 uint64_t metal_vblank_count(void);
 double metal_refresh_hz(void);
@@ -375,7 +376,7 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
     }
     if (s_metal) {
 #ifdef __APPLE__
-        { extern int ps_poll_fast_forward(void); if (ps_poll_fast_forward() && s_frame_no % 30) return; }
+        { extern int ps_poll_fast_forward(void); extern int g_ps_boot_hidden; if (ps_poll_fast_forward() && (g_ps_boot_hidden || s_frame_no % 30)) return; }
         double cost = ms_since(s_poll_t);
         s_cost_ms = cost > s_cost_ms ? cost : s_cost_ms * 0.98 + cost * 0.02;
         metal_present_frame(framebuffer, width, GEN_RENDER_HEIGHT, cost);
@@ -391,7 +392,7 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
             s_lat_sum += cost; s_lat_n++;
             if (s_lat_n == 300) {
                 double qa, cs; int qm; metal_queue_stats(&qa, &qm, &cs);
-                fprintf(stderr, "metal: in flight at present avg %.2f max %d, commit -> on screen %.1f ms, %ld frames skipped to drain\n", qa, qm, cs, metal_drained());
+                fprintf(stderr, "metal: in flight at present avg %.2f max %d, commit -> on screen %.1f ms, %ld frames skipped to drain, %ld refreshes without a display tick, %.1f Hz\n", qa, qm, cs, metal_drained(), metal_untimed(), metal_refresh_hz());
                 fprintf(stderr, "latency: input poll -> on screen %.1f ms avg (metal, presented time; frame cost %.1f ms); audio queue avg %.1f ms, min %.1f ms\n",
                         metal_latency_ms(), s_cost_ms, s_aq_n ? s_aq_sum / s_aq_n / 44.1 : 0, s_aq_min / 44.1);
                 s_aq_sum = 0; s_aq_n = 0; s_aq_min = 0xFFFFFFFF; s_lat_sum = 0; s_lat_n = 0;
@@ -402,7 +403,7 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
     }
     if (!s_texture || !s_renderer) return;
     { extern int ps_poll_fast_forward(void);       /* resuming: show 1 frame in 30 */
-      if (ps_poll_fast_forward() && s_frame_no % 30) return; }
+      extern int g_ps_boot_hidden; if (ps_poll_fast_forward() && (g_ps_boot_hidden || s_frame_no % 30)) return; }
 
     SDL_Rect src = { 0, 0, width, GEN_RENDER_HEIGHT };
     if (width != s_shown_w) {                         /* 4:3 <-> widescreen */
