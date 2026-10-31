@@ -1,0 +1,191 @@
+{
+ "_doc": "SHK2 level select: on the title (input from frame ~900) Up x3, Down x3, Left, Right, Left, Right (table at $3038E2), then hold A + Start; the menu is SH2's (Down moves, Start loads). engine/tools/level_starts.py",
+ "code": [
+  [
+   900,
+   "UP",
+   3
+  ],
+  [
+   912,
+   "UP",
+   3
+  ],
+  [
+   924,
+   "UP",
+   3
+  ],
+  [
+   936,
+   "DOWN",
+   3
+  ],
+  [
+   948,
+   "DOWN",
+   3
+  ],
+  [
+   960,
+   "DOWN",
+   3
+  ],
+  [
+   972,
+   "LEFT",
+   3
+  ],
+  [
+   984,
+   "RIGHT",
+   3
+  ],
+  [
+   996,
+   "LEFT",
+   3
+  ],
+  [
+   1008,
+   "RIGHT",
+   3
+  ],
+  [
+   1050,
+   "A+START",
+   10
+  ]
+ ],
+ "move": {
+  "first": 1150,
+  "every": 16,
+  "button": "DOWN",
+  "len": 3
+ },
+ "select": {
+  "after": 40,
+  "button": "START",
+  "len": 3
+ },
+ "items": {
+  "0": "EHZ1",
+  "1": "EHZ2",
+  "2": "CPZ1",
+  "3": "CPZ2",
+  "4": "ARZ1",
+  "5": "ARZ2",
+  "6": "CNZ1",
+  "7": "CNZ2",
+  "8": "HTZ1",
+  "9": "HTZ2",
+  "10": "MCZ1",
+  "11": "MCZ2",
+  "12": "OOZ1",
+  "13": "OOZ2",
+  "14": "MTZ1",
+  "15": "MTZ2",
+  "16": "MTZ3",
+  "17": "SCZ",
+  "18": "WFZ",
+  "19": "DEZ",
+  "20": "SS1"
+ },
+ "item_mode": {
+  "20": "10"
+ },
+ "check": {
+  "mode": "FFF600",
+  "value": "0C",
+  "settle": 240,
+  "load_max": 900,
+  "zone": "FFFE10"
+ },
+ "also": [
+  [
+   30,
+   "RIGHT",
+   1500
+  ],
+  [
+   60,
+   "C",
+   12
+  ],
+  [
+   150,
+   "C",
+   12
+  ],
+  [
+   240,
+   "C",
+   12
+  ],
+  [
+   330,
+   "C",
+   12
+  ],
+  [
+   420,
+   "C",
+   12
+  ],
+  [
+   510,
+   "C",
+   12
+  ],
+  [
+   600,
+   "C",
+   12
+  ],
+  [
+   690,
+   "C",
+   12
+  ],
+  [
+   780,
+   "C",
+   12
+  ],
+  [
+   870,
+   "C",
+   12
+  ],
+  [
+   960,
+   "C",
+   12
+  ],
+  [
+   1050,
+   "C",
+   12
+  ],
+  [
+   1140,
+   "C",
+   12
+  ],
+  [
+   1230,
+   "C",
+   12
+  ],
+  [
+   1320,
+   "C",
+   12
+  ],
+  [
+   1410,
+   "C",
+   12
+  ]
+ ]
+}

@@ -7,14 +7,15 @@
 # per title, so P titles at once (-p P, default N/2), each compiling with N/P cores.
 # ROMs: ../roms/<"rom" in sidebyside.json> (or TITLE.md/.bin/.gen). Logs: games/TITLE/build_all.log
 # --roms DIR: first find the games in DIR (any names, zips too) and put them in ../roms.
-# No arguments in a terminal: the build app (macOS: PixelSorcery Build.app, made by
+# No arguments in a terminal: the build app (macOS: PixelSorcery.app, made by
 # engine/tools/macapp/make_app.sh; elsewhere the terminal screen build_ui.py); --tui: the
 # terminal screen; --menu: the plain menu. Progress: a bar per title.
+# --play: then play the (first) title when its build succeeded; the app has Play/Rebuild per title.
 set -u
 here=${0:A:h:h:h}; jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc); check=0; titles=(); par=; romdir=
-menu=0
+menu=0; play=0
 if (( $# == 0 )) && [[ -t 0 && -t 1 ]]; then   # the build app (macOS), else the terminal screen
-  app="$here/launchers/build/PixelSorcery Build.app"
+  app="$here/launchers/build/PixelSorcery.app"
   if [[ $(uname) == Darwin ]] && { [[ -d $app && ! $here/engine/tools/macapp/PixelSorceryBuild.swift -nt $app ]] || $here/engine/tools/macapp/make_app.sh >/dev/null; }; then
     open "$app"; exit 0
   fi
@@ -28,9 +29,10 @@ while (( $# )); do
     -j) jobs=$2; shift ;;
     -j*) jobs=${1#-j} ;;
     --check) check=1 ;;
+    --play) play=1 ;;
     -p) par=$2; shift ;;
     --roms) romdir=$2; shift ;;
-    -h|--help) sed -n 2,10p $0; exit 0 ;;
+    -h|--help) sed -n 2,13p $0; exit 0 ;;
     *) t=$(ps_resolve $1) || { print -u2 "unknown or ambiguous title '$1'"; exit 2; }; titles+=($t) ;;
   esac
   shift
@@ -149,4 +151,6 @@ fi
 print "\n| title | result |\n|---|---|"
 for t in $titles; do print "| $t | ${result[$t]:-not built} |"; done
 print "\n$#titles titles, $(( SECONDS - t0 )) s, $jobs cores"
-[[ -z ${(M)${(v)result}:#*FAILED*} ]]
+ok=0; [[ -z ${(M)${(v)result}:#*FAILED*} ]] || ok=1
+(( play && ok == 0 )) && exec $here/play.sh $titles[1]
+exit $ok

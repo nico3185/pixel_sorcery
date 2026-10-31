@@ -5,7 +5,7 @@
 # 0 bad returns, and 0 frames differing between the native renderer and GPGX; with a
 # recompiled Z80 driver + native YM2612/PSG, the write stream (values + cycles) must equal
 # GPGX's Z80 + chips, and the native synth's output must match GPGX's spectrally (librosa).
-set -eu
+set -eu; setopt pipefail
 eng=${0:A:h}/..; rom=${1:A}; game=${2:A}; shift 2
 frames=3000; [[ ${1:-} == --frames ]] && frames=$2
 py=$eng/.venv/bin/python
@@ -40,7 +40,7 @@ PY
 fi
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null && if [[ -n ${PS_BUILD_PROGRESS:-} ]]; then
   ninja -C build ${PS_JOBS:+-j $PS_JOBS}             # build UI: ninja's [done/total] lines on stdout
-else ninja -C build ${PS_JOBS:+-j $PS_JOBS} >/dev/null; fi   # PS_JOBS: cores (build_all.sh -j)
+else NINJA_STATUS="[%f/%t] " ninja -C build ${PS_JOBS:+-j $PS_JOBS} | ${0:A:h}/progress.zsh "${PWD:t}: building"; fi   # PS_JOBS: cores (build_all.sh -j)
 native=$(find build -maxdepth 1 -type f -perm -u+x ! -name '*.*' ! -name '*_oracle' | head -1)   # shipped port
 exe=${native}_oracle                         # same game code on the GPGX-backed runtime (compare modes)
 args=(--headless --frames $frames); [[ -f selfcheck.args ]] && args+=(${(z)"$(<selfcheck.args)"})

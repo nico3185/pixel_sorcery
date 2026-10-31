@@ -39,7 +39,8 @@ static int s_mask[32][2], s_nmask;
 static char s_state_dir[512]; static long s_state_every;
 static FILE *s_alog;
 static int s_live_after;           /* PS_RESUME: live input once the replay is used up */
-int ps_poll_fast_forward(void) { return s_play && s_live_after; }
+int g_ps_boot_hidden;   /* booting unseen (a disc's BIOS menu): nothing shown or heard, no pacing */
+int ps_poll_fast_forward(void) { return (s_play && s_live_after) || g_ps_boot_hidden; }
 #ifndef PS_NATIVE
 static void (*s_fm_w)(unsigned int, unsigned int, unsigned int);
 static void alog_fm(unsigned int c, unsigned int a, unsigned int v)

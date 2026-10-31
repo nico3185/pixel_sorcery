@@ -43,9 +43,15 @@ def _abs_addr(m):
 
 def load_cycle_table():
     """Per-opcode 68000 base cost in master clocks (x7), from the oracle core's table
-    (pinned submodule; the numbers are the documented 68000 instruction timings)."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'ext',
-                        'Genesis-Plus-GX', 'core', 'm68k', 'm68ki_cycles.h')
+    (pinned submodule; the numbers are the documented 68000 instruction timings). Without the
+    submodule (the Mac app's tree): m68k_cycles.txt beside this file, the same numbers, written by
+    engine/tools/macapp/make_dmg.sh."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, '..', '..', 'ext', 'Genesis-Plus-GX', 'core', 'm68k', 'm68ki_cycles.h')
+    if not os.path.exists(path):
+        vals = [int(v) for v in open(os.path.join(here, 'm68k_cycles.txt')).read().split()]
+        assert len(vals) == 0x10000, len(vals)
+        return vals
     txt = open(path).read()
     body = txt[txt.index('{') + 1: txt.rindex('}')]
     vals = [int(eval(v)) for v in re.findall(r'\d+\s*\*\s*\d+|\d+', body)]

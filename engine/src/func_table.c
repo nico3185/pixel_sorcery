@@ -70,6 +70,7 @@ static gen_func_t table_find(uint32_t m68k_addr);
 static PsOverlay *s_ov[MAX_OVERLAYS]; static int s_nov;
 static uint32_t s_ov_lo = 0xFFFFFFFF, s_ov_hi;
 static PsOverlay *s_ov_last;
+const char *func_table_last_overlay(void) { return s_ov_last ? s_ov_last->name : NULL; }
 static uint32_t s_ovr_lo, s_ovr_hi = 0xFFFFFFFF;   /* PS_OVERLAY_RANGE=lo-hi (hex): only these entries */
 uint32_t (*func_table_overlay_key)(uint32_t addr);
 uint8_t g_ps_overlay_wram_code[0x1000];
