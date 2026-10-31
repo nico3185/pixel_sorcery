@@ -47,6 +47,14 @@ def shelf(name):
 SIZES = {e['size'] for e in CAT.values() if 'size' in e}   # only dumps of these sizes are read
 SERIALS = {e['serial'] for e in CAT.values() if 'serial' in e}
 NOSERIAL = {e['size'] for e in CAT.values() if 'size' in e and 'serial' not in e}   # the patch chip
+def many(v): return v if isinstance(v, list) else [v]       # a disc title: one serial and hash per region
+DISCS = {d for e in CAT.values() if 'disc' in e for d in many(e['disc'])}
+def cue_track(cue):
+    """a .cue's first track file (the data track)"""
+    for l in open(cue, errors='replace'):
+        m = re.match(r'\s*FILE\s+"(.+)"', l)
+        if m: return os.path.join(os.path.dirname(cue), m.group(1))
+    raise OSError('no FILE in ' + cue)
 def head(path):
     """the first bytes of a ROM (its header at $180), without reading or decompressing the rest"""
     if '::' in path:
@@ -64,6 +72,21 @@ _hash_cache = {}
 def identify(path):
     """(catalogue key, 'verified' | 'other dump') or None"""
     try:
+        if path.lower().endswith('.cue'):                  # a disc: the data track's header and hash
+            track = cue_track(path); st = os.stat(track); key = (track, st.st_size, st.st_mtime)
+            if key not in _hash_cache:
+                with open(track, 'rb') as f: h = f.read(0x200)
+                o = 0x10 if h[:12] == b'\x00' + b'\xff' * 10 + b'\x00' else 0      # raw 2352-byte sectors
+                ser = h[o + 0x180:o + 0x18E].decode('latin1')
+                if ser not in DISCS: return None
+                sha = hashlib.sha1()
+                with open(track, 'rb') as f:
+                    for b in iter(lambda: f.read(1 << 20), b''): sha.update(b)
+                _hash_cache[key] = (sha.hexdigest(), ser)
+            sha, ser = _hash_cache[key]
+            for k, e in CAT.items():
+                if ser in many(e.get('disc', [])): return k, ('verified' if sha in many(e['sha1']) else 'other dump')
+            return None
         if '::' in path:
             z, m = path.split('::', 1); st = os.stat(z); key = (path, st.st_mtime)
         else:
@@ -96,12 +119,12 @@ def scan(folder):
     found = {}
     folders = [folder] + ([ROMS] if os.path.abspath(folder) != ROMS and os.path.isdir(ROMS) else [])
     for top in folders:
-        for dirpath, dirs, files in os.walk(top):
+        for dirpath, dirs, files in os.walk(top, followlinks=True):
             if dirpath.count(os.sep) - top.count(os.sep) >= 2: dirs[:] = []
             cands = []
             for f in sorted(files):
                 p = os.path.join(dirpath, f)
-                if f.lower().endswith(EXTS): cands.append(p)
+                if f.lower().endswith(EXTS + ('.cue',)): cands.append(p)
                 elif f.lower().endswith('.zip'):                   # the members of a matching size
                     try:
                         with zipfile.ZipFile(p) as zf:
@@ -114,7 +137,7 @@ def scan(folder):
                 k, st = r
                 old = found.get(k)
                 better = old is None or (st == 'verified' and old[1] != 'verified') or \
-                         (st == old[1] and os.path.basename(p) == CAT[k]['file'] and os.path.dirname(p) == ROMS)
+                         (st == old[1] and p == os.path.join(ROMS, CAT[k]['file']))
                 if better: found[k] = (p, st)
     return found
 
@@ -153,7 +176,14 @@ def prepare(plan, log):
         if st == 'link':
             dst = os.path.join(ROMS, CAT[k]['file'])
             if os.path.lexists(dst): os.rename(dst, dst + '.old')
-            if '::' in d:                                        # inside an archive: extracted
+            if CAT[k].get('disc'):                               # a disc: its folder, file by file
+                src = os.path.dirname(os.path.abspath(d)); os.makedirs(os.path.dirname(dst), exist_ok=True)
+                for f in os.listdir(src):
+                    if not os.path.lexists(os.path.join(os.path.dirname(dst), f)):
+                        os.symlink(os.path.join(src, f), os.path.join(os.path.dirname(dst), f))
+                if not os.path.lexists(dst): os.symlink(os.path.abspath(d), dst)
+                log(f'linked {CAT[k]["file"]} -> {src}')
+            elif '::' in d:                                      # inside an archive: extracted
                 open(dst, 'wb').write(read_rom(d)); log(f'extracted {CAT[k]["file"]} from {d}')
             else:
                 os.symlink(d, dst); log(f'linked {CAT[k]["file"]} -> {d}')
@@ -189,16 +219,22 @@ class Job:
                 for line in self.proc.stdout:
                     lf.write(line); lf.flush(); self.feed(line.rstrip('\n'))
                 return self.proc.wait()
-            if check:
+            disc_gen = os.path.join(g, 'tools', 'generate.sh')    # a disc title: its own generator
+            if check and os.path.exists(disc_gen):
+                self.result = 'no self-check (disc)'
+            elif check:
                 self.stage = 'analysing, generating C'
                 rc = go([os.path.join(TOOLS, 'recomp.sh'), rom, g])
                 ok = 'SELF-CHECK OK' in open(self.log).read()
                 self.result = 'SELF-CHECK OK' if ok else ('stopped' if stop.is_set() else 'FAILED')
             else:
-                stale = subprocess.run([PY, '-c', f"import sys; sys.argv=['x']; sys.path.insert(0, {TOOLS!r}); import sidebyside; "
+                stale = not os.path.exists(disc_gen) and subprocess.run([PY, '-c', f"import sys; sys.argv=['x']; sys.path.insert(0, {TOOLS!r}); import sidebyside; "
                                         f"sys.exit(0 if sidebyside.generated_stale({g!r}) else 1)"], capture_output=True).returncode == 0
                 rc = 0
-                if stale or not os.listdir(os.path.join(g, 'src', 'recomp')) if os.path.isdir(os.path.join(g, 'src', 'recomp')) else True:
+                if os.path.exists(disc_gen):
+                    self.stage = 'generating C'
+                    rc = go([disc_gen, rom])
+                elif stale or not os.listdir(os.path.join(g, 'src', 'recomp')) if os.path.isdir(os.path.join(g, 'src', 'recomp')) else True:
                     self.stage = 'generating C'
                     rc = go([PY, os.path.join(TOOLS, 'recompiler', 'generate.py'), rom, '-o', os.path.join(g, 'src', 'recomp'),
                              '-c', os.path.join(g, 'recomp.json')])

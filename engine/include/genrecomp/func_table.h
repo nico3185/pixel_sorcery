@@ -58,4 +58,22 @@ bool        func_table_call_expecting(uint32_t m68k_addr, uint32_t ret);
 #include <stdio.h>
 void        func_table_dump_stack(FILE *f);
 
+/* Code loaded at run time (Mega CD programs in Word RAM): one overlay per program image. Its
+ * compiled functions are used only while that image is in memory: the opcode word of every
+ * compiled instruction (addrs) must hash to `hash`, checked again whenever
+ * func_table_overlay_key(its address) changes: Word RAM handed over (Mega CD memory mode register),
+ * or for work RAM programs a main-CPU write over one of their instructions
+ * (g_ps_overlay_wram_code: one bit per even address of $FF0000-$FFFFFF, bus.c counts the writes). */
+typedef struct { uint32_t addr; gen_func_t fn; } PsOverlayFunc;
+typedef struct PsOverlay {
+    const char *name;
+    uint32_t lo, hi;                     /* the addresses its functions cover */
+    const uint32_t *addrs; uint32_t naddrs; uint32_t hash;
+    PsOverlayFunc *funcs; uint32_t nfuncs;
+    uint32_t key; int state;             /* runtime: key last checked, 1 resident, -1 not */
+} PsOverlay;
+void func_table_add_overlay(PsOverlay *ov);
+extern uint32_t (*func_table_overlay_key)(uint32_t addr);
+extern uint8_t g_ps_overlay_wram_code[0x1000];
+
 #endif /* GENRECOMP_FUNC_TABLE_H */

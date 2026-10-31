@@ -3,7 +3,7 @@
 # app each; all = every game on one shelf). One version of each game per shelf.
 # Builds an app first when it is missing, when its launchers/<shelf>.txt is newer, or with
 # --rebuild (engine/tools/make_launcher.sh: every title's native port + SDL in one .app).
-# ROMs: $ROMS, else ../roms (passed as --roms; the app also keeps the ones you pick).
+# ROMs: $ROMS, else roms/ (then ../roms) (passed as --roms; the app also keeps the ones you pick).
 set -e
 here=${0:A:h}
 shelves=(); rebuild=0
@@ -15,7 +15,7 @@ for a in "$@"; do
   esac
 done
 (( $#shelves )) || shelves=(sh dc)
-roms=${ROMS:-${here:h}/roms}
+roms=${ROMS:-$here/roms}; [[ -d $roms ]] || roms=${here:h}/roms
 for shelf in $shelves; do
   cfg=$here/launchers/$shelf.txt
   [[ -f $cfg ]] || { print -u2 "no shelf '$shelf' (launchers: ${${(f)"$(cd $here/launchers && ls *.txt)"}//.txt/})"; exit 2; }

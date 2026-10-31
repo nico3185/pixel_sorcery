@@ -5,6 +5,7 @@ header PIXELSORCERY
 accent E0201C
 game sh1|SH1|1991|1|600|1300|sh1.bin
 game sh2|SH2|1992|1-2|960|1500|sh2.bin
+game shcd|SHCD|1993|1|2300|1100|cd/SH1 CD (Japan)/SH1 CD (Japan).cue
 game sh3|SH3|1994|1-2|720|2100|sh3.bin
 game shk|SHK|1994|1|900|1920|shk.bin
 game sh3k|SH3K|1994|1-2|720|2100|sh3k.bin

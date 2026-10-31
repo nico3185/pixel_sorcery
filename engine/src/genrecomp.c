@@ -91,6 +91,7 @@ bool genrecomp_load_rom(const char *path) {
 
     /* Load ROM via GenPlusGX (calls our load_archive in osd.c) */
     ps_60hz(pathbuf);
+    { void ps_megacd_bios(void); ps_megacd_bios(); }      /* Mega CD discs: .cue/.iso/.chd */
     if (!load_rom(pathbuf)) {
         fprintf(stderr, "genrecomp: GenPlusGX rejected the ROM: %s\n", path);
         return false;
@@ -110,6 +111,8 @@ bool genrecomp_load_rom(const char *path) {
 
     /* Hard reset everything */
     system_reset();
+    { void ps_megacd_brm(bool, bool); ps_megacd_brm(false, false); }   /* backup RAM formatted, empty */
+    if (system_hw == SYSTEM_MCD) m68k.cycle_end = MCYCLES_PER_LINE;   /* bus.c runs the main CPU, never GPGX */
 
     /* Re-point bitmap after reset */
     bitmap.data = (uint8 *)s_bitmap_data;

@@ -1,8 +1,8 @@
 #!/bin/zsh
 # ./play.sh TITLE [options] — play the latest build of a title: native renderer + recompiled Z80 sound driver.
 # TITLE: its code (sh2, shk2, coi, ...), its games/ folder or a unique prefix; ./play.sh alone lists them.
-# Builds first if needed. ROM: $ROM, else ../roms/<"rom" in games/TITLE/sidebyside.json>, else
-# ../roms/TITLE.{md,bin,gen}.
+# Builds first if needed. ROM: $ROM, else roms/ (then ../roms/): the "rom" in
+# games/TITLE/sidebyside.json (SHCD: the disc's .cue under roms/cd/), else TITLE.{md,bin,gen}.
 # Extra args go to the game (e.g. --fullscreen). The native port has no emulator: compare against
 # the original with engine/tools/sidebyside.py (it runs the GPGX-based *_oracle / tracer builds).
 # Resume a recorded session: ./play.sh TITLE --resume [SESSION.polls] MINUTE
@@ -36,7 +36,7 @@ Usage: ./play.sh TITLE [--resume [SESSION.polls] MINUTE] [game options]
 
 Controls: arrows, Z/X/C = A/B/C, Return = Start, Esc quits; gamepads by position.
 Settings menu: F1 / Tab / gamepad Minus or Home / C while paused.
-Environment: ROM=path (default ../roms/<"rom" in sidebyside.json>), PS_WIDE=4:3|16:9|21:9|32:9.
+Environment: ROM=path (default roms/<"rom" in sidebyside.json>), PS_WIDE=4:3|16:9|21:9|32:9.
 HELP
 exit 0; fi
 if [[ ${1:-} == --list ]]; then
@@ -61,12 +61,17 @@ if [[ ${1:-} == --resume ]]; then
 fi
 game=$here/games/$title
 rom=${ROM:-}
-[[ -z $rom && $title == shk1 ]] && $game/tools/ensure_rom.sh $here/../roms   # built from the dumps
+romdir=$here/roms; [[ -d $romdir ]] || romdir=$here/../roms
+[[ -z $rom && $title == shk1 ]] && $game/tools/ensure_rom.sh $romdir   # built from the dumps
 if [[ -z $rom ]]; then
-  for c in $romdef $title.md $title.bin $title.gen; do [[ -n $c && -f $here/../roms/$c ]] && { rom=$here/../roms/$c; break; }; done
+  for c in $romdef $title.md $title.bin $title.gen; do [[ -n $c && -f $romdir/$c ]] && { rom=$romdir/$c; break; }; done
 fi
 [[ -f $rom ]] || { print -u2 "ROM not found for $title (set ROM=path)"; exit 1; }
-if [[ ! -d $game/src/recomp ]] || [[ -z "$(ls $game/src/recomp 2>/dev/null)" ]]; then
+if [[ ! -f $game/recomp.json ]]; then             # a disc (SHCD): its own generator, then build
+  [[ -x $game/tools/generate.sh ]] && $game/tools/generate.sh $rom
+  cmake -S $game -B $game/build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
+  ninja -C $game/build >/dev/null
+elif [[ ! -d $game/src/recomp ]] || [[ -z "$(ls $game/src/recomp 2>/dev/null)" ]]; then
   $here/engine/tools/recomp.sh $rom $game          # generate + build + self-check
 else
   # the C is regenerated when recomp.json or the recompiler changed since it was generated

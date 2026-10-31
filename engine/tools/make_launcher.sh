@@ -19,7 +19,7 @@ rm -rf "$app"; mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/C
 first=
 for entry in $ids; do
   id=${entry%%:*}; game=$root/games/${entry#*:}
-  [[ -d $game/src/recomp && -n "$(ls $game/src/recomp 2>/dev/null)" ]] || {
+  [[ ! -f $game/recomp.json || -d $game/src/recomp && -n "$(ls $game/src/recomp 2>/dev/null)" ]] || {
     print -u2 "$id is not generated yet: run ./play.sh $id once (it generates and builds)"; exit 1; }
   cmake -S $game -B $game/build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
   ninja -C $game/build >/dev/null

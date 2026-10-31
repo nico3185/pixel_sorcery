@@ -284,6 +284,12 @@ get_target_property(_ref_inc genrecomp_ref INCLUDE_DIRECTORIES)
 target_include_directories(genrecomp_explore PRIVATE ${_ref_inc})
 target_compile_definitions(genrecomp_explore PRIVATE USE_32BPP_RENDERING LSB_FIRST HAVE_NO_SPRITE_LIMIT)
 
+# --- The original as a library for learning agents (tools/explore/ps_gym.py, Gymnasium) ---
+add_library(ps_env SHARED tools/explore/ps_env.c)
+target_link_libraries(ps_env PRIVATE genrecomp SDL2::SDL2)
+target_include_directories(ps_env PRIVATE ${_ref_inc})
+target_compile_definitions(ps_env PRIVATE USE_32BPP_RENDERING LSB_FIRST HAVE_NO_SPRITE_LIMIT)
+
 # --- Entry-point tracer (seed bootstrap): -DGENRECOMP_TRACE=ON ---
 if(GENRECOMP_TRACE)
     add_executable(genrecomp_trace tools/trace_runner/main.c)

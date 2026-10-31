@@ -44,6 +44,11 @@ extern int      g_ps_vdp_slow_type;
 typedef void (*ps_vdp_clock_fn)(int *line, int *cycle_in_line, int *lines_per_frame);
 /* Side-effect-free 68000 bus read used by 68K->VDP DMA and status prefetch bits. */
 typedef uint16_t (*ps_vdp_peek16_fn)(uint32_t addr);
+/* Mega CD: true when a 68000-bus DMA with this source register 23 reads Word RAM, whose data
+ * reaches the VDP one word late (the first slot gets the word left on the bus, the last source
+ * word is dropped; GPGX vdp_ctrl.c) */
+typedef int (*ps_vdp_dma_delayed_fn)(unsigned reg23);
+void ps_vdp_set_dma_delayed(ps_vdp_dma_delayed_fn fn);
 
 void     ps_vdp_init(ps_vdp_clock_fn clock, ps_vdp_peek16_fn peek16);
 void     ps_vdp_reset(void);

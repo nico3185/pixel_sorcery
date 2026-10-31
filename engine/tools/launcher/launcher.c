@@ -40,6 +40,7 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <dirent.h>
 extern char **environ;
 #else
 #include <process.h>
@@ -506,7 +507,9 @@ static int SDLCALL play_thread(void *u) {
 #ifdef __APPLE__
 static int ask_rom(Game *g) {                       /* the system file picker, as make_app.sh's apps */
     char cmd[512];
-    snprintf(cmd, sizeof cmd, "osascript -e 'POSIX path of (choose file with prompt \"Choose your %s ROM (.md / .bin / .gen)\")' 2>/dev/null", g->name);
+    int disc = strlen(g->romname) > 4 && !strcmp(g->romname + strlen(g->romname) - 4, ".cue");
+    snprintf(cmd, sizeof cmd, "osascript -e 'POSIX path of (choose file with prompt \"Choose your %s %s\")' 2>/dev/null",
+             g->name, disc ? "disc (.cue)" : "ROM (.md / .bin / .gen)");
     FILE *p = popen(cmd, "r");
     if (!p) return 0;
     char path[1024] = ""; if (!fgets(path, sizeof path, p)) *path = 0;
@@ -514,7 +517,22 @@ static int ask_rom(Game *g) {                       /* the system file picker, a
     if (!*path) return 0;
     mkdirs(g->store);
     char dst[1100]; snprintf(dst, sizeof dst, "%s/%s", g->store, g->romname);
-    if (!copy_file(path, dst)) return 0;
+    if (disc) {   /* a disc is its .cue and the track files beside it: a folder of links to the
+                     player's files, the .cue also under the name ROM FILE NAME expects */
+        char *s = strrchr(path, '/'); if (!s) return 0; *s = 0;
+        char dir[1100]; snprintf(dir, sizeof dir, "%s", dst); *strrchr(dir, '/') = 0;
+        mkdirs(dir);
+        DIR *dp = opendir(path); if (!dp) return 0;
+        for (struct dirent *e; (e = readdir(dp)); ) {
+            if (*e->d_name == '.') continue;
+            char from[1100], to[1100];
+            snprintf(from, sizeof from, "%s/%s", path, e->d_name); snprintf(to, sizeof to, "%s/%s", dir, e->d_name);
+            unlink(to); symlink(from, to);
+        }
+        closedir(dp);
+        char cue[1100]; snprintf(cue, sizeof cue, "%s/%s", path, s + 1);
+        if (!exists(dst)) symlink(cue, dst);
+    } else if (!copy_file(path, dst)) return 0;
     find_rom(g);
     return g->have_rom;
 }

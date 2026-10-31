@@ -56,3 +56,76 @@ void ps_megacd_brm(bool load_files, bool save) {
         brm_format(b[i].ram, b[i].size);
     }
 }
+
+/* The Mega CD beside the recompiled main CPU (bus.c, GPGX backend): scd_update() without its
+ * m68k_run - the main CPU has already run this line - so the sub CPU, CDD (75 Hz), the timer
+ * (level 3), CDC DMA and the graphics chip run one line after it, as GPGX does per line.
+ * m68k.cycle_end stays at the line end: GPGX's sync helpers then never start its own main
+ * CPU, and a main CPU found polling a register idles to the line end (bus_sync_back). */
+void ps_megacd_line(unsigned int line_end) {
+    if (system_hw != SYSTEM_MCD) return;
+    unsigned int mc = m68k.cycles;               /* the sub CPU's sync helpers may move it */
+    int end = scd.cycles + SCYCLES_PER_LINE;
+    while (scd.cycles < end) {
+        int run = end - scd.cycles;
+        if (scd.timer > 0 && scd.timer < run) run = scd.timer;
+        s68k_run(scd.cycles + run);
+        scd.cycles += run;
+        cdd.cycles += run * 3;
+        if (cdd.cycles >= 500000 * 4) {
+            cdd.cycles -= 500000 * 4;
+            cdd_update();
+            if (scd.regs[0x37 >> 1].byte.l & 0x04) {
+                scd.pending |= 1 << 4;
+                if (scd.regs[0x32 >> 1].byte.l & 0x10) s68k_update_irq((scd.pending & scd.regs[0x32 >> 1].byte.l) >> 1);
+            }
+        }
+        if (scd.timer) {
+            scd.timer -= run;
+            if (scd.timer <= 0) {
+                scd.timer += scd.regs[0x30 >> 1].byte.l * TIMERS_SCYCLES_RATIO;
+                if (scd.regs[0x32 >> 1].byte.l & 0x08) {
+                    scd.pending |= 1 << 3;
+                    s68k_update_irq((scd.pending & scd.regs[0x32 >> 1].byte.l) >> 1);
+                }
+            }
+        }
+    }
+    if (cdc.dma_w) cdc_dma_update(scd.cycles);
+    if (scd.regs[0x58 >> 1].byte.h & 0x80) gfx_update(scd.cycles);
+    m68k.cycles = mc;
+    m68k.cycle_end = line_end + MCYCLES_PER_LINE;
+    m68k.stopped = 0;
+}
+/* GPGX found the main CPU polling a sub CPU register (m68k.stopped, m68k.cycles moved to the
+ * line end): as in scd_update, the sub CPU runs on to the line end, and a write of the polled
+ * register restarts the main CPU at that moment (s68k_poll_sync sets m68k.cycles), else the
+ * main CPU stays idle to the line end. */
+void ps_megacd_poll_wait(void) {
+    unsigned int end = m68k.cycle_end;
+    s68k_run((unsigned int)(((unsigned long long)end * SCYCLES_PER_LINE) / MCYCLES_PER_LINE));
+    if (m68k.stopped) { m68k.cycles = end; m68k.stopped = 0; }
+}
+/* frame boundary (bus.c rebases the main CPU clock by the same amount) */
+void ps_megacd_end_frame(unsigned int line_end) {
+    if (system_hw != SYSTEM_MCD) return;
+    scd_end_frame(scd.cycles);
+    scd.cycles = 0;
+    m68k.cycle_end = line_end;
+}
+
+/* A main-CPU DMA from Word RAM ($200000-$23FFFF, $600000 when booted from a cartridge) */
+int ps_megacd_dma_delayed(unsigned reg23) {
+    return system_hw == SYSTEM_MCD && (reg23 & 0x70) == ((scd.cartridge.boot >> 1) + 0x10);
+}
+
+/* the overlay key (func_table.h): main-CPU writes to the memory mode register (bus.c). The main
+ * CPU hands Word RAM to the sub CPU (DMNA) before a program is loaded there, and cannot run Word
+ * RAM code until it is handed back, so a new program always comes with a new key */
+extern uint32_t (*func_table_overlay_key)(uint32_t addr);
+extern uint32_t g_ps_mcd_mode_writes, g_ps_wram_code_writes;
+static uint32_t ps_megacd_overlay_key(uint32_t addr) {
+    return addr >= 0xFF0000 ? g_ps_wram_code_writes            /* work RAM: a program copied over it */
+         : addr >= 0x200000 ? g_ps_mcd_mode_writes : 0;       /* Word RAM; the BIOS never changes */
+}
+void ps_megacd_overlays(void) { if (system_hw == SYSTEM_MCD) func_table_overlay_key = ps_megacd_overlay_key; }
