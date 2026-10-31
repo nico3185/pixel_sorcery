@@ -145,7 +145,7 @@ static void art_path(char *out, size_t n, int i) {
     const PsWideArt *a = &s_game.arts[i];
     char dir[1024]; cache_path(dir, sizeof dir, a->map);
     *strrchr(dir, '/') = 0;
-    snprintf(out, n, "%s/art_%08X_%d_%d.bin", dir, a->map, a->x, a->y);
+    if (snprintf(out, n, "%s/art_%08X_%d_%d.bin", dir, a->map, a->x, a->y) >= (int)n) *out = 0;   /* too long: no file */
 }
 static bool art_have(int i) {
     if (s_art_state[i] == 0) {

@@ -244,7 +244,7 @@ static void snd_nope(void) { int n[] = { 220, 165 }; blip(n, 2, 70); }
 /* ------------------------------------------------------------------ files */
 static int exists(const char *p) { struct stat st; return stat(p, &st) == 0; }
 static void mkdirs(const char *path) {
-    char t[1024]; snprintf(t, sizeof t, "%s", path);
+    char t[1024]; if (snprintf(t, sizeof t, "%s", path) >= (int)sizeof t) return;
     for (char *q = t + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(t, 0755); *q = '/'; }
     mkdir(t, 0755);
 }
@@ -270,10 +270,12 @@ static int load_config(const char *path) {
     while (fgets(line, sizeof line, f)) {
         trim(line);
         if (!*line || *line == '#') continue;
-        if (!strncmp(line, "name ", 5)) { snprintf(s_name, sizeof s_name, "%s", line + 5); trim(s_name); }
-        else if (!strncmp(line, "header ", 7)) { snprintf(s_header, sizeof s_header, "%s", line + 7); trim(s_header); }
+        if (!strncmp(line, "name ", 5)) { snprintf(s_name, sizeof s_name, "%.*s", (int)sizeof s_name - 1, line + 5);   /* a display title: cut to fit */ trim(s_name); }
+        else if (!strncmp(line, "header ", 7)) { snprintf(s_header, sizeof s_header, "%.*s", (int)sizeof s_header - 1, line + 7); trim(s_header); }
         else if (!strncmp(line, "accent ", 7)) s_accent = (uint32_t)strtoul(line + 7, NULL, 16);
-        else if (!strncmp(line, "stack ", 6) && s_nstack < MAXG) snprintf(s_stack[s_nstack++], sizeof s_stack[0], "%s", line + 6);
+        else if (!strncmp(line, "stack ", 6) && s_nstack < MAXG) {   /* an overlong line is skipped */
+            if (snprintf(s_stack[s_nstack], sizeof s_stack[0], "%s", line + 6) < (int)sizeof s_stack[0]) s_nstack++;
+        }
         else if (!strncmp(line, "game ", 5) && NG < MAXG) {
             Game *g = &G[NG]; char *f[9] = { 0 }; int n = 0;
             for (char *tok = strtok(line + 5, "|"); tok && n < 9; tok = strtok(NULL, "|")) { trim(tok); f[n++] = tok; }
@@ -293,7 +295,7 @@ static int load_config(const char *path) {
         int c = s_ncol++;
         s_cell[c][0] = i; s_nrow[c] = 1; s_colof[i] = c; s_rowof[i] = 0;
         for (int k = 0; k < s_nstack; k++) {
-            char buf[256]; snprintf(buf, sizeof buf, "%s", s_stack[k]);
+            char buf[sizeof s_stack[0]]; memcpy(buf, s_stack[k], sizeof buf);
             int ids[MAXG], n = 0, mine = 0;
             for (char *tok = strtok(buf, " \t"); tok && n < MAXG; tok = strtok(NULL, " \t"))
                 for (int j = 0; j < NG; j++) if (!strcmp(G[j].id, tok)) { ids[n++] = j; mine |= j == i; }
@@ -311,8 +313,8 @@ static void find_rom(Game *g) {
     snprintf(g->rom, sizeof g->rom, "%s/%s", g->store, g->romname);
     g->have_rom = exists(g->rom);
     if (!g->have_rom && *s_romdir) {
-        char p[1024]; snprintf(p, sizeof p, "%s/%s", s_romdir, g->romname);
-        if (exists(p)) { snprintf(g->rom, sizeof g->rom, "%s", p); g->have_rom = 1; }
+        char p[1024];
+        if (snprintf(p, sizeof p, "%s/%s", s_romdir, g->romname) < (int)sizeof p && exists(p)) { snprintf(g->rom, sizeof g->rom, "%s", p); g->have_rom = 1; }
     }
 }
 
@@ -490,7 +492,7 @@ static Game *s_play_game;
 static int s_fullscreen;
 static int SDLCALL play_thread(void *u) {
     Game *g = u;
-    char sess[1100], log[1100], rec[1200], stamp[32];
+    char sess[1100], log[1200], rec[1200], stamp[32];
     time_t t = time(NULL); strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&t));
     snprintf(sess, sizeof sess, "%s/sessions", g->store); mkdirs(sess);
     snprintf(log, sizeof log, "%s/%s.log", sess, stamp);
@@ -572,7 +574,7 @@ static int build_choices(Game *g) {
         if (n <= 0) continue;
         long sec = (long)(n / 59.92);
         snprintf(s_ch[s_nch].label, sizeof s_ch[0].label, "LOAD SLOT %d  %ld:%02ld", k, sec / 60, sec % 60);
-        snprintf(s_ch[s_nch++].resume, sizeof s_ch[0].resume, "%s:%ld", sp, n);
+        if (snprintf(s_ch[s_nch].resume, sizeof s_ch[0].resume, "%s:%ld", sp, n) < (int)sizeof s_ch[0].resume) s_nch++;
     }
     return s_nch;
 }
@@ -898,7 +900,7 @@ int main(int argc, char **argv) {
     snprintf(s_pref, sizeof s_pref, "%s", pref);
     {   /* the shelf's settings: PREF/<name>.ini */
         char nm[128]; int k = 0; for (const char *c = s_name; *c && k < 120; c++) nm[k++] = (*c == ' ' || *c == '/') ? '-' : *c; nm[k] = 0;
-        snprintf(s_setpath, sizeof s_setpath, "%s%s.ini", pref, nm);
+        if (snprintf(s_setpath, sizeof s_setpath, "%s%s.ini", pref, nm) >= (int)sizeof s_setpath) *s_setpath = 0;   /* no settings file */
         settings_load();
         if (SET.fullscreen) s_fullscreen = 1;
     }
