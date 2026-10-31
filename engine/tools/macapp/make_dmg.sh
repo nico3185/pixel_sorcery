@@ -1,5 +1,5 @@
 #!/bin/zsh
-# make_dmg.sh [--rev REV] [OUTDIR] - PixelSorcery-VERSION.dmg (default in build/dmg): the app as a
+# make_dmg.sh [--rev REV] [--version V] [OUTDIR] - PixelSorcery-VERSION.dmg (default in build/dmg): the app as a
 # standalone download, unsigned. Nothing from any game is inside: the app finds the player's own
 # dumps and compiles the games on their Mac. Inside the app (Contents/Resources):
 #   payload/  the public snapshot of REV (engine/tools/public_export.py: codenames, no game data),
@@ -8,12 +8,14 @@
 #   wheels/   capstone, cmake, ninja for Apple's python3, installed offline on first run
 #   setup_workspace.sh, the icon (img/sorpix.png)
 # The player needs Apple's Command Line Tools (the app opens their installer) and macOS 14 on Apple
-# silicon. VERSION: the newest tag reachable from REV (git describe), REV defaults to HEAD.
+# silicon. VERSION: --version, else the newest tag reachable from REV (git describe); REV defaults to HEAD.
 set -eu; setopt pipefail
 here=${0:A:h}; root=${here:h:h:h}; rev=HEAD
+version=
 [[ ${1:-} == --rev ]] && { rev=$2; shift 2; }
+[[ ${1:-} == --version ]] && { version=$2; shift 2; }
 out=${1:-$root/build/dmg}; mkdir -p $out
-version=$(git -C $root describe --tags --always $rev); version=${version#r}
+[[ -n $version ]] || { version=$(git -C $root describe --tags --always $rev); version=${version#r}; }
 stage=$(mktemp -d)/PixelSorcery; mkdir -p $stage
 print "PixelSorcery $version"
 # the app, then made standalone: no checkout path, its version, the payload

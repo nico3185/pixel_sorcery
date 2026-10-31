@@ -108,7 +108,7 @@ static bool read_file(const char *path, uint8_t *buf, size_t n) {
     bool ok = fread(buf, 1, n, f) == n; fclose(f); return ok;
 }
 static void write_file(const char *path, const uint8_t *buf, size_t n) {
-    char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    char tmp[1100]; if (snprintf(tmp, sizeof tmp, "%s.tmp", path) >= (int)sizeof tmp) return;   /* path too long */
     FILE *f = fopen(tmp, "wb"); if (!f) return;
     bool ok = fwrite(buf, 1, n, f) == n; ok = fclose(f) == 0 && ok;
     if (ok) rename(tmp, path); else remove(tmp);
