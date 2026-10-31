@@ -64,6 +64,79 @@ static int s_force_interp = -1;
 static uint32_t s_interp_only[64]; static int s_ninterp_only;
 static unsigned s_interp_pct, s_interp_seed;   /* PS_INTERP=random:PCT:SEED */
 static gen_func_t table_find(uint32_t m68k_addr);
+
+/* ---- overlays (func_table.h) */
+#define MAX_OVERLAYS 256
+static PsOverlay *s_ov[MAX_OVERLAYS]; static int s_nov;
+static uint32_t s_ov_lo = 0xFFFFFFFF, s_ov_hi;
+static PsOverlay *s_ov_last;
+static uint32_t s_ovr_lo, s_ovr_hi = 0xFFFFFFFF;   /* PS_OVERLAY_RANGE=lo-hi (hex): only these entries */
+uint32_t (*func_table_overlay_key)(uint32_t addr);
+uint8_t g_ps_overlay_wram_code[0x1000];
+static int ov_cmp(const void *a, const void *b) {
+    uint32_t x = ((const PsOverlayFunc *)a)->addr, y = ((const PsOverlayFunc *)b)->addr;
+    return x < y ? -1 : x > y;
+}
+void func_table_add_overlay(PsOverlay *ov) {
+    if (s_nov == MAX_OVERLAYS) { fprintf(stderr, "func_table: too many overlays\n"); return; }
+    {   /* PS_OVERLAY_SKIP=NAME,NAME...: these stay interpreted (find the overlay behind a divergence) */
+        const char *e = getenv("PS_OVERLAY_SKIP"); size_t n = strlen(ov->name);
+        for (const char *p = e; p && (p = strstr(p, ov->name)); p += n)
+            if ((p == e || p[-1] == ',') && (!p[n] || p[n] == ',')) return;
+    }
+    qsort(ov->funcs, ov->nfuncs, sizeof *ov->funcs, ov_cmp);
+    { const char *e = getenv("PS_OVERLAY_RANGE"); if (e) sscanf(e, "%x-%x", &s_ovr_lo, &s_ovr_hi); }
+    ov->state = 0;
+    s_ov[s_nov++] = ov;
+    if (ov->lo >= 0xFF0000)
+        for (uint32_t i = 0; i < ov->naddrs; i++) {
+            uint32_t a = ov->addrs[i] & 0xFFFF;
+            g_ps_overlay_wram_code[a >> 4] |= (uint8_t)(1u << ((a >> 1) & 7));
+        }
+    if (ov->lo < s_ov_lo) s_ov_lo = ov->lo;
+    if (ov->hi > s_ov_hi) s_ov_hi = ov->hi;
+}
+static int ov_resident(PsOverlay *ov, uint32_t key) {
+    if (ov->state && ov->key == key) return ov->state > 0;
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 0; i < ov->naddrs; i++) {
+        uint16_t w = bus_peek16(ov->addrs[i]);
+        h = (h ^ (w >> 8)) * 16777619u; h = (h ^ (w & 0xFF)) * 16777619u;
+    }
+    ov->key = key; ov->state = h == ov->hash ? 1 : -1;
+    static int verbose = -1; if (verbose < 0) verbose = getenv("PS_OVERLAY_LOG") != NULL;
+    if (verbose) fprintf(stderr, "overlay %s %s\n", ov->name, ov->state > 0 ? "resident" : "absent");
+    return ov->state > 0;
+}
+static gen_func_t ov_find(PsOverlay *ov, uint32_t a) {
+    if (a < s_ovr_lo || a >= s_ovr_hi) return NULL;
+    uint32_t lo = 0, hi = ov->nfuncs;
+    while (lo < hi) { uint32_t m = (lo + hi) / 2; if (ov->funcs[m].addr < a) lo = m + 1; else hi = m; }
+    return lo < ov->nfuncs && ov->funcs[lo].addr == a ? ov->funcs[lo].fn : NULL;
+}
+static gen_func_t overlay_lookup(uint32_t a) {
+    uint32_t key = func_table_overlay_key ? func_table_overlay_key(a) : 0;
+    gen_func_t f;
+    if (s_ov_last && (f = ov_find(s_ov_last, a)) && ov_resident(s_ov_last, key)) return f;
+    for (int i = 0; i < s_nov; i++) {
+        PsOverlay *ov = s_ov[i];
+        if (ov == s_ov_last || a < ov->lo || a >= ov->hi || !(f = ov_find(ov, a))) continue;
+        if (ov_resident(ov, key)) { s_ov_last = ov; return f; }
+    }
+    {   /* PS_OVERLAY_LOG: an address no function of the program in memory starts at, once each
+         * ("overlay miss NAME $ADDR": an entry point for that program's config, tools/seeds_REGION.tsv) */
+        static int verbose = -1; if (verbose < 0) verbose = getenv("PS_OVERLAY_LOG") != NULL;
+        static uint32_t seen[4096];
+        for (int i = 0; verbose && i < s_nov; i++) {
+            PsOverlay *ov = s_ov[i]; uint32_t h = (a * 2654435761u ^ (uint32_t)i) & 4095;
+            if (a < ov->lo || a >= ov->hi || !ov_resident(ov, key) || seen[h] == (a | (uint32_t)i << 24)) continue;
+            seen[h] = a | (uint32_t)i << 24;
+            fprintf(stderr, "overlay miss %s $%06X\n", ov->name, a);
+        }
+    }
+    return NULL;
+}
+
 gen_func_t func_table_lookup(uint32_t m68k_addr) {
     if (s_force_interp < 0) {
         const char *e = getenv("PS_INTERP");
@@ -82,6 +155,10 @@ gen_func_t func_table_lookup(uint32_t m68k_addr) {
         if (h % 100 < s_interp_pct) return NULL;
     }
     for (int i = 0; i < s_ninterp_only; i++) if (s_interp_only[i] == m68k_addr) return NULL;
+    {   /* overlays by 24-bit address: work RAM is also jumped to as $FFFFxxxx (JMP $xxxx.W, a sign-extended register) */
+        uint32_t a = m68k_addr & 0xFFFFFF;
+        if (a >= s_ov_lo && a < s_ov_hi) { gen_func_t f = overlay_lookup(a); if (f) return f; }
+    }
     return table_find(m68k_addr);
 }
 
@@ -277,6 +354,11 @@ bool func_table_call_expecting(uint32_t m68k_addr, uint32_t ret) {
             if (m68k_addr == g_m68k_rte_target) {
                 /* an RTE to code an interrupt left mid-loop: any instruction can be one; not a
                  * missing function, so not reported */
+            } else if (!s_force_interp && !s_interp_pct && !interp_seen(m68k_addr) && m68k_addr >= 0xE00000) {
+                /* code the game wrote to RAM (a 2-in-1 cart's bank switch runs there while the ROM
+                 * changes under it): cannot be compiled ahead, the interpreter is its path */
+                fprintf(stderr, "func_table: RAM code at $%06X (SP=$%08X), interpreting by design; ", m68k_addr, g_m68k.a[7]);
+                func_table_dump_stack(stderr);
             } else if (!s_force_interp && !s_interp_pct && !interp_seen(m68k_addr)) {
                 fprintf(stderr, "func_table: no function at $%06X (SP=$%08X), interpreting; ", m68k_addr, g_m68k.a[7]);
                 func_table_dump_stack(stderr);

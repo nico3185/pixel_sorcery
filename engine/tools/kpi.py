@@ -3,7 +3,9 @@
 
 Dynamic (what the original executed, recorded by the GPGX tracer with PS_PCCOVER - sidebyside.py
 does it on every replay - into games/T/build/cover/*.bin, one bit per even address < $400000):
-  A  coverage         = executed instructions we converted / instructions we converted
+  A  coverage         = executed instructions we converted / instructions we converted; for a cart
+                         carrying another game, only this title's code (sidebyside.json
+                         "code_ranges" + functions outside them the original ran, see reachable())
   B  interpreted-only = instructions the original executed in ROM that we never converted (target 0)
   never entered       = generated functions no recording ever entered (the to-do list for bots/fuzzing)
 Replay exactness (games/T/build/robust.json, see --results):
@@ -49,13 +51,29 @@ COLS = ['date', 'git_sha', 'title', 'converted', 'executed_converted', 'coverage
 
 # ---------------------------------------------------------------- generated C, coverage bitmaps
 
-def generated(game, rom_size):
+def generated(game, rom_size, bodies=None):
+    """Converted instructions and function entries; bodies (a dict), if given, gets each
+    function's instructions."""
     insns, entries = set(), set()
     for f in glob.glob(os.path.join(game, 'src', 'recomp', 'recomp_*.c')):
         s = open(f).read()
         insns.update(int(x, 16) for x in re.findall(r'ITRACE\(0x([0-9A-F]+)\)', s))
         entries.update(int(x, 16) for x in re.findall(r'^void \w+_([0-9A-F]{6})\(void\) \{', s, re.M))
+        if bodies is not None:
+            for m in re.finditer(r'^void \w+_([0-9A-F]{6})\(void\) \{(.*?)^\}', s, re.M | re.S):
+                bodies[int(m.group(1), 16)] = {int(x, 16) for x in re.findall(r'ITRACE\(0x([0-9A-F]+)\)', m.group(2))}
     return {a for a in insns if a < rom_size}, {a for a in entries if a < rom_size}
+
+
+def reachable(conv, ex, bodies, ranges):
+    """The title's own code: converted instructions inside sidebyside.json "code_ranges", plus every
+    function outside them that the original ran at least once (all its instructions). For carts
+    that carry another game (SHK2: SHK + SH2 + the lock-on code at $300000) the other game's
+    code converts but this title never reaches it; counting it would hide the real coverage."""
+    inside = {a for a in conv if any(lo <= a < hi for lo, hi in ranges)}
+    for body in bodies.values():
+        if body & ex and not body <= inside: inside |= body & conv
+    return inside
 
 
 def executed(game, rom_size):
@@ -300,22 +318,28 @@ def title_kpi(t, roms, do_static):
     game = os.path.join(REPO, 'games', t)
     cfg = json.load(open(os.path.join(game, 'sidebyside.json')))
     rom = open(os.path.join(roms, cfg['rom']), 'rb').read()
-    conv, entries = generated(game, len(rom))
+    bodies = {}
+    conv, entries = generated(game, len(rom), bodies)
     ex, covers = executed(game, len(rom))
+    conv_all = conv            # B, D, E, F: everything converted
+    if cfg.get('code_ranges'):
+        ranges = [tuple(int(v, 16) for v in r.split('-')) for r in cfg['code_ranges']]
+        conv = reachable(conv, ex, bodies, ranges)
+        entries = {e for e in entries if e in conv}
     both = ex & conv
-    interp = sorted(ex - conv)
+    interp = sorted(ex - conv_all)
     never = sorted(entries - ex)
-    k = {'title': t, 'converted': len(conv), 'executed': len(ex), 'executed_converted': len(both),
+    k = {'title': t, 'converted': len(conv), 'converted_all': len(conv_all), 'executed': len(ex), 'executed_converted': len(both),
          'coverage_pct': 100 * len(both) / max(1, len(conv)), 'interpreted_only': len(interp),
          'interpreted_only_first': ['$%06X' % a for a in interp[:50]], 'cover_files': covers,
          'functions': len(entries), 'functions_never_entered': len(never),
          'never_entered': ['$%06X' % a for a in never], 'replay': replay_kpi(game)}
     if do_static:
-        cb, strong, weak = static_kpi(rom, conv)
+        cb, strong, weak = static_kpi(rom, conv_all)
         k.update(code_bytes=cb, code_pct_rom=100 * cb / len(rom), suspects_strong=len(strong),
                  suspects_weak=len(weak), suspect_strong_list=['$%06X-%06X' % tuple(x) for x in strong],
                  suspect_weak_list=['$%06X-%06X' % tuple(x) for x in weak])
-    k['reference'] = reference_kpi(t, rom, conv)
+    k['reference'] = reference_kpi(t, rom, conv_all)
     json.dump(k, open(os.path.join(game, 'build', 'kpi.json'), 'w'), indent=1)
     return k
 

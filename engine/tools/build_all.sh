@@ -104,7 +104,7 @@ if (( check )); then
   wait
   for t in $titles; do
     [[ -n ${result[$t]:-} ]] && continue
-    result[$t]=$(grep -E 'SELF-CHECK' $here/games/$t/build_all.log | tail -1); [[ -n ${result[$t]} ]] || result[$t]="FAILED (games/$t/build_all.log)"
+    result[$t]=$(grep -a -E 'SELF-CHECK' $here/games/$t/build_all.log | tail -1); [[ -n ${result[$t]} ]] || result[$t]="FAILED (games/$t/build_all.log)"
   done
 else
   # 1. the C, N titles at a time: missing (first build) or stale

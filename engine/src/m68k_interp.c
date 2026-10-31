@@ -37,11 +37,55 @@ PS_ALTNAME(ps_m68k_cycles, ps_m68k_cycles_ps_default)
 #else
 __attribute__((weak)) const uint16_t ps_m68k_cycles[0x10000] = { 0 };
 #endif
+/* title hooks (recomp.json "hooks"), generated per title (recomp_hooks.c, sorted by pc): each
+ * returns where to go on, 0 = run the instruction. Weak empty default as above. */
+#if defined(_MSC_VER)
+extern const uint32_t *ps_m68k_hook_pc; extern uint32_t (*const *ps_m68k_hook_fn)(void); extern int ps_m68k_nhooks;
+const uint32_t *ps_m68k_hook_pc_ps_default = NULL; uint32_t (*const *ps_m68k_hook_fn_ps_default)(void) = NULL;
+int ps_m68k_nhooks_ps_default = 0;
+PS_ALTNAME(ps_m68k_hook_pc, ps_m68k_hook_pc_ps_default)
+PS_ALTNAME(ps_m68k_hook_fn, ps_m68k_hook_fn_ps_default)
+PS_ALTNAME(ps_m68k_nhooks, ps_m68k_nhooks_ps_default)
+#else
+__attribute__((weak)) const uint32_t *ps_m68k_hook_pc = NULL;
+__attribute__((weak)) uint32_t (*const *ps_m68k_hook_fn)(void) = NULL;
+__attribute__((weak)) int ps_m68k_nhooks = 0;
+#endif
+static uint32_t run_hook(uint32_t pc) {
+    int lo = 0, hi = ps_m68k_nhooks - 1;
+    if (hi < 0 || pc < ps_m68k_hook_pc[0] || pc > ps_m68k_hook_pc[hi]) return 0;
+    while (lo <= hi) {
+        int m = (lo + hi) / 2;
+        if (ps_m68k_hook_pc[m] == pc) {
+            uint32_t t = ps_m68k_hook_fn[m]();
+            if (t == 1) {                       /* a skip whose length the generator never saw */
+                static uint32_t warned;
+                if (warned != pc) { warned = pc; fprintf(stderr, "interp: hook at $%06X skips an instruction never converted; run as is\n", pc); }
+                return 0;
+            }
+            return t;
+        }
+        if (ps_m68k_hook_pc[m] < pc) lo = m + 1; else hi = m - 1;
+    }
+    return 0;
+}
 void func_table_tail(uint32_t m68k_addr);
 void recomp_m68k_exception(uint8_t vector);
 
 static uint32_t s_pc;                               /* the instruction being executed */
 static uint32_t s_next;                             /* fetch pointer */
+/* PS_INTERP_COVER=file: at exit, one bit per even address of the 24-bit space (1 MB) for every
+ * instruction the interpreter ran - the code not compiled yet (SHCD: by program region) */
+static uint8_t *s_icover; static int s_icover_init;
+static void icover_write(void) {
+    FILE *f = fopen(getenv("PS_INTERP_COVER"), "wb");
+    if (f) { fwrite(s_icover, 1, 1 << 20, f); fclose(f); }
+}
+static void icover_init(void) {
+    s_icover_init = 1;
+    const char *e = getenv("PS_INTERP_COVER");
+    if (e && *e && (s_icover = calloc(1, 1 << 20))) atexit(icover_write);
+}
 static long s_entered, s_insns;
 
 static uint16_t fetch16(void) { uint16_t v = bus_read16(s_next); s_next += 2; return v; }
@@ -216,6 +260,7 @@ static void interp_loop(uint32_t entry) {
     int depth = 0;
     uint32_t rst[256];                                   /* return addresses of this run's own calls */
     s_entered++;
+    if (!s_icover_init) icover_init();
     s_next = entry;
     for (;;) {
         if ((int)(g_cyc - g_cyc_event) >= 0) {
@@ -223,6 +268,8 @@ static void interp_loop(uint32_t entry) {
             if (g_m68k_redirect) { s_next = g_m68k_redirect; g_m68k_redirect = 0; }
         }
         s_pc = s_next;
+        if (s_icover) s_icover[(s_pc & 0xFFFFFF) >> 4] |= (uint8_t)(1u << ((s_pc >> 1) & 7));
+        if (ps_m68k_nhooks) { uint32_t t = run_hook(s_pc); if (t) { s_next = t; continue; } }
         uint16_t op = fetch16();
         unsigned base = ps_m68k_cycles[op];
         s_insns++;

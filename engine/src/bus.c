@@ -91,6 +91,9 @@ static void ps_clock(int *line, int *cycle, int *lpf) {
 
 void bus_video_init(void) {
     ps_vdp_init(ps_clock, bus_peek16);
+#ifndef PS_NATIVE
+    { int ps_megacd_dma_delayed(unsigned reg23); ps_vdp_set_dma_delayed(ps_megacd_dma_delayed); }
+#endif
 }
 
 /* VDP data/control/HV ports, excluding the PSG and test registers. */
@@ -159,7 +162,13 @@ unsigned bus_frame_cycles(void) {
     return t;                     /* the frame time base starts at VBlank, as on the oracle */
 }
 void bus_irq_ack(uint8_t level) {
-    if (level == 6) { s_vint_pending = false; status &= ~0x80; }
+    if (level == 6) {
+        s_vint_pending = false; status &= ~0x80;
+        /* GPGX's IRQ level is "VInt ? 6 : HInt ? 4": an HInt left pending behind the VInt (e.g.
+         * IE1 set while the VInt was pending, which bus_write8/16 do not raise) is asserted once
+         * the VInt is acknowledged, and taken when the handler's RTE lowers the mask. */
+        if (s_hint_pending && (g_ps_vdp.reg[0] & 0x10)) recomp_m68k_interrupt(4);
+    }
     else if (level == 4) s_hint_pending = false;
 }
 /* HInt: counter reaches zero on an active line (or at the VBlank line) */
@@ -186,7 +195,15 @@ static void bus_tick_cycles(void) {
     /* DMA completes instantly here: never leave the busy flag set. */
     status &= ~0x0002;
 }
-static inline void bus_sync_back(void) { if ((int)(m68k.cycles - g_cyc) > 0) g_cyc = m68k.cycles; }
+#ifndef PS_NATIVE
+void ps_megacd_poll_wait(void);
+#endif
+static inline void bus_sync_back(void) {
+#ifndef PS_NATIVE
+    if (m68k.stopped) ps_megacd_poll_wait();     /* Mega CD: main CPU polling the sub CPU */
+#endif
+    if ((int)(m68k.cycles - g_cyc) > 0) g_cyc = m68k.cycles;
+}
 
 /* Instruction boundary reached g_cyc_event: run scanlines up to now. */
 /* Next scheduler event (pending delayed IRQ, VInt on the VBlank line, else line end). */
@@ -282,6 +299,9 @@ static void bus_lines(void) {
         bus_z80_to(mcycles_vdp + MCYCLES_PER_LINE);
         if (v_counter == vb) Z80.irq_state = CLEAR_LINE;
         mcycles_vdp += MCYCLES_PER_LINE;
+#ifndef PS_NATIVE
+        { void ps_megacd_line(unsigned int); ps_megacd_line(mcycles_vdp); }   /* sub CPU + CD hardware, this line */
+#endif
         v_counter = (v_counter + 1) % lines_per_frame;
         if (v_counter == lines_per_frame - 1) { status &= ~0x08; s_hcounter = g_ps_vdp.reg[10]; }
         else if (v_counter < bus_vblank_line()) {        /* active line: HInt counter */
@@ -306,6 +326,9 @@ static void bus_lines(void) {
 #else
             input_end_frame(mcycles_vdp);
             dma_endCycles = 0;
+#endif
+#ifndef PS_NATIVE
+            { void ps_megacd_end_frame(unsigned int); ps_megacd_end_frame(MCYCLES_PER_LINE); }
 #endif
             g_cyc -= mcycles_vdp;
             g_refresh -= mcycles_vdp;
@@ -592,8 +615,15 @@ uint32_t bus_read32(uint32_t addr) {
  * Flat 24-bit address space writes
  * ================================================================ */
 
+uint32_t g_ps_mcd_mode_writes;   /* main-CPU writes to the Mega CD memory mode register */
+uint32_t g_ps_wram_code_writes;  /* main-CPU writes over a compiled work RAM program (overlays) */
 void bus_write8(uint32_t addr, uint8_t val) {
     addr &= 0xFFFFFF;
+#ifndef PS_NATIVE
+    if ((addr & 0xFFFFFE) == 0xA12002) g_ps_mcd_mode_writes++;   /* Word RAM handed over: overlays */
+    else if (addr >= 0xFF0000 && (g_ps_overlay_wram_code[(addr & 0xFFFF) >> 4] >> ((addr >> 1) & 7) & 1))
+        g_ps_wram_code_writes++;                                  /* over a compiled work RAM program */
+#endif
     bus_watch(addr, 1, val);
     bus_tick_cycles();
     s_last_addr = addr;
@@ -636,6 +666,11 @@ void bus_write8(uint32_t addr, uint8_t val) {
 
 void bus_write16(uint32_t addr, uint16_t val) {
     addr &= 0xFFFFFF;
+#ifndef PS_NATIVE
+    if ((addr & 0xFFFFFE) == 0xA12002) g_ps_mcd_mode_writes++;   /* Word RAM handed over: overlays */
+    else if (addr >= 0xFF0000 && (g_ps_overlay_wram_code[(addr & 0xFFFF) >> 4] >> ((addr >> 1) & 7) & 1))
+        g_ps_wram_code_writes++;                                  /* over a compiled work RAM program */
+#endif
     bus_watch(addr, 2, val);
     bus_tick_cycles();
     s_last_addr = addr;

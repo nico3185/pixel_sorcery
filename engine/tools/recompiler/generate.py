@@ -173,6 +173,8 @@ class M68KTranslator:
         hook = getattr(self, 'hooks', {}).get(addr)
         skip = None
         if hook:
+            if not hasattr(self, 'hook_len'): self.hook_len = {}
+            self.hook_len[addr] = len(raw_bytes)  # the interpreter's copy skips by this (recomp_hooks.c)
             if 'goto skip;' in hook:              # the hook may skip this instruction
                 skip = f"skip_{addr:06X}"
                 hook = hook.replace('goto skip;', f'goto {skip};')
@@ -1483,6 +1485,28 @@ class CodeGenerator:
                                funcs[i:i + self.MAX_FUNCS_PER_FILE]))
         return chunks
 
+    def _hooks_for_interpreter(self):
+        """The title hooks again, for code the runtime's interpreter runs (m68k_interp.c): each one
+        a function returning where to go on, 0 = run the instruction; "goto skip;" -> the next
+        instruction, "goto loc_/sub_XXXXXX;" -> that address. Without this, a hooked instruction
+        reached in the interpreter (a function not converted, PS_INTERP) ran the original's logic."""
+        hooks = getattr(self.translator, 'hooks', {}) or {}
+        lens = getattr(self.translator, 'hook_len', {})
+        out = ['/* generated: title hooks (recomp.json "hooks") for the interpreter, see generate.py */',
+               '#include "recomp_common.h"', '']
+        for a in sorted(hooks):
+            body = re.sub(r'goto (?:loc|sub)_([0-9A-Fa-f]{6});', lambda m: f'return 0x{m.group(1).upper()}u;', hooks[a])
+            nxt = a + lens[a] if a in lens else 1        # 1: skip of an instruction never converted
+            body = body.replace('goto skip;', f'return 0x{nxt:06X}u;')
+            out.append(f'static uint32_t hook_{a:06X}(void) {{ {body}\n    return 0; }}')
+        pcs = ', '.join(f'0x{a:06X}u' for a in sorted(hooks)) or '0'
+        fns = ', '.join(f'hook_{a:06X}' for a in sorted(hooks)) or '0'
+        out += ['', f'static const uint32_t pcs[] = {{ {pcs} }};',
+                f'static uint32_t (*const fns[])(void) = {{ {fns} }};',
+                'const uint32_t *ps_m68k_hook_pc = pcs;', 'uint32_t (*const *ps_m68k_hook_fn)(void) = fns;',
+                f'int ps_m68k_nhooks = {len(hooks)};', '']
+        return '\n'.join(out)
+
     def _emit(self, name, text):
         self.outputs[name] = text
 
@@ -1520,12 +1544,16 @@ class CodeGenerator:
 
         # Iteratively resolve cross-function call targets until stable.
         # Each pass may discover new targets from newly-split functions.
+        prev = None
         for iteration in range(10):  # safety limit
             unregistered = self.cross_func_targets - set(f['start'] for f in functions)
             # Filter to valid ROM addresses
             unregistered = {a for a in unregistered if 0x200 <= a < self.rom.size and not (a & 1)}
-            if not unregistered:
+            # the same targets left as after the last pass: splitting them made no new function
+            # (functions are only added), so another pass would regenerate the same output
+            if not unregistered or unregistered == prev:
                 break
+            prev = unregistered
             print(f"  Pass {iteration+1}: {len(unregistered)} cross-function targets — splitting and regenerating...")
             for addr in unregistered:
                 if addr not in self.analyzer.labels:
@@ -1550,6 +1578,7 @@ class CodeGenerator:
         rows = ',\n'.join(','.join(str(c) for c in CYCLES[i:i + 32]) for i in range(0, 0x10000, 32))
         self._emit('recomp_cycles.c', '/* generated: 68000 base cost per opcode (master clocks), as the generator charges */\n'
                    '#include <stdint.h>\nconst uint16_t ps_m68k_cycles[0x10000] = {\n' + rows + '\n};\n')
+        self._emit('recomp_hooks.c', self._hooks_for_interpreter())
         self._flush()
 
         # Skip main.c generation — hand-written src/main.c is used instead

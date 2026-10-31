@@ -47,8 +47,9 @@ args=(--headless --frames $frames); [[ -f selfcheck.args ]] && args+=(${(z)"$(<s
 log=build/selfcheck.log
 PS_DIFF_LOG=1 PS_RENDERER=compare $exe $args $rom >$log 2>&1 || true
 misses=$(grep -c "no function at" $log || true); rts=$(grep -c "RTS to" $log || true)
+ramcode=$(grep -c "RAM code at" $log || true)   # code the game wrote to RAM: interpreted by design, not a miss
 diffline=$(grep "\[compare\] frame" $log | tail -1 | sed 's/.*| //')
-print "self-check over $frames frames: misses=$misses bad_returns=$rts video=${diffline:-n/a}"
+print "self-check over $frames frames: misses=$misses bad_returns=$rts video=${diffline:-n/a}$( (( ramcode )) && print " RAM routines (interpreted by design)=$ramcode")"
 [[ $misses == 0 && $rts == 0 && $diffline == "0/"* ]] || { print -u2 "SELF-CHECK FAILED (see $log)"; exit 1; }
 if [[ -f audio/driver.json ]]; then
   # 1. recompiled Z80 + native chips vs GPGX Z80 + GPGX chips: identical FM/PSG write streams

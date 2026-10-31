@@ -2,11 +2,11 @@
 # One short code per title (the codenames of the public snapshot), the game's name from the
 # launcher shelves, and resolve: a folder name, a code, an old alias or a unique prefix of either.
 typeset -gA ps_code=(
-  sh1 sh1  sh2 sh2  sh3 sh3  shk shk  sh3k sh3k  shk1 shk1  shk2 shk2
+  sh1 sh1  sh2 sh2  shcd shcd  sh3 sh3  shk shk  sh3k sh3k  shk1 shk1  shk2 shk2
   shbs shbs  coi coi  qs qs  qs-r1 qs-r1
   woi woi  woi-us woi-us  dc dc
 )
-typeset -ga ps_order=(sh1 sh2 sh3 shk sh3k shk2 shk1 shbs coi
+typeset -ga ps_order=(sh1 sh2 shcd sh3 shk sh3k shk2 shk1 shbs coi
   qs qs-r1 woi-us woi dc)
 ps_titles() {   # the playable titles: games/ folders with a sidebyside.json, in shelf order
   local f d=(${(f)"$(cd $ROOT/games && for d in */; do [[ -f $d/sidebyside.json ]] && print ${d%/}; done)"})
