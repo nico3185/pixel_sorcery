@@ -45,23 +45,23 @@ full-game TAS input runs) is replayed on the native port and on the original, on
 of the game's code compiled and again with 30% of it sent through the interpreter. All of them
 match the original **exactly at every controller poll**. The table measures how much of each
 game that exercises (`engine/tools/kpi.py`, numbers from `docs/kpi/history.csv`,
-2026-10-31 20:09):
+2026-11-01 09:55):
 
 | Code | Instructions recompiled | Run in verified replays | Left to the interpreter | Recordings that MATCH (compiled / mixed) | Controller polls verified |
 |---|---:|---:|---:|---|---:|
-| SH1 | 27,880 | 16,530 (59%) | 0 | 12/12 / 12/12 | 315,722 |
-| SH2 | 55,333 | 33,683 (61%) | 0 | 21/21 / 21/21 | 1,515,102 |
-| SH3 | 82,719 | 25,885 (31%) | 0 | 6/6 / 6/6 | 37,674 |
-| SHK | 129,933 | 46,334 (36%) | 0 | 11/11 / 11/11 | 317,493 |
-| SH3K | 172,469 | 61,029 (35%) | 0 | 38/38 / 38/38 | 3,616,273 |
-| SHK2 | 45,166 | 23,648 (52%) | 0 | 10/10 / 10/10 | 47,393 |
-| SHK1 | 36,057 | 10,101 (28%) | 0 | 2/2 / 2/2 | 26,754 |
-| COI | 24,414 | 12,511 (51%) | 0 | 42/42 / 42/42 | 924,965 |
-| QS | 23,762 | 12,381 (52%) | 0 | 15/15 / 15/15 | 210,855 |
+| SH1 | 27,880 | 17,298 (62%) | 0 | 42/42 / 42/42 | 585,527 |
+| SH2 | 55,330 | 35,021 (63%) | 0 | 55/55 / 55/55 | 2,071,597 |
+| SH3 | 83,675 | 34,232 (41%) | 63 | 69/69 / 69/69 | 486,081 |
+| SHK | 129,950 | 46,981 (36%) | 0 | 40/40 / 40/40 | 543,925 |
+| SH3K | 172,541 | 62,676 (36%) | 0 | 41/41 / 41/41 | 3,910,305 |
+| SHK2 | 45,166 | 25,681 (57%) | 0 | 58/58 / 58/58 | 394,998 |
+| SHK1 | 37,567 | 16,847 (45%) | 0 | 46/46 / 46/46 | 435,846 |
+| COI | 24,414 | 12,545 (51%) | 7 | 52/52 / 52/52 | 1,286,502 |
+| QS | 23,983 | 13,046 (54%) | 0 | 23/23 / 23/23 | 241,619 |
 | QS-R1 | 23,346 | 10,737 (46%) | 0 | 3/3 / 3/3 | 121,457 |
 | WOI | 27,770 | 5,812 (21%) | 0 | 2/2 / 2/2 | 4,894 |
-| WOI-US | 27,539 | 7,551 (27%) | 0 | 4/4 / 4/4 | 173,056 |
-| **All** | **676,388** | **266,202 (39%)** | **0** | **all** | **7,311,638** |
+| WOI-US | 27,539 | 7,592 (28%) | 0 | 8/8 / 8/8 | 244,773 |
+| **All** | **679,161** | **288,468 (42%)** | **0** | **all** | **10,327,524** |
 
 - **Instructions recompiled:** 68000 instructions the recompiler turned into C.
 - **Run in verified replays:** of those, the ones the original actually executed during a

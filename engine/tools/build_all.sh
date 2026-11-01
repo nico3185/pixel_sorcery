@@ -136,7 +136,7 @@ else
       elif [[ $line == *error:* || $line == FAILED:* ]]; then printf '\n  %s\n' $line
       fi
     done
-    [[ -t 1 ]] && printf '\r%80s\r' ''
+    if [[ -t 1 ]]; then printf '\r%80s\r' ''; fi   # (an && here made the bar fail without a terminal)
   }
   for t in $titles; do
     [[ -n ${result[$t]:-} ]] && continue

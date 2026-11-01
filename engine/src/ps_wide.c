@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "ps_portable.h"
 #include <fcntl.h>
 #ifndef _WIN32
 #include <spawn.h>
@@ -111,7 +112,7 @@ static void cache_path(char *out, size_t n, uint32_t map) {
 }
 static void mkdirs(const char *path) {
     char tmp[1024]; snprintf(tmp, sizeof tmp, "%s", path);
-    for (char *p = tmp + 1; *p; p++) if (*p == '/') { *p = 0; mkdir(tmp, 0755); *p = '/'; }
+    for (char *p = tmp + 1; *p; p++) if (*p == '/') { *p = 0; ps_mkdir(tmp, 0755); *p = '/'; }
 }
 static void cache_save(void) {
     if (s_map == 0xFFFFFFFF || !s_dirty) return;

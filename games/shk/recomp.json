@@ -6552,7 +6552,16 @@
     "0x091E72": "sub_091E72",
     "0x091E78": "sub_091E78",
     "0x091E7E": "sub_091E7E",
-    "0x091E84": "sub_091E84"
+    "0x091E84": "sub_091E84",
+    "0x03EB50": "sub_03EB50",
+    "0x03EB60": "sub_03EB60",
+    "0x00F8A6": "sub_00F8A6",
+    "0x016A22": "sub_016A22",
+    "0x016ED0": "sub_016ED0",
+    "0x016EFE": "sub_016EFE",
+    "0x016F76": "sub_016F76",
+    "0x016FA0": "sub_016FA0",
+    "0x01D712": "sub_01D712"
   },
   "hooks": {
     "0x01AD82": "extern int ps_wide_full_x(void); int e = ps_wide_full_x(); if (e) g_m68k.flag_N = (int16_t)g_m68k.d[3] < -e;   /* object on screen down to x -E */",

@@ -600,7 +600,7 @@ static void write_cover_routes(int k) {
     free(used);
     snprintf(p, sizeof p, "%s/found.bin", s_dir);
     FILE *f = fopen(p, "wb");
-    if (f) { fwrite(s_found, 1, 0x400000 / 16, f); fclose(f); }
+    if (f) { if (s_found) fwrite(s_found, 1, 0x400000 / 16, f); fclose(f); }   /* nothing found yet: empty file */
 }
 
 int main(int argc, char *argv[]) {

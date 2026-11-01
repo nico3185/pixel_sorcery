@@ -7,6 +7,9 @@ does it on every replay - into games/T/build/cover/*.bin, one bit per even addre
                          carrying another game, only this title's code (sidebyside.json
                          "code_ranges" + functions outside them the original ran, see reachable())
   B  interpreted-only = instructions the original executed in ROM that we never converted (target 0)
+  R  reachable        = executed / converted instructions in reachable functions: those that ran and
+                         every function their code names, transitively (live()); a routine nothing
+                         reachable names can't run, so it leaves the target. Table and kpi.json only
   never entered       = generated functions no recording ever entered (the to-do list for bots/fuzzing)
 Replay exactness (games/T/build/robust.json, see --results):
   C  recordings whose replay MATCHes the original: compiled build / every mixed seed; polls verified
@@ -51,9 +54,10 @@ COLS = ['date', 'git_sha', 'title', 'converted', 'executed_converted', 'coverage
 
 # ---------------------------------------------------------------- generated C, coverage bitmaps
 
-def generated(game, rom_size, bodies=None):
+def generated(game, rom_size, bodies=None, refs=None):
     """Converted instructions and function entries; bodies (a dict), if given, gets each
-    function's instructions."""
+    function's instructions, and refs (a dict) the 24-bit constants it names (callees, jump and
+    table targets: _jt = 0x..., case 0x..., /* sub_... */)."""
     insns, entries = set(), set()
     for f in glob.glob(os.path.join(game, 'src', 'recomp', 'recomp_*.c')):
         s = open(f).read()
@@ -62,6 +66,8 @@ def generated(game, rom_size, bodies=None):
         if bodies is not None:
             for m in re.finditer(r'^void \w+_([0-9A-F]{6})\(void\) \{(.*?)^\}', s, re.M | re.S):
                 bodies[int(m.group(1), 16)] = {int(x, 16) for x in re.findall(r'ITRACE\(0x([0-9A-F]+)\)', m.group(2))}
+                if refs is not None:
+                    refs[int(m.group(1), 16)] = {int(x, 16) for x in re.findall(r'(?:0x|sub_)([0-9A-F]{6})\b', m.group(2))}
     return {a for a in insns if a < rom_size}, {a for a in entries if a < rom_size}
 
 
@@ -74,6 +80,28 @@ def reachable(conv, ex, bodies, ranges):
     for body in bodies.values():
         if body & ex and not body <= inside: inside |= body & conv
     return inside
+
+
+def live(conv, ex, bodies, refs):
+    """Reachable code: the functions that ran, plus every function their code names, followed
+    to the end (callees of callees...). A function nothing reachable names - a leftover routine,
+    a debug path no flag enables - can't run, so it is not part of the target (KPI R)."""
+    todo = [f for f, body in bodies.items() if body & ex]
+    seen = set(todo)
+    while todo:
+        for g in refs.get(todo.pop(), ()):
+            if g in bodies and g not in seen:
+                seen.add(g); todo.append(g)
+    return set().union(*(bodies[f] for f in seen)) & conv if seen else set()
+
+
+def rt_pct(game):
+    """KPI RT: share of the converted instructions roundtrip.py re-encodes byte for byte (its last run)"""
+    try:
+        r = json.load(open(os.path.join(game, 'build', 'roundtrip.json')))
+        return 100 * r['exact'] / max(1, r['instructions'])
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def executed(game, rom_size):
@@ -324,8 +352,8 @@ def title_kpi(t, roms, do_static):
     game = os.path.join(REPO, 'games', t)
     cfg = json.load(open(os.path.join(game, 'sidebyside.json')))
     rom = open(os.path.join(roms, cfg['rom']), 'rb').read()
-    bodies = {}
-    conv, entries = generated(game, len(rom), bodies)
+    bodies, refs = {}, {}
+    conv, entries = generated(game, len(rom), bodies, refs)
     ex, covers = executed(game, len(rom))
     conv_all = conv            # B, D, E, F: everything converted
     if cfg.get('code_ranges'):
@@ -335,11 +363,14 @@ def title_kpi(t, roms, do_static):
     both = ex & conv
     interp = sorted(ex - conv_all)
     never = sorted(entries - ex)
+    reach = live(conv, ex, bodies, refs)
     k = {'title': t, 'converted': len(conv), 'converted_all': len(conv_all), 'executed': len(ex), 'executed_converted': len(both),
          'coverage_pct': 100 * len(both) / max(1, len(conv)), 'interpreted_only': len(interp),
          'interpreted_only_first': ['$%06X' % a for a in interp[:50]], 'cover_files': covers,
          'functions': len(entries), 'functions_never_entered': len(never),
-         'never_entered': ['$%06X' % a for a in never], 'replay': replay_kpi(game)}
+         'never_entered': ['$%06X' % a for a in never], 'replay': replay_kpi(game),
+         'reachable': len(reach), 'reachable_pct': 100 * len(reach & ex) / max(1, len(reach)),
+         'roundtrip_pct': rt_pct(game)}
     if do_static:
         cb, strong, weak = static_kpi(rom, conv_all)
         k.update(code_bytes=cb, code_pct_rom=100 * cb / len(rom), suspects_strong=len(strong),
@@ -383,13 +414,14 @@ def main():
     rows = []
     for t in o.titles or TITLES:
         k = title_kpi(t, o.roms, not o.no_static)
-        rows.append(row(k, date, sha))
+        rows.append(dict(row(k, date, sha), reachable_pct='%.2f' % k['reachable_pct'],   # R, RT: table and kpi.json
+                         roundtrip_pct='' if k['roundtrip_pct'] is None else '%.2f' % k['roundtrip_pct']))
         f = k['reference'] or {}
         for n in f.get('notes', []):
             print(f'  {t}: reference {n}', file=sys.stderr)
-    hdr = ('title', 'conv', 'exec∩conv', 'A cov%', 'B interp', 'C rec', 'C comp', 'C mixed', 'polls', 'fn',
+    hdr = ('title', 'conv', 'exec∩conv', 'A cov%', 'R reach%', 'RT rt%', 'B interp', 'C rec', 'C comp', 'C mixed', 'polls', 'fn',
            'never', 'D code%', 'E strong', 'E weak', 'F ref%')
-    keys = ('title', 'converted', 'executed_converted', 'coverage_pct', 'interpreted_only', 'recordings',
+    keys = ('title', 'converted', 'executed_converted', 'coverage_pct', 'reachable_pct', 'roundtrip_pct', 'interpreted_only', 'recordings',
             'match_compiled', 'match_mixed', 'polls_verified', 'functions', 'functions_never_entered',
             'code_pct_rom', 'suspects_strong', 'suspects_weak', 'ref_pct')
     w = [max(len(h), *(len(str(r[k])) for r in rows)) for h, k in zip(hdr, keys)]
@@ -400,7 +432,7 @@ def main():
         os.makedirs(os.path.dirname(HIST), exist_ok=True)
         new = not os.path.exists(HIST)
         with open(HIST, 'a', newline='') as f:
-            wr = csv.DictWriter(f, COLS)
+            wr = csv.DictWriter(f, COLS, extrasaction='ignore')
             if new:
                 wr.writeheader()
             wr.writerows(rows)

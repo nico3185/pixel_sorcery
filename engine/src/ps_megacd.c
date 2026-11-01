@@ -14,13 +14,46 @@
 #include <string.h>
 #include <sys/stat.h>
 
+/* PS_SCD_CENSUS=file: what the sub CPU does with the Mega CD hardware (BACKLOG priority 0, step 1).
+ * Counts every write to the PCM / gate-array area by register; records the Word RAM mode values,
+ * the CDD commands (first nibble of $FF8042 when the command is sent by its last byte $FF804B) and
+ * the graphics ASIC use; written at exit. */
+static unsigned long s_cnt[2][0x200];               /* [word?][register >> 1 & 0x1FF] */
+static unsigned long s_pcm, s_cdd[16], s_mode[256], s_asic;
+static unsigned s_cdd_first;
+static void census_hook(int width, unsigned int a, unsigned int d) {
+    if (!(a & 0x8000)) { s_pcm++; return; }
+    unsigned r = a & 0x1FF;
+    s_cnt[width == 2][r >> 1]++;
+    if (r == 0x03 || (r == 0x02 && width == 2)) s_mode[d & 0xFF]++;
+    if (r == 0x42) s_cdd_first = width == 2 ? (d >> 8) & 0xF : d & 0xF;
+    if (r == 0x4A || r == 0x4B) s_cdd[s_cdd_first & 15]++;
+    if (r >= 0x58 && r <= 0x67) s_asic++;
+}
+static void census_write(void) {
+    const char *f = getenv("PS_SCD_CENSUS"); FILE *o = f ? fopen(f, "w") : NULL;
+    if (!o) return;
+    fprintf(o, "pcm_writes %lu\nasic_writes %lu\n", s_pcm, s_asic);
+    for (int w = 0; w < 2; w++)
+        for (int i = 0; i < 0x100; i++)
+            if (s_cnt[w][i]) fprintf(o, "reg $FF80%02X %s %lu\n", i * 2, w ? "word" : "byte", s_cnt[w][i]);
+    for (int i = 0; i < 256; i++) if (s_mode[i]) fprintf(o, "mode_value $%02X %lu\n", i, s_mode[i]);
+    for (int i = 0; i < 16; i++) if (s_cdd[i]) fprintf(o, "cdd_command %X %lu\n", i, s_cdd[i]);
+    fclose(o);
+}
+
 void ps_megacd_bios(void) {
+    if (getenv("PS_SCD_CENSUS") && !ps_scd_write_hook) { ps_scd_write_hook = census_hook; atexit(census_write); }
     const char *dir = getenv("PS_SCD_BIOS"), *home = getenv("HOME");
     char def[512]; snprintf(def, sizeof def, "%s/Library/Application Support/PixelSorcery/bios", home ? home : ".");
     if (!dir || !*dir) dir = def;
-    snprintf(CD_BIOS_US, sizeof CD_BIOS_US, "%s/scd_us.bin", dir);
-    snprintf(CD_BIOS_EU, sizeof CD_BIOS_EU, "%s/scd_eu.bin", dir);
-    snprintf(CD_BIOS_JP, sizeof CD_BIOS_JP, "%s/scd_jp.bin", dir);
+    /* the core's path buffers are 256 bytes: a longer folder is refused, not cut to a wrong path */
+    if (snprintf(CD_BIOS_US, sizeof CD_BIOS_US, "%s/scd_us.bin", dir) >= (int)sizeof CD_BIOS_US ||
+        snprintf(CD_BIOS_EU, sizeof CD_BIOS_EU, "%s/scd_eu.bin", dir) >= (int)sizeof CD_BIOS_EU ||
+        snprintf(CD_BIOS_JP, sizeof CD_BIOS_JP, "%s/scd_jp.bin", dir) >= (int)sizeof CD_BIOS_JP) {
+        fprintf(stderr, "megacd: BIOS folder path too long (%zu characters): %s\n", strlen(dir), dir);
+        CD_BIOS_US[0] = CD_BIOS_EU[0] = CD_BIOS_JP[0] = 0;
+    }
 }
 
 static void brm_path(const char *name, char *out, size_t n) {

@@ -135,7 +135,7 @@ static void sram_flush(void) {                       /* every second, when the g
     memcpy(s_sram_disk, sram, sizeof s_sram_disk);
     char path[1100]; sram_save_path(path, sizeof path);
     char dir[1100]; snprintf(dir, sizeof dir, "%s", path);
-    for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(dir, 0755); *q = '/'; }
+    for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; ps_mkdir(dir, 0755); *q = '/'; }
     write_file(path, s_sram_disk, sizeof s_sram_disk);
 }
 void ps_menu_set_title(const char *title) { s_title = title; sram_boot(); }
@@ -164,7 +164,7 @@ static void apply(void) {
 static void save(void) {
     char path[1024]; ini_path(path, sizeof path);
     char dir[1024]; snprintf(dir, sizeof dir, "%s", path);
-    for (char *p = dir + 1; *p; p++) if (*p == '/') { *p = 0; mkdir(dir, 0755); *p = '/'; }
+    for (char *p = dir + 1; *p; p++) if (*p == '/') { *p = 0; ps_mkdir(dir, 0755); *p = '/'; }
     FILE *f = fopen(path, "w"); if (!f) return;
     fprintf(f, "aspect=%d\nwide_objects=%d\nlow_latency=%d\nvolume=%d\nfullscreen=%d\ncheats=%u\ntoggles=%u\nwater=%d\n",
             S.aspect, S.wide_objects, S.low_latency, S.volume, S.fullscreen, S.cheats, S.toggles, S.water);
@@ -418,7 +418,7 @@ static void ps_restart_resume(const char *resume) {
     if (resume) setenv("PS_RESUME", resume, 1); else unsetenv("PS_RESUME");
     if (s_meta) fclose(s_meta);
     platform_shutdown();
-    execv(argv[0], argv);
+    ps_execv(argv[0], argv);
     exit(0);                                       /* exec failed */
 }
 
@@ -447,7 +447,7 @@ static void save_slot(void) {
     char p[1100], m[1100], dir[1100];
     slot_path(s_slot, "polls", p, sizeof p); slot_path(s_slot, "meta", m, sizeof m);
     snprintf(dir, sizeof dir, "%s", p);
-    for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(dir, 0755); *q = '/'; }
+    for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; ps_mkdir(dir, 0755); *q = '/'; }
     copy_lines(rec, p, ps_poll_index());
     {   /* the snapshot comes at the next frame; an older one must not be loaded meanwhile */
         void ps_state_request(void (*)(const uint8_t *, size_t, long));

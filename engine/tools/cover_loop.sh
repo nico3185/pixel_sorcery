@@ -32,8 +32,8 @@ jobs_n=${COVER_JOBS:-2}; round_s=${COVER_ROUND:-300}; every=${COVER_SBS_EVERY:-8
 H=(${=COVER_HEAVY:-})
 tracer=$g/build-trace/genrecomp_build/genrecomp_trace
 explore=$eng/build-cover/genrecomp_explore
-work=$g/build/coverloop; mkdir -p $work $g/recordings $g/build/cover
-romsize=$(stat -f %z $rom 2>/dev/null || stat -c %s $rom)
+work=$g/build/coverloop; mkdir -p $work $g/recordings $g/build/cover; touch $work/pending $work/findings.txt
+romsize=$(stat -L -f %z $rom 2>/dev/null || stat -L -c %s $rom)   # -L: ROMs are often symlinks
 
 # the bot (an explore build with the CPU hook; engine/build-cover is git-ignored)
 if [[ ! -x $explore || $eng/tools/explore/explore.c -nt $explore ]]; then
