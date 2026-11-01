@@ -67,6 +67,9 @@ endif()
 
 # --- Launcher: a shelf of cartridges for a family of titles (tools/make_launcher.sh) ---
 add_executable(ps_launcher tools/launcher/launcher.c)
+if(TARGET SDL2::SDL2main)   # Windows: SDL.h renames main to SDL_main; SDL2main (static, before SDL2) has the entry point
+    target_link_libraries(ps_launcher PRIVATE SDL2::SDL2main)
+endif()
 target_link_libraries(ps_launcher PRIVATE SDL2::SDL2)
 if(NOT WIN32)
     target_link_libraries(ps_launcher PRIVATE m)
@@ -297,6 +300,8 @@ target_compile_definitions(genrecomp_explore PRIVATE USE_32BPP_RENDERING LSB_FIR
 
 # --- The original as a library for learning agents (tools/explore/ps_gym.py, Gymnasium) ---
 add_library(ps_env SHARED tools/explore/ps_env.c)
+# the static libraries go into a shared one: position-independent code (the default on macOS, not Linux)
+set_target_properties(genrecomp genplusgx_hw PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(ps_env PRIVATE genrecomp SDL2::SDL2)
 target_include_directories(ps_env PRIVATE ${_ref_inc})
 target_compile_definitions(ps_env PRIVATE USE_32BPP_RENDERING LSB_FIRST HAVE_NO_SPRITE_LIMIT)

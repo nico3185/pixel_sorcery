@@ -15,12 +15,13 @@ regenerated where stale, then ninja; self-check: recomp.sh. Logs: games/TITLE/bu
 Zip archives are looked into too (a dump inside one is extracted into ../roms).
 --scan DIR: print what the folder holds and exit (no screen). --prepare DIR: also put the ROMs in
 place (as Enter does before building), for build_all.sh --roms DIR."""
-import curses, hashlib, json, os, re, signal, subprocess, sys, threading, time, zipfile
+import curses, hashlib, json, os, re, shutil, signal, subprocess, sys, threading, time, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TOOLS = os.path.join(ROOT, 'engine', 'tools')
 ROMS = os.path.normpath(os.environ.get('PS_ROMS_DIR') or os.path.join(ROOT, '..', 'roms'))   # PS_ROMS_DIR: tests
 PY = os.path.join(ROOT, 'engine', '.venv', 'bin', 'python')
+if not os.path.exists(PY): PY = sys.executable          # Windows download: its bundled Python runs this
 CAT = {k: v for k, v in json.load(open(os.path.join(TOOLS, 'roms.json'))).items() if not k.startswith('_')}
 PREFS = os.path.expanduser('~/Library/Application Support/PixelSorcery/build_ui.json')
 EXTS = ('.bin', '.md', '.gen', '.68k', '.sgd')
@@ -36,8 +37,36 @@ def native_port(folder):
     except OSError: return False
 
 
+def titles_py():
+    """titles() without zsh: the folders with a sidebyside.json in titles.zsh's shelf order, its codes
+    (ps_code) and the names in launchers/all.txt (the folder name when it has none)"""
+    src = open(os.path.join(TOOLS, 'titles.zsh')).read()
+    code = dict(re.findall(r'([\w-]+) ([\w-]+)', re.search(r'ps_code=\((.*?)\)', src, re.S).group(1)))
+    order = re.search(r'ps_order=\((.*?)\)', src, re.S).group(1).split()
+    names = {}
+    try:
+        for l in open(os.path.join(ROOT, 'launchers', 'all.txt')):
+            if l.startswith('game '):
+                f = [x.strip() for x in l[5:].split('|')]
+                names.setdefault(f[0], f[1] if len(f) > 1 else f[0])
+    except OSError:
+        pass
+    have = sorted(d for d in os.listdir(os.path.join(ROOT, 'games'))
+                  if os.path.exists(os.path.join(ROOT, 'games', d, 'sidebyside.json')))
+    ordered = [d for d in order if d in have] + [d for d in have if d not in order]
+    def name(d):                                # as ps_name: a sibling's name for other versions
+        if d in names: return names[d]
+        for base, n in names.items():
+            if d.startswith(base + '-'): return f'{n} ({d[len(base) + 1:].upper()})'   # a later revision
+            if base.startswith(d + '-'): return re.sub(r' \(.*\)$', '', n) + ' (Europe)'  # the other region
+        return d
+    return [(d, code.get(d, d), name(d)) for d in ordered]
+
+
 def titles():
     """[(folder, code, name)] in shelf order, from titles.zsh (the names play.sh shows)"""
+    if not shutil.which('zsh'):                 # Windows: the same list read by Python
+        return titles_py()
     out = subprocess.run(['zsh', '-c', f'ROOT={ROOT!r}; source {TOOLS}/titles.zsh; ps_tsv'], capture_output=True, text=True).stdout
     return [tuple(l.split('\t')) for l in out.splitlines() if l.count('\t') == 2
             and (not NATIVE_ONLY or native_port(l.split('\t')[0]))]

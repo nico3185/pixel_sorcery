@@ -38,6 +38,7 @@ INDEX = 'https://api.github.com/repos/SingleStepTests/680x0/contents/68000/v1'
 REGS = ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6',
         'usp', 'ssp', 'sr', 'pc']
 ADDRESS_ERROR = 3
+SUB = False
 
 sys.path.insert(0, os.path.join(ENG, 'tools', 'recompiler'))
 from generate import M68KTranslator, CYCLES  # noqa: E402
@@ -159,14 +160,14 @@ def cycles_c():
 
 def run_group(op, per_op, seed, verbose, interp=False):
     src, n, stat, untr = build_group(op, per_op, seed, interp)
-    tag = '_interp' if interp else ''
-    exe = src[:-2] + ('_interp' if interp else '')
+    tag = ('_sub' if SUB else '_interp') if interp else ''
+    exe = src[:-2] + tag
     cc = ['cc', '-O0', '-w', '-I', os.path.join(ENG, 'include'), '-I', HERE, src,
           os.path.join(HERE, 'isa_rt.c'), '-o', exe]
     if interp:
         cc = ['cc', '-O0', '-w', '-DISA_INTERP', '-DISA_DATA_ONLY', '-I', os.path.join(ENG, 'include'),
-              '-I', os.path.join(ENG, 'src'), '-I', HERE, src, os.path.join(HERE, 'isa_rt.c'),
-              os.path.join(ENG, 'src', 'm68k_interp.c'), cycles_c(), '-o', exe]
+              '-I', os.path.join(ENG, 'src'), '-I', HERE, src, os.path.join(HERE, 'isa_srt.c' if SUB else 'isa_rt.c'),
+              os.path.join(ENG, 'src', 's68k_interp.c' if SUB else 'm68k_interp.c'), cycles_c(), '-o', exe]
         untr, stat['untranslated'] = [], 0      # the interpreter decodes for itself
     res = {'op': op, 'tests': n, **stat, 'untranslated_forms': untr}
     if n == 0:
@@ -226,8 +227,12 @@ def main():
     ap.add_argument('--jobs', type=int, default=4)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--interp', action='store_true')
+    ap.add_argument('--sub', action='store_true', help='the Mega CD sub CPU\'s build of the interpreter (s68k_interp.c)')
     ap.add_argument('-v', action='store_true')
     a = ap.parse_args()
+    global SUB
+    SUB = a.sub
+    a.interp = a.interp or a.sub
     ops = a.ops.split(',') if a.ops else suite_files()
     with cf.ThreadPoolExecutor(a.jobs) as ex:
         results = list(ex.map(lambda op: run_group(op, a.per_op, a.seed, a.v, a.interp), ops))
@@ -250,7 +255,7 @@ def main():
                  f'**{AE}** | |')
     rep = '\n'.join(lines)
     os.makedirs(BUILD, exist_ok=True)
-    tag = '_interp' if a.interp else ''
+    tag = ('_sub' if a.sub else '_interp') if a.interp else ''
     open(os.path.join(BUILD, f'isa_report{tag}.md'), 'w').write(rep + '\n')
     json.dump(results, open(os.path.join(BUILD, f'isa_results{tag}.json'), 'w'), indent=1)
     print(rep)

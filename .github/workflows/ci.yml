@@ -1,0 +1,51 @@
+# ROM-free checks on every push and pull request (roadmap 0.1.2): the engine builds with no warning
+# on macOS, Linux and Windows, and the self-checks that need no game pass. Games are never built
+# here: their C is generated from the player's own ROM.
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true              # Genesis Plus GX: the reference build and the runtime test
+      - name: dependencies
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install sdl2 ninja; else
+            sudo apt-get update -qq && sudo apt-get install -y -qq libsdl2-dev zlib1g-dev ninja-build; fi
+          python3 -m venv .venv && .venv/bin/pip install --quiet capstone   # Homebrew's Python is externally managed
+      - name: engine (warnings are errors)
+        run: |
+          cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-Werror
+          cmake --build build
+      - name: self-checks
+        run: |
+          ctest --test-dir build --output-on-failure
+          .venv/bin/python engine/tools/recompiler/test_analyze.py
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4      # no submodule: the native-only build the Windows download ships
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-SDL2 mingw-w64-x86_64-zlib mingw-w64-x86_64-python
+            mingw-w64-x86_64-python-capstone
+      - name: engine, native only (warnings are errors)
+        run: |
+          cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-Werror
+          cmake --build build
+      - name: self-checks
+        run: python engine/tools/recompiler/test_analyze.py

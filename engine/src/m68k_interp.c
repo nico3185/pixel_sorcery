@@ -28,6 +28,11 @@
 #include <string.h>
 
 #include "ps_portable.h"
+#ifdef PS_SUBCPU
+extern const uint16_t ps_m68k_cycles[0x10000];
+#define ps_m68k_nhooks 0
+static uint32_t run_hook(uint32_t pc) { (void)pc; return 0; }
+#else
 /* generated per title (recomp_cycles.c); tools without generated code (the reference
  * runner, tests) get this empty default and never interpret */
 #if defined(_MSC_VER)
@@ -69,6 +74,17 @@ static uint32_t run_hook(uint32_t pc) {
     }
     return 0;
 }
+#endif
+/* PS_SUBCPU (s68k_interp.c): the same interpreter as the Mega CD's sub CPU - runs are slices of a
+ * free-running CPU, not calls: an RTS always pops, and the instruction boundary (s68k_boundary:
+ * exceptions taken, interrupts, STOP, the end of the slice) decides where to go on, 0 = stop */
+#ifdef PS_SUBCPU
+#define SUB_DEPTH0(d) 0
+uint32_t s68k_boundary(uint32_t next);
+void s68k_stop(void);
+#else
+#define SUB_DEPTH0(d) ((d) == 0)
+#endif
 void func_table_tail(uint32_t m68k_addr);
 void recomp_m68k_exception(uint8_t vector);
 
@@ -260,13 +276,18 @@ static void interp_loop(uint32_t entry) {
     int depth = 0;
     uint32_t rst[256];                                   /* return addresses of this run's own calls */
     s_entered++;
-    if (!s_icover_init) icover_init();
     s_next = entry;
     for (;;) {
+#ifdef PS_SUBCPU
+        if (!(s_next = s68k_boundary(s_next))) return;
+        (void)s_icover_init; (void)icover_init;
+#else
+        if (!s_icover_init) icover_init();
         if ((int)(g_cyc - g_cyc_event) >= 0) {
             g_m68k_ipc = s_next; g_m68k_ipc_kind = 1; bus_cycle_event(); g_m68k_ipc = 0; g_m68k_ipc_kind = 0;
             if (g_m68k_redirect) { s_next = g_m68k_redirect; g_m68k_redirect = 0; }
         }
+#endif
         s_pc = s_next;
         if (s_icover) s_icover[(s_pc & 0xFFFFFF) >> 4] |= (uint8_t)(1u << ((s_pc >> 1) & 7));
         if (ps_m68k_nhooks) { uint32_t t = run_hook(s_pc); if (t) { s_next = t; continue; } }
@@ -342,7 +363,7 @@ static void interp_loop(uint32_t entry) {
             if (op == 0x4E75 || op == 0x4E77) {                  /* RTS / RTR */
                 ICYC(base);
                 if (op == 0x4E77) { m68k_set_ccr((uint8_t)bus_read16(g_m68k.a[7])); g_m68k.a[7] += 2; }
-                if (depth == 0) {
+                if (SUB_DEPTH0(depth)) {
                     if ((int)(g_cyc - g_cyc_event) >= 0) {      /* an interrupt after the RTS (see CYCR) */
                         g_m68k_ipc = bus_read32(g_m68k.a[7]) & 0xFFFFFF; bus_cycle_event(); g_m68k_ipc = 0;
                         if (g_m68k_redirect) { uint32_t t = g_m68k_redirect; g_m68k_redirect = 0; g_m68k.a[7] += 4; func_table_tail(t); return; }
@@ -359,7 +380,11 @@ static void interp_loop(uint32_t entry) {
             }
             if (op == 0x4E71) { ICYC(base); break; }               /* NOP */
             if (op == 0x4E70) { g_cyc += 132 * 7; g_refresh += 128 * 7; ICYC(base); break; }   /* RESET (external devices only): 132 clocks */
+#ifdef PS_SUBCPU
+            if (op == 0x4E72) { m68k_set_sr(fetch16()); ICYC(base); s68k_stop(); break; }   /* STOP: waits for an interrupt */
+#else
             if (op == 0x4E72) { m68k_set_sr(fetch16()); ICYC(base); break; }   /* STOP: runs on to the interrupt */
+#endif
             if (op == 0x4E76) { ICYC(base); if (g_m68k.flag_V) { g_m68k.pc = s_next; IEV0(); recomp_m68k_exception(7); } else g_cyc += 4 * 7; break; }
             if ((op & 0xFFF0) == 0x4E40) { ICYC(base); g_m68k.pc = s_next; IEV0(); recomp_m68k_exception((uint8_t)(32 + (op & 15))); break; }
             if ((op & 0xFFF8) == 0x4E50) {                         /* LINK */

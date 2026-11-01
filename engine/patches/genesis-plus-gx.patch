@@ -1,3 +1,40 @@
+diff --git a/core/cd_hw/scd.c b/core/cd_hw/scd.c
+index e451992..1b70c32 100644
+--- a/core/cd_hw/scd.c
++++ b/core/cd_hw/scd.c
+@@ -798,8 +798,12 @@ INLINE void word_ram_switch(uint8 mode)
+ 
+ static void scd_write_word(unsigned int address, unsigned int data);
+ 
++/* PixelSorcery: every sub-CPU write to the PCM / gate-array area, for the device census */
++void (*ps_scd_write_hook)(int width, unsigned int address, unsigned int data);
++
+ static void scd_write_byte(unsigned int address, unsigned int data)
+ {
++  if (ps_scd_write_hook) ps_scd_write_hook(1, address, data);
+   /* PCM area (8K) mirrored into $xF0000-$xF7FFF */
+   if (!(address & 0x8000))
+   {
+@@ -1160,6 +1164,7 @@ static void scd_write_byte(unsigned int address, unsigned int data)
+ 
+ static void scd_write_word(unsigned int address, unsigned int data)
+ {
++  if (ps_scd_write_hook) ps_scd_write_hook(2, address, data);
+   /* PCM area (8K) mirrored into $xF0000-$xF7FFF */
+   if (!(address & 0x8000))
+   {
+diff --git a/core/cd_hw/scd.h b/core/cd_hw/scd.h
+index 5aedd5e..1df7213 100644
+--- a/core/cd_hw/scd.h
++++ b/core/cd_hw/scd.h
+@@ -90,6 +90,7 @@ typedef struct
+ } cd_hw_t;
+ 
+ /* Function prototypes */
++extern void (*ps_scd_write_hook)(int width, unsigned int address, unsigned int data);
+ extern void scd_init(void);
+ extern void scd_reset(int hard);
+ extern void scd_update(unsigned int cycles);
 diff --git a/core/debug/cpuhook.h b/core/debug/cpuhook.h
 index 1fea3ec..a890266 100644
 --- a/core/debug/cpuhook.h
