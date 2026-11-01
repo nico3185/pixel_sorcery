@@ -58,7 +58,9 @@ def titles_py():
         if d in names: return names[d]
         for base, n in names.items():
             if d.startswith(base + '-'): return f'{n} ({d[len(base) + 1:].upper()})'   # a later revision
-            if base.startswith(d + '-'): return re.sub(r' \(.*\)$', '', n) + ' (Europe)'  # the other region
+            if base.startswith(d + '-'):           # the other region: Europe here (USA name -> its base)
+                n = re.sub(r' \(.*\)$', '', n)
+                return re.sub(re.escape('-' + base[len(d) + 1:]) + '$', '', n, flags=re.I) + ' (Europe)'
         return d
     return [(d, code.get(d, d), name(d)) for d in ordered]
 

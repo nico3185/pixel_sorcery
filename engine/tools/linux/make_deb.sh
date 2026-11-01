@@ -45,7 +45,7 @@ mkdir -p "$ws/../roms"
 cd "$ws"
 case "${1:-}" in
   play) shift; exec ./play.sh "$@" ;;
-  roms) exec engine/.venv/bin/python engine/tools/build_ui.py --prepare "$2" ;;
+  roms) exec engine/.venv/bin/python engine/tools/build_ui.py --prepare "${2:?usage: pixelsorcery roms DIR}" ;;
   *) exec engine/.venv/bin/python engine/tools/build_ui.py "$@" ;;
 esac
 EOF

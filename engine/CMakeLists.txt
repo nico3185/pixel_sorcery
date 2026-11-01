@@ -75,6 +75,12 @@ if(NOT WIN32)
     target_link_libraries(ps_launcher PRIVATE m)
 endif()
 
+# --- Instruction edge cases (ctest), header only: also in native-only builds (Windows CI) ---
+enable_testing()
+add_executable(genrecomp_test_m68k_div tests/test_m68k_div.c)
+target_include_directories(genrecomp_test_m68k_div PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME m68k_div COMMAND genrecomp_test_m68k_div)
+
 # --- Genesis Plus GX hardware backend (static lib) ---
 set(GPGX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ext/Genesis-Plus-GX/core)
 # Without its sources (the app's bundled tree, a plain download) only the native runtime and the

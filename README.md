@@ -122,6 +122,23 @@ mkdir -p ../roms        # your dumps, named as in the table above (or ROM=/path/
   build, self-check); `engine/tools/check.sh sh2 my_run.bk2` (any `.polls`/`.gmv`/`.bk2` ->
   MATCH or the first divergence).
 
+## Quick start (Linux)
+
+Download `pixelsorcery_<version>_all.deb` from the
+[releases](https://github.com/nico3185/pixel_sorcery/releases) (Debian / Ubuntu, any
+architecture), then:
+
+```sh
+sudo apt install ./pixelsorcery_0.1.0_all.deb   # the ./ makes apt read the file; it also installs
+                                               # the compiler, cmake, ninja, SDL2, Python, capstone
+pixelsorcery                # the build screen: finds your dumps, compiles the native ports
+pixelsorcery roms ~/roms    # or link the games in a folder without the screen
+pixelsorcery play sh2       # play a built title (pixelsorcery play lists them)
+```
+
+Everything it makes stays in `~/.local/share/pixelsorcery`. Native ports only: the emulator core
+is not in the package, so there is no self-check and no Mega CD title.
+
 **TUTORIAL.md** explains every tool: decompiling (static analysis + traced coverage),
 recompiling, verifying side by side, the Mega CD disc builder and relocator.
 
