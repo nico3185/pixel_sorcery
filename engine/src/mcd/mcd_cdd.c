@@ -231,3 +231,9 @@ void mcd_cdd_debug(char *out, int n) {
     int k = snprintf(out, n, "cmd"); for (int i = 0; i < 10; i++) k += snprintf(out + k, n - k, "%X", d.cmd[i]);
     k += snprintf(out + k, n - k, " st"); for (int i = 0; i < 10; i++) k += snprintf(out + k, n - k, "%X", d.st[i]);
 }
+
+/* ps_state.c: the drive, its CD-DA ring and fader */
+void ps_state_blob(void *p, unsigned long n);
+#define B(v) ps_state_blob(&(v), sizeof (v))
+void mcd_cdd_state(void) { B(d); B(s_cdda); B(s_cdda_w); B(s_cdda_r); B(s_fader); }
+#undef B

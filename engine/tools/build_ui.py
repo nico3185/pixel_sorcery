@@ -156,6 +156,37 @@ def identify(path):
     return None
 
 
+def bios_dir():
+    """where the runtime and generate.sh look for the Mega CD BIOS (scd_jp/eu/us.bin; PS_SCD_BIOS overrides)"""
+    if os.environ.get('PS_SCD_BIOS'): return os.environ['PS_SCD_BIOS']
+    if sys.platform == 'darwin': return os.path.expanduser('~/Library/Application Support/PixelSorcery/bios')
+    if os.name == 'nt' or os.environ.get('MSYSTEM'): return os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'PixelSorcery', 'bios')
+    return os.path.join(os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'), 'pixelsorcery', 'bios')
+
+def bios_region(path):
+    """'jp' / 'eu' / 'us' for a Mega CD (Model 1) BIOS dump - 128 KB, "BOOT ROM" in its header's title, a
+    "BR " serial, the region letter at $1F0 - else None"""
+    try:
+        if '::' in path or os.stat(path).st_size != 0x20000: return None
+        with open(path, 'rb') as f: h = f.read(0x200)
+    except OSError: return None
+    if b'BOOT ROM' not in h[0x120:0x150] or h[0x180:0x183] != b'BR ': return None
+    return {'J': 'jp', 'E': 'eu', 'U': 'us'}.get(chr(h[0x1F0]))
+
+BIOS_FOUND = {}                                                # region -> (the player's BIOS dump, verified) (scan)
+BIOS_SHA1 = json.load(open(os.path.join(TOOLS, 'roms.json')))['_scd_bios']
+def install_bios(log):
+    """link every BIOS found into bios_dir() as scd_REGION.bin, unless one is there already"""
+    d = bios_dir()
+    for r, (p, _) in BIOS_FOUND.items():
+        dst = os.path.join(d, f'scd_{r}.bin')
+        if os.path.exists(dst): continue
+        os.makedirs(d, exist_ok=True)
+        if os.path.lexists(dst): os.remove(dst)                # a dangling link
+        try: os.symlink(os.path.abspath(p), dst)
+        except OSError: shutil.copyfile(p, dst)                # no symlinks (Windows): a copy
+        log(f'Mega CD BIOS ({r}{"" if _ else ", not the verified dump"}): {p}')
+
 def scan(folder):
     """{catalogue key: (path, status)} - verified dumps first, the canonical ../roms name preferred"""
     found = {}
@@ -174,6 +205,9 @@ def scan(folder):
                                       if i.file_size in SIZES and i.filename.lower().endswith(EXTS)]
                     except (OSError, zipfile.BadZipFile): pass
             for p in cands:
+                if p.lower().endswith('.bin') and (b := bios_region(p)) and not BIOS_FOUND.get(b, ('', False))[1]:
+                    ok = hashlib.sha1(open(p, 'rb').read()).hexdigest() == BIOS_SHA1.get(b)   # the verified dump first
+                    if ok or b not in BIOS_FOUND: BIOS_FOUND[b] = (p, ok)
                 r = identify(p)
                 if not r: continue
                 k, st = r
@@ -214,6 +248,7 @@ def prepare(plan, log):
     """put every usable ROM in ../roms under its expected name; returns the keys that failed"""
     os.makedirs(ROMS, exist_ok=True)
     bad = []
+    install_bios(log)                                          # the Mega CD BIOS for disc titles
     for k, (st, d) in plan.items():
         if st == 'link':
             dst = os.path.join(ROMS, CAT[k]['file'])

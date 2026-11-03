@@ -9,6 +9,8 @@
 #include "mcd.h"
 #include "genrecomp/s68k.h"
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 Mcd g_mcd;
@@ -91,7 +93,29 @@ void s68k_write16(uint32_t a, uint16_t v) { mcd_write(true, true, a & ~1u, v); }
 void s68k_write32(uint32_t a, uint32_t v) { s68k_write16(a, (uint16_t)(v >> 16)); s68k_write16(a + 2, (uint16_t)v); }
 
 /* ------------------------------------------------------------------ gate array */
+/* the sub CPU's register reads and writes the reference's poll idling watches (mcd.c) */
+static void sub_poll(uint32_t a, bool upper, bool lower, bool write) {
+    unsigned i = a & 0x1FF; bool word = upper && lower;
+    if (!write) {
+        if (word) {
+            if (i == 0x02) mcd_sub_poll_detect(1u << 3);
+            else if ((i & 0x1F0) == 0x10) mcd_sub_poll_detect(3u << (i & 0x1E));
+        } else {
+            unsigned b = i | lower;                      /* the byte read */
+            if (b == 0x03) mcd_sub_poll_detect(1u << 3);
+            else if (b == 0x0E) mcd_sub_poll_detect(1u << 0x0E);
+            else if (b == 0x04) mcd_sub_poll_detect(1u << 4);
+            else if (b == 0x58) mcd_sub_poll_detect(1u << 8);
+            else if ((b & 0x1F0) == 0x10) mcd_sub_poll_detect(1u << (b & 0x1F));
+        }
+    } else {
+        if (i == 0x02) mcd_sub_poll_sync(1u << 3);
+        else if (i == 0x0E) mcd_sub_poll_sync(1u << 0x0F);
+        else if (i >= 0x20 && i <= 0x2F) mcd_sub_poll_sync(word ? 3u << ((i - 0x10) & 0x1E) : 1u << (((i | lower) - 0x10) & 0x1F));
+    }
+}
 static uint16_t io_read(bool upper, bool lower, uint32_t a, uint16_t data) {
+    sub_poll(a, upper, lower, false);
     Mcd *m = &g_mcd;
     (void)upper;                                             /* no register here reads one byte lane alone */
     a = 0xFF8000 | (a & 0x1FF);
@@ -120,6 +144,16 @@ static uint16_t io_read(bool upper, bool lower, uint32_t a, uint16_t data) {
 }
 
 static void io_write(bool upper, bool lower, uint32_t a, uint16_t data) {
+    sub_poll(a, upper, lower, true);
+    {   /* PS_SUBW_LOG=file: the sub CPU's gate-array writes below $FF8030 (frame, line, register, value), as the reference logs them */
+        static FILE *log; static int init;
+        if (!init) { init = 1; const char *f = getenv("PS_SUBW_LOG"); if (f && *f) log = fopen(f, "w"); }
+        if (log && (a & 0x1FF) < 0x30) {
+            extern long ps_frames; extern uint16_t v_counter; unsigned r = a & 0x1FF;
+            if (upper && lower) fprintf(log, "%ld %u %02X %04X\n", ps_frames, v_counter, r, data);
+            else fprintf(log, "%ld %u %02X %02X\n", ps_frames, v_counter, r | lower, lower ? data & 0xFF : data >> 8);
+        }
+    }
     Mcd *m = &g_mcd;
     a = 0xFF8000 | (a & 0x1FF);
     switch (a) {
@@ -127,7 +161,7 @@ static void io_write(bool upper, bool lower, uint32_t a, uint16_t data) {
         if (lower && !(data & 1)) {                          /* RESET cleared: the CD hardware is reset (as the reference) */
             void mcd_cdd_power(void), mcd_cdd_rephase(long), mcd_cdc_power(void), mcd_parts_power(void), mcd_cdc_stopwatch_reset(void);
             extern unsigned g_mcd_line_scyc;
-            m->timer.frequency = m->timer.counter = 0;
+            m->timer.frequency = 0; m->timer.left = 0;
             m->gpu_irq = m->external.irq = m->timer.irq = m->cdd_irq = m->cdc_irq = m->irq.subcode = (McdIrq){ 0 };
             mcd_irq_sync();
             mcd_cdd_power(); mcd_cdd_rephase((long)((g_scyc - g_mcd_line_scyc) / 7));
@@ -147,11 +181,17 @@ static void io_write(bool upper, bool lower, uint32_t a, uint16_t data) {
     case 0xFF800A: mcd_cdc_dma_address_write(data); return;
     case 0xFF800C: mcd_cdc_stopwatch_reset(); return;
     case 0xFF800E: m->comm.cfs = (uint8_t)data; return;
-    case 0xFF8030: m->timer.counter = m->timer.frequency = (uint8_t)data; return;
+    case 0xFF8030: {                                         /* the timer restarts from this moment: FREQUENCY x 384 clocks (as the reference) */
+        unsigned mcd_slice_elapsed(void);
+        m->timer.frequency = (uint8_t)data;
+        m->timer.left = m->timer.frequency ? (int32_t)(m->timer.frequency * 384u + mcd_slice_elapsed()) : 0;
+        return;
+    }
     case 0xFF8032:
         if (lower) {
             m->gpu_irq.enable = data >> 1 & 1; m->external.irq.enable = data >> 2 & 1; m->timer.irq.enable = data >> 3 & 1;
             m->cdd_irq.enable = data >> 4 & 1; m->cdc_irq.enable = data >> 5 & 1; m->irq.subcode.enable = data >> 6 & 1;
+            if (!m->gpu_irq.enable) m->gpu_irq.pending = false;      /* a disabled level 1 is dropped (the reference) */
             mcd_irq_sync();
         }
         return;
@@ -185,9 +225,15 @@ void s68k_irq_acknowledge(int level) {
     if (level >= 1 && level <= 6) { src[level]->pending = false; mcd_irq_sync(); }
 }
 static void irq_raise(McdIrq *q) { if (!q->pending) { q->pending = true; mcd_irq_sync(); } }
-void mcd_timer_clock(void) {
+/* CLOCKS sub clocks of the timer: at each expiry it reloads, and raises level 3 only while enabled */
+void mcd_timer_step(unsigned clocks) {
     Mcd *m = &g_mcd;
-    if (m->timer.frequency && !m->timer.counter--) { m->timer.counter = m->timer.frequency; irq_raise(&m->timer.irq); }
+    if (!m->timer.left) return;
+    m->timer.left -= (int32_t)clocks;
+    if (m->timer.left <= 0) {
+        m->timer.left += m->timer.frequency * 384;
+        if (m->timer.irq.enable) irq_raise(&m->timer.irq);
+    }
 }
 
 void mcd_power(bool reset) {

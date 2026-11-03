@@ -29,6 +29,8 @@ typedef struct {
     uint16_t pram[0x40000];          /* 512 KB program RAM */
     uint16_t wram[0x20000];          /* 256 KB Word RAM */
     uint8_t  bram[0x2000];           /* 8 KB backup RAM */
+    uint8_t  cart[0x80000];          /* 512 KB backup RAM cartridge (main side $400000-$7FFFFF) */
+    uint8_t  cart_prot;              /* its write-protect register: bit 0 = writes allowed */
 
     struct {
         bool run, request, halt;     /* main CPU's control of the sub CPU (reset, bus request) */
@@ -40,7 +42,7 @@ typedef struct {
     } io;
     struct { bool red, green; } led;
     struct { uint8_t cfm, cfs; uint16_t command[8], status[8]; } comm;
-    struct { McdIrq irq; uint8_t frequency, counter; } timer;
+    struct { McdIrq irq; uint8_t frequency; int32_t left; } timer;   /* left: sub clocks to the next expiry, 0 stopped */
     struct { McdIrq irq; } external;  /* level 2: the main CPU's request */
     struct { McdIrq reset, subcode; bool pending; } irq;
     McdIrq gpu_irq, cdd_irq, cdc_irq;
@@ -50,10 +52,14 @@ extern Mcd g_mcd;
 
 void mcd_power(bool reset);
 void mcd_irq_sync(void);             /* the level the sub CPU sees, from every pending source */
-void mcd_timer_clock(void);          /* the gate array's timer tick */
 
 /* the clock and power (mcd.c) */
-void mcd_run(unsigned clocks);       /* the sub CPU and the gate array for CLOCKS sub-CPU clocks */
+void mcd_line(void);                  /* the sub CPU and the gate array to the end of this main-CPU line */
+void mcd_sync_sub(unsigned rel);      /* ... up to REL master clocks into the line (a shared register access) */
+void mcd_main_poll_detect(unsigned mask, unsigned cyc, unsigned pc); unsigned mcd_main_poll_wait(void);
+void mcd_main_poll_sync(unsigned mask, unsigned rel);
+void mcd_sub_poll_detect(unsigned mask); void mcd_sub_poll_sync(unsigned mask); void mcd_sub_wake(unsigned mask);
+extern unsigned g_mcd_main_stopped, g_mcd_sub_stopped;
 bool mcd_load_bios(const char *path);
 void mcd_power_on(void);
 

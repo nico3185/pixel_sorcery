@@ -22,8 +22,12 @@
 static unsigned long s_cnt[2][0x200];               /* [word?][register >> 1 & 0x1FF] */
 static unsigned long s_pcm, s_cdd[16], s_mode[256], s_asic;
 static unsigned s_cdd_first;
-static FILE *s_cddlog;
+static FILE *s_cddlog, *s_pcmlog;
+static FILE *s_subwlog;
 static void census_hook(int width, unsigned int a, unsigned int d) {
+    if (s_subwlog && (a & 0x8000) && (a & 0x1FF) < 0x30) {   /* PS_SUBW_LOG: the sub CPU's gate-array writes */
+        extern long ps_frames; fprintf(s_subwlog, "%ld %u %02X %0*X\n", ps_frames, v_counter, a & 0x1FF, width * 2, d & (width == 2 ? 0xFFFF : 0xFF));
+    }
     if (s_cddlog && (a & 0x8000) && ((a & 0x1FF) == 0x4B || ((a & 0x1FF) == 0x4A && width == 2))) {
         extern long ps_frames; fprintf(s_cddlog, "%ld ", ps_frames);
         for (int i = 0; i < 10; i++) { unsigned r = 0x42 + i; unsigned v = (r & 1) ? scd.regs[r >> 1].byte.l : scd.regs[r >> 1].byte.h;
@@ -32,7 +36,12 @@ static void census_hook(int width, unsigned int a, unsigned int d) {
         for (int i = 0; i < 10; i++) { unsigned r = 0x38 + i; fprintf(s_cddlog, "%X", ((r & 1) ? scd.regs[r >> 1].byte.l : scd.regs[r >> 1].byte.h) & 0xF); }
         fprintf(s_cddlog, "\n"); fflush(s_cddlog);
     }
-    if (!(a & 0x8000)) { s_pcm++; return; }
+    if (!(a & 0x8000)) {
+        s_pcm++;
+        unsigned o = (a >> 1) & 0x1FFF;                 /* PS_PCM_LOG: the PCM chip's register writes */
+        if (s_pcmlog && (a & 1) && o < 0x1000) { extern long ps_frames; fprintf(s_pcmlog, "%ld %02X %02X\n", ps_frames, o & 0xFF, d & 0xFF); }
+        return;
+    }
     unsigned r = a & 0x1FF;
     s_cnt[width == 2][r >> 1]++;
     if (r == 0x03 || (r == 0x02 && width == 2)) s_mode[d & 0xFF]++;
@@ -54,6 +63,8 @@ static void census_write(void) {
 
 void ps_megacd_bios(void) {
     if (getenv("PS_SCD_CENSUS") && !ps_scd_write_hook) { ps_scd_write_hook = census_hook; atexit(census_write); }
+    if (getenv("PS_PCM_LOG")) { s_pcmlog = fopen(getenv("PS_PCM_LOG"), "w"); if (!ps_scd_write_hook) ps_scd_write_hook = census_hook; }
+    if (getenv("PS_SUBW_LOG")) { s_subwlog = fopen(getenv("PS_SUBW_LOG"), "w"); ps_scd_write_hook = census_hook; }
     if (getenv("PS_CDD_LOG") && !ps_scd_write_hook) { s_cddlog = fopen(getenv("PS_CDD_LOG"), "w"); ps_scd_write_hook = census_hook; }
     const char *dir = getenv("PS_SCD_BIOS"), *home = getenv("HOME");
     char def[512]; snprintf(def, sizeof def, "%s/Library/Application Support/PixelSorcery/bios", home ? home : ".");

@@ -19,6 +19,13 @@ whole machine instantly (`engine/src/ps_state.c`), one per slot.
 Keys: arrows, Z/X/C = A/B/C, Return = Start, Esc quits. Gamepads work by button position
 (left/bottom/right face buttons = A/B/C, Start = Start), Switch Pro included.
 
+**Rewind and fast forward**: Backspace or the gamepad's left shoulder pauses on a timeline of the
+last 30 seconds (a snapshot of the whole machine every second, in memory): the selected moment
+full screen, a filmstrip of its neighbours and a bar. Left goes back, Right forward to the present
+(hold to scroll), A / Return plays from there, B / Esc returns to the present. The session's
+recording is cut there, so it still replays to what you played. Hold ] or the right shoulder to
+fast forward (no sound, one frame in four shown).
+
 **Settings menu**: F1 or Tab, gamepad Back/Select (Switch: Minus) or Guide (Home), or pause
 the game with Start and press **C** (a "C: SETTINGS" hint shows while paused). Aspect
 ratio, widescreen enemies, low latency, volume, fullscreen, level select (Game Genie

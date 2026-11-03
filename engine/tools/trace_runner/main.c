@@ -315,7 +315,7 @@ static void hook(hook_type_t type, int width, unsigned int address, unsigned int
          * PS_Z80_PCS: bitmap of executed Z80 addresses. A compressed driver (SH2, unpacked
          * by the 68K) is not in the ROM verbatim: find_driver.py --image takes these. */
         static FILE *zp; static int dumped; static uint8_t pcs[0x2000 / 8];
-        if (init == 1) { init = 2; const char *p = getenv("PS_Z80_PCS"); if (p && *p) zp = fopen(p, "wb"); }
+        if (init == 1) { init = 2; const char *p = getenv("PS_Z80_PCS"); char n0[1024]; if (p && *p) { snprintf(n0, sizeof n0, p, -1); zp = fopen(n0, "wb"); } }
         if (zp) {
             static long k; unsigned a = address & 0x1FFF;
             pcs[a >> 3] |= 1 << (a & 7);
@@ -325,10 +325,26 @@ static void hook(hook_type_t type, int width, unsigned int address, unsigned int
          * SH2 driver - its sample banks - and restarts it) */
         const char *d = getenv("PS_Z80_DUMP");
         static int last = -1; if (last < 0) last = getenv("PS_Z80_DUMP_LAST") != NULL;
-        if ((!dumped || last) && (address & 0xFFFF) == 0 && Z80.pc.w.l == 0 && d && *d) {
+        /* a path with %d: every start whose RAM differs from the previous dump, numbered (a Mega CD
+         * disc: the BIOS's driver, then each program's) */
+        static uint8_t prev[0x2000]; static int nth;
+        int all = d && strstr(d, "%d") != NULL;
+        if ((!dumped || last || all) && (address & 0xFFFF) == 0 && Z80.pc.w.l == 0 && d && *d) {
             int nz = 0; for (int i = 0; i < 0x2000; i++) nz += zram[i] != 0;
-            FILE *f;
-            if (nz >= 256 && (f = fopen(d, "wb"))) { fwrite(zram, 1, 0x2000, f); fclose(f); dumped = 1; }
+            FILE *f; char name[1024];
+            snprintf(name, sizeof name, d, nth);
+            if (nz >= 256 && (!all || memcmp(prev, zram, 0x2000)) && (f = fopen(all ? name : d, "wb"))) {
+                fwrite(zram, 1, 0x2000, f); fclose(f); dumped = 1;
+                if (all) {
+                    memcpy(prev, zram, 0x2000); fprintf(stderr, "z80 dump %d at frame %ld\n", nth, ps_frames);
+                    const char *pp = getenv("PS_Z80_PCS");      /* PCS with %d too: one bitmap per image */
+                    if (zp && pp && strstr(pp, "%d")) {
+                        rewind(zp); fwrite(pcs, 1, sizeof pcs, zp); fclose(zp);
+                        snprintf(name, sizeof name, pp, nth); zp = fopen(name, "wb"); memset(pcs, 0, sizeof pcs);
+                    }
+                    nth++;
+                }
+            }
         }
         return;
     }

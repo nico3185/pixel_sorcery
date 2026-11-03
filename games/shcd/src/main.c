@@ -32,6 +32,9 @@ int main(int argc, char *argv[]) {
     argc = platform_parse_args(argc, argv);
     if (!genrecomp_init("SHCD", 3)) return 1;
     if (argc < 2 || !genrecomp_load_rom(argv[1])) { fprintf(stderr, "usage: shcd DISC.cue\n"); return 1; }
+#ifdef PS_Z80_DRIVERS
+    { void ps_shcd_z80_drivers(void); ps_shcd_z80_drivers(); }   /* the Z80 sound drivers, recompiled */
+#endif
 #ifdef PS_OVERLAYS
     { void ps_overlays_register(void), ps_megacd_overlays(void); ps_overlays_register(); ps_megacd_overlays(); }
 #endif

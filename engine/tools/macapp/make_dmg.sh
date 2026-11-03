@@ -1,10 +1,13 @@
 #!/bin/zsh
 # make_dmg.sh [--rev REV] [--version V] [OUTDIR] - PixelSorcery-VERSION.dmg (default in build/dmg): the app as a
-# standalone download, unsigned. Nothing from any game is inside: the app finds the player's own
+# standalone download, unsigned unless PS_SIGN_ID names a Developer ID Application identity in the
+# keychain (then signed with the hardened runtime, and notarised and stapled when PS_NOTARY_PROFILE names
+# a notarytool keychain profile: xcrun notarytool store-credentials, done once by the owner). Nothing
+# from any game is inside: the app finds the player's own
 # dumps and compiles the games on their Mac. Inside the app (Contents/Resources):
 #   payload/  the public snapshot of REV (engine/tools/public_export.py: codenames, no game data),
-#             without Genesis Plus GX - so only native ports, and no title that still needs the
-#             emulator core (SHCD) - plus SDL2 (zlib licence) in engine/ext/sdl2
+#             without Genesis Plus GX - so only native ports (SHCD included: the native Mega CD),
+#             and no title that still needs the emulator core - plus SDL2 (zlib licence) in engine/ext/sdl2
 #   wheels/   capstone, cmake, ninja for Apple's python3, installed offline on first run
 #   setup_workspace.sh, the icon (img/sorpix.png)
 # The player needs Apple's Command Line Tools (the app opens their installer) and macOS 14 on Apple
@@ -25,7 +28,7 @@ plutil -remove PSRepo $app/Contents/Info.plist
 plutil -replace CFBundleShortVersionString -string $version $app/Contents/Info.plist
 print "  payload: public snapshot of $rev"
 $root/engine/.venv/bin/python $root/engine/tools/public_export.py --rev $rev --out $res/payload > /dev/null
-rm -rf $res/payload/engine/ext/Genesis-Plus-GX
+rm -rf $res/payload/engine/ext/Genesis-Plus-GX $res/payload/engine/patches/genesis-plus-gx.patch   # no core code: not even the patch's context lines
 # the recompiler's 68000 timing table (documented instruction timings), read from the core's header
 $root/engine/.venv/bin/python -c "import sys; sys.path.insert(0, '$root/engine/tools/recompiler'); import generate as g
 v = g.CYCLES; open(sys.argv[1], 'w').write(''.join(' '.join(map(str, v[i:i + 16])) + '\\n' for i in range(0, len(v), 16)))" \
@@ -42,7 +45,7 @@ chmod u+w $sdl/lib/*.dylib
 codesign --remove-signature $sdl/lib/*.dylib      # re-signed below, after the new install names
 install_name_tool -id @rpath/libSDL2-2.0.0.dylib $sdl/lib/libSDL2-2.0.0.dylib
 install_name_tool -id @rpath/libSDL3.dylib $sdl/lib/libSDL3.dylib
-codesign -s - -f $sdl/lib/*.dylib 2>/dev/null
+codesign -s ${PS_SIGN_ID:--} -f ${PS_SIGN_ID:+--options runtime --timestamp} $sdl/lib/*.dylib 2>/dev/null
 cp $s3/share/doc/sdl3/LICENSE.txt $sdl/LICENSE.txt 2>/dev/null || cp $(dirname $(dirname $(readlink -f $s3/lib/libSDL3.0.dylib)))/LICENSE.txt $sdl/LICENSE.txt 2>/dev/null || true
 print "  Python wheels"
 cache=$HOME/Library/Caches/PixelSorcery/wheels; mkdir -p $cache
@@ -50,19 +53,26 @@ PIP_DISABLE_PIP_VERSION_CHECK=1 $root/engine/.venv/bin/python -m pip download -q
   --python-version 3.9 --implementation cp -d $cache capstone cmake ninja
 mkdir -p $res/wheels; cp $cache/*.whl $res/wheels/
 cp $here/setup_workspace.sh $res/
-codesign -s - --force --deep $app >/dev/null 2>&1 || true
+if [[ -n ${PS_SIGN_ID:-} ]]; then                   # Developer ID: hardened runtime, timestamped (notarisation needs both)
+  codesign -s "$PS_SIGN_ID" --force --deep --options runtime --timestamp $app
+else
+  codesign -s - --force --deep $app >/dev/null 2>&1 || true
+fi
 # the disk image: the app, Applications, a read-me, the icon as the volume's
 ln -s /Applications $stage/Applications
+unsigned_note=
+[[ -n ${PS_SIGN_ID:-} ]] || unsigned_note='The app is not signed. The first time, macOS blocks it: open System Settings > Privacy &
+Security and click "Open Anyway" (or run: xattr -dr com.apple.quarantine /Applications/PixelSorcery.app).
+
+'
 cat > $stage/README.txt <<EOF
 PixelSorcery $version
 
 Drag PixelSorcery to Applications, then open it.
 
-The app is not signed. The first time, macOS blocks it: open System Settings > Privacy &
-Security and click "Open Anyway" (or run: xattr -dr com.apple.quarantine /Applications/PixelSorcery.app).
-
-PixelSorcery contains no game. Point it at the folder holding your own game dumps: it recognises
-them, compiles each game for your Mac (Apple's Command Line Tools are needed, the app offers to
+${unsigned_note}PixelSorcery contains no game. Point it at the folder holding your own game dumps (for SHCD:
+the disc's .cue and your Mega CD BIOS): it recognises them,
+compiles each game for your Mac (Apple's Command Line Tools are needed, the app offers to
 install them), and plays them. Everything it makes stays in
 ~/Library/Application Support/PixelSorcery.
 
@@ -78,4 +88,13 @@ SetFile -a C "$mnt"                                  # the volume shows .VolumeI
 diskutil eject $dev > /dev/null
 hdiutil convert -quiet $tmp -format UDZO -o $dmg
 rm -rf ${stage:h}
+if [[ -n ${PS_SIGN_ID:-} ]]; then
+  codesign -s "$PS_SIGN_ID" --timestamp $dmg
+  if [[ -n ${PS_NOTARY_PROFILE:-} ]]; then             # Apple's notary service, then the ticket stapled to the image
+    print "  notarising"
+    xcrun notarytool submit $dmg --keychain-profile "$PS_NOTARY_PROFILE" --wait
+    xcrun stapler staple $dmg
+  fi
+fi
+(cd ${dmg:h} && shasum -a 256 ${dmg:t} > ${dmg:t}.sha256)   # the download's checksum, published beside it
 print "$dmg ($(du -h $dmg | cut -f1))"

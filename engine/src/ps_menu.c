@@ -305,9 +305,29 @@ void ps_menu_frame_pokes(void) {
 /* ------------------------------------------------------------------ menu loop */
 void ps_menu_request(void) { s_open = true; }
 
+static void copy_lines(const char *src, const char *dst, long lines);
+/* REWIND (Backspace, the gamepad's left shoulder): back STEPS seconds through ps_state.c's ring;
+ * the session's recording is cut to that poll, so the session still replays to what is played */
+void ps_menu_rewind(int steps) {
+    uint8_t *ps_state_rewind_take(int, size_t *, long *); const char *ps_state_load_now(uint8_t *, size_t);
+    size_t n; long poll; uint8_t *b = ps_state_rewind_take(steps, &n, &poll);
+    if (!b) return;
+    const char *rec = getenv("PS_POLL_RECORD");
+    if (rec && *rec) {
+        void ps_poll_flush(void), ps_poll_record_close(void), ps_poll_record_reopen(void);
+        char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.rewind", rec);
+        ps_poll_flush(); copy_lines(rec, tmp, poll);
+        ps_poll_record_close(); copy_lines(tmp, rec, -1); remove(tmp); ps_poll_record_reopen();
+    }
+    fprintf(stderr, "menu: rewound %d s to poll %ld\n", steps, poll);
+    const char *why = ps_state_load_now(b, n);   /* returns only if refused */
+    fprintf(stderr, "menu: rewind refused: %s\n", why);
+}
+
 enum { IT_ASPECT, IT_OBJ, IT_LAT, IT_VOL, IT_FULL, IT_REND, IT_WATER, IT_FIXED };
 
-static int item_count(void) { return IT_FIXED + ps_cheat_count + s_ntoggles + 6; }
+static bool level_select_ready(void);
+static int item_count(void) { return IT_FIXED + ps_cheat_count + s_ntoggles + 6 + level_select_ready(); }
 /* SAVE / LOAD: a save is a machine snapshot (ps_state.c, slotN.state, taken at the next
  * frame's VBlank point) plus the session's inputs up to it (per controller poll) and its
  * setting log. LOAD restores the snapshot in place, instantly; a snapshot of another ROM,
@@ -351,6 +371,8 @@ static void item_text(int i, char *out, size_t n) {
     } else if (i < IT_FIXED + ps_cheat_count + s_ntoggles) {
         int t = i - IT_FIXED - ps_cheat_count;
         snprintf(out, n, "%-19s %s", s_toggles[t].name, (S.toggles >> t) & 1 ? "ON" : "OFF");
+    } else if (level_select_ready() && i == item_count() - 7) {
+        snprintf(out, n, "LEVEL SELECT");
     } else if (i == item_count() - 6) {
         char pn[40]; bool have = input_pad_name(pn, sizeof pn);
         snprintf(out, n, "CONTROLLER SETUP    %s", have ? "" : "(NO GAMEPAD)");
@@ -367,7 +389,7 @@ static void item_text(int i, char *out, size_t n) {
 }
 
 static void change(int i, int dir) {
-    if (i == item_count() - 6) return;
+    if (i == item_count() - 6 || (level_select_ready() && i == item_count() - 7)) return;
     if (i == item_count() - 5 || i == item_count() - 4) { s_slot = (s_slot - 1 + dir + 4) % 4 + 1; s_note[0] = 0; return; }
     if (s_forced && (i == IT_OBJ || i == IT_ASPECT || (i >= IT_FIXED && i < IT_FIXED + ps_cheat_count + s_ntoggles))) return;
     if (i == IT_ASPECT) S.aspect = (S.aspect + dir + 5) % 5;
@@ -389,9 +411,6 @@ static void change(int i, int dir) {
 
 /* RESET: a fresh power-on of the same program (the recompiled game's call stack cannot
  * be unwound in place). The new run records to <session>-resetN.polls. */
-#ifdef __APPLE__
-#include <crt_externs.h>
-#endif
 #ifndef _WIN32
 #include <unistd.h>
 #else
@@ -401,20 +420,78 @@ static void change(int i, int dir) {
 #define execv _execv
 #endif
 static void ps_restart_resume(const char *resume);
-static void ps_restart(void) { ps_restart_resume(NULL); }
+static void ps_restart(void) { unsetenv("GENRECOMP_MOVIE"); ps_restart_resume(NULL); }
+
+/* LEVEL SELECT: the title's level_select.json (games/TITLE, beside the build folder) types the game's
+ * own level-select code for the player - the game restarts with the recipe's "code" presses played as
+ * an input movie from power-on (GENRECOMP_MOVIE: added to the pad, then the pad alone), or with
+ * "unit": "poll" as controller reads replayed at full speed (PS_RESUME), so the session's recording
+ * holds only inputs. Entries: [frame or poll, "BUTTON+BUTTON", frames or polls held]. */
+static char s_ls_path[1100];
+static bool level_select_ready(void) {
+    static int ready = -1;
+    if (ready >= 0) return ready;
+    ready = 0;
+    extern char **platform_launch_argv(void);
+    char **av = platform_launch_argv(), exe[1024];
+    if (!av || !av[0]) return 0;
+    snprintf(exe, sizeof exe, "%s", av[0]);
+    char *sl = strrchr(exe, '/'); if (!sl) sl = strrchr(exe, '\\');
+    if (!sl) return 0;
+    *sl = 0;                                          /* games/TITLE/build */
+    snprintf(s_ls_path, sizeof s_ls_path, "%s/../level_select.json", exe);
+    FILE *f = fopen(s_ls_path, "r");
+    if (f) { ready = 1; fclose(f); }
+    return ready;
+}
+static void level_select(void) {
+    FILE *f = fopen(s_ls_path, "r");
+    if (!f) return;
+    static char js[1 << 16]; size_t len = fread(js, 1, sizeof js - 1, f); fclose(f); js[len] = 0;
+    static uint16_t mv[20000]; long last = 0;
+    memset(mv, 0, sizeof mv);
+    const char *c = strstr(js, "\"code\"");
+    if (!c) return;
+    c = strchr(c, '[');
+    for (const char *e = c + 1; e && *e; ) {               /* each [frame, "BUTTONS", held] */
+        const char *o = strchr(e, '['), *end = strchr(e, ']');
+        if (!o || (end && end < o)) break;                 /* the list's own closing bracket */
+        long fr = strtol(o + 1, NULL, 10);
+        const char *q = strchr(o, '"'); if (!q) break;
+        const char *q2 = strchr(q + 1, '"'); if (!q2) break;
+        long held = strtol(strchr(q2, ',') ? strchr(q2, ',') + 1 : q2, NULL, 10);
+        uint16_t m = 0; char btn[64]; size_t bl = (size_t)(q2 - q - 1) < sizeof btn - 1 ? (size_t)(q2 - q - 1) : sizeof btn - 1;
+        memcpy(btn, q + 1, bl); btn[bl] = 0;
+        static const struct { const char *n; uint16_t m; } k[] = { {"UP", GEN_BTN_UP}, {"DOWN", GEN_BTN_DOWN}, {"LEFT", GEN_BTN_LEFT},
+            {"RIGHT", GEN_BTN_RIGHT}, {"A", GEN_BTN_A}, {"B", GEN_BTN_B}, {"C", GEN_BTN_C}, {"START", GEN_BTN_START} };
+        for (char *t = strtok(btn, "+"); t; t = strtok(NULL, "+"))
+            for (size_t j = 0; j < sizeof k / sizeof k[0]; j++) if (!strcmp(t, k[j].n)) m |= k[j].m;
+        for (long i = fr; i < fr + held && i < (long)(sizeof mv / sizeof mv[0]); i++) { mv[i] |= m; if (i + 1 > last) last = i + 1; }
+        e = strchr(o, ']'); if (e) e++;
+    }
+    const char *rec = getenv("PS_POLL_RECORD");
+    bool polls = strstr(js, "\"unit\"") && strstr(strstr(js, "\"unit\""), "\"poll\"");   /* counted in controller reads */
+    char path[1200]; snprintf(path, sizeof path, "%s.levelselect.%s", rec && *rec ? rec : s_ls_path, polls ? "polls" : "txt");
+    FILE *o = fopen(path, "w");
+    if (!o) return;
+    for (long i = 0; i < last; i++) fprintf(o, polls ? "%04X 0000\n" : "%x\n", mv[i]);
+    fclose(o);
+    fprintf(stderr, "menu: level select: %ld %s of the recipe's input from power-on (%s)\n", last, polls ? "polls" : "frames", s_ls_path);
+    unsetenv("GENRECOMP_MOVIE");
+    if (polls) {                                  /* replayed to its last poll at full speed, then the pad */
+        char r[1300]; snprintf(r, sizeof r, "%s:%ld", path, last);
+        ps_restart_resume(r);
+    }
+    setenv("GENRECOMP_MOVIE", path, 1);
+    ps_restart_resume(NULL);
+}
 static void ps_restart_resume(const char *resume) {
-    char **argv;
-#ifdef __APPLE__
-    argv = *_NSGetArgv();
-#elif defined(_WIN32)
-    argv = __argv;
-#else
-    extern char **environ; static char *fallback[2]; argv = fallback;   /* no argv access: quit */
-    save(); exit(0);
-#endif
+    extern char **platform_launch_argv(void);
+    char **argv = platform_launch_argv();              /* as launched, options included */
+    if (!argv) { save(); exit(0); }
     const char *rec = getenv("PS_POLL_RECORD");
     if (rec && *rec) {
-        static char path[1024]; static int n;
+        static char path[1100]; static int n;
         char base[1024]; snprintf(base, sizeof base, "%s", rec);
         char *d = strrchr(base, '.'); if (d && !strcmp(d, ".polls")) *d = 0;
         char *r = strstr(base, "-reset"); if (r) { n = atoi(r + 6); *r = 0; }
@@ -542,9 +619,103 @@ static void pad_setup(uint8_t *frame, int width, uint32_t *buf) {
     while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }   /* the last press is not "OK" */
 }
 
+/* The rewind timeline (Backspace / left shoulder): the game paused on the last 30 seconds of
+ * snapshots (ps_state.c), the selected one full screen, a filmstrip of its neighbours (older to the
+ * left), a bar and its age. Left goes back, Right forward to the present; A/Return/Start plays from the
+ * selected moment, B/Esc/Backspace returns to the present unchanged. Held arrows repeat. */
+static bool s_rw_open;
+void ps_menu_rewind_request(void) { s_rw_open = true; }
+static void fill(uint32_t *fb, int pitch, int x, int y, int w, int h, uint32_t c) {
+    for (int j = y; j < y + h; j++) if (j >= 0 && j < GEN_RENDER_HEIGHT)
+        for (int i = x; i < x + w; i++) if (i >= 0 && i < pitch) fb[j * pitch + i] = c;
+}
+static void draw_rewind(uint32_t *buf, const uint8_t *frame, int width, int sel, int n) {
+    const uint32_t *ps_state_rewind_thumb(int, int *, int *, long *);
+    /* the selected moment, full size (the snapshots keep a half-size picture) */
+    int tw = 0, th = 0; long age = 0;
+    const uint32_t *t = sel ? ps_state_rewind_thumb(sel, &tw, &th, &age) : NULL;
+    if (t) {
+        for (int y = 0; y < GEN_RENDER_HEIGHT; y++)            /* the picture kept the frame's width */
+            for (int x = 0; x < width; x++) buf[y * width + x] = t[(y * th / GEN_RENDER_HEIGHT) * tw + x * tw / width];
+    } else memcpy(buf, frame, (size_t)width * GEN_RENDER_HEIGHT * 4);
+    /* top band: title and age */
+    for (int i = 0; i < width * 14; i++) buf[i] = (buf[i] >> 2) & 0x3F3F3F;
+    draw_text(buf, width, GEN_RENDER_HEIGHT, 6, 4, "<< REWIND", 0xFFE070);
+    char lab[24];
+    if (sel) snprintf(lab, sizeof lab, "-%ld S", (age + 30) / 60); else snprintf(lab, sizeof lab, "NOW");
+    draw_text(buf, width, GEN_RENDER_HEIGHT, width - 6 - (int)strlen(lab) * 6, 4, lab, 0xFFFFFF);
+    /* bottom band: filmstrip, bar, keys */
+    int by = GEN_RENDER_HEIGHT - 66;
+    for (int i = by * width; i < width * GEN_RENDER_HEIGHT; i++) buf[i] = (buf[i] >> 2) & 0x3F3F3F;
+    const int mw = 48, mh = 34, gap = 6;
+    for (int s = -2; s <= 2; s++) {
+        int step = sel - s, x = width / 2 - mw / 2 + s * (mw + gap), y = by + 4;   /* older to the left */
+        if (step < 0 || step > n) continue;
+        int w2, h2; long a2; const uint32_t *m = step ? ps_state_rewind_thumb(step, &w2, &h2, &a2) : NULL;
+        fill(buf, width, x - 1, y - 1, mw + 2, mh + 2, s == 0 ? 0xFFE070 : 0x404050);
+        for (int j = 0; j < mh; j++)
+            for (int i = 0; i < mw; i++) {
+                uint32_t c = m ? m[(j * h2 / mh) * w2 + i * w2 / mw]
+                               : ((const uint32_t *)frame)[(j * GEN_RENDER_HEIGHT / mh) * width + i * width / mw];
+                buf[(y + j) * width + x + i] = s == 0 ? c : (c >> 1) & 0x7F7F7F;
+            }
+    }
+    int bx = 20, bw = width - 40, bar = by + mh + 12;  /* the 30 s window, the present at the right */
+    fill(buf, width, bx, bar, bw, 2, 0x505060);
+    fill(buf, width, bx + bw - 1 - sel * (bw - 1) / (n > 0 ? n : 1) - 1, bar - 3, 3, 8, 0xFFE070);
+    draw_text(buf, width, GEN_RENDER_HEIGHT, bx, bar + 8, "</>: MOVE   A: PLAY FROM HERE   B: BACK", 0x9090A0);
+}
+static void rewind_ui(const uint8_t *frame, int width) {
+    int ps_state_rewind_count(void);
+    const uint32_t *ps_state_rewind_thumb(int, int *, int *, long *);
+    int n = ps_state_rewind_count();
+    if (!n) return;
+    static uint32_t buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
+    int sel = 1, held = 0;                          /* steps back: 0 = now */
+    bool prev[5] = { true, true, true, true, true };
+    for (;;) {
+        SDL_Event ev; bool quit = false;
+        while (SDL_PollEvent(&ev)) if (ev.type == SDL_QUIT) quit = true;
+        if (quit) { save(); exit(0); }
+        const uint8_t *ks = SDL_GetKeyboardState(NULL);
+        uint16_t pad = recomp_input_read_pad(0);
+        recomp_input_update();
+        bool k[5] = { ks[SDL_SCANCODE_LEFT] || (pad & 0x04), ks[SDL_SCANCODE_RIGHT] || (pad & 0x08),
+                      ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_Z] || (pad & 0x40) || (pad & 0x80),
+                      ks[SDL_SCANCODE_ESCAPE] || ks[SDL_SCANCODE_BACKSPACE] || ks[SDL_SCANCODE_X] || (pad & 0x10), false };
+        bool left = k[0] && !prev[0], right = k[1] && !prev[1], ok = k[2] && !prev[2], back = k[3] && !prev[3];
+        if (k[0] || k[1]) { if (++held > 18 && held % 4 == 0) { left |= k[0]; right |= k[1]; } } else held = 0;
+        memcpy(prev, k, sizeof prev);
+        if (left && sel < n) sel++;
+        if (right && sel > 0) sel--;
+        if (back || (ok && sel == 0)) break;
+        if (ok) {                                   /* play from there: returns only if refused */
+            while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }
+            save(); ps_menu_rewind(sel); break;
+        }
+        draw_rewind(buf, frame, width, sel, n);
+        platform_show_frame(buf, width);
+        SDL_Delay(16);
+    }
+    while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }   /* nothing leaks into the game */
+}
+
 /* Modal: called before presenting a frame; returns when the menu is closed. */
 void ps_menu_run(uint8_t *frame, int width) {
+    {   /* PS_LEVEL_SELECT_NOW=1: the LEVEL SELECT entry at the first frame (tests) */
+        static int once; if (!once++ && getenv("PS_LEVEL_SELECT_NOW")) { unsetenv("PS_LEVEL_SELECT_NOW"); if (level_select_ready()) level_select(); }
+    }
     logic_tick();
+    if (s_rw_open) { s_rw_open = false; rewind_ui(frame, width); }
+    {   /* PS_REWIND_SHOT=FRAME:FILE: the timeline drawn 3 s back at that frame, as a PNG (tests) */
+        static long at = -2; static const char *path; extern long ps_frames;
+        if (at == -2) { const char *e = getenv("PS_REWIND_SHOT"); at = e && strchr(e, ':') ? atol(e) : -1; path = at >= 0 ? strchr(e, ':') + 1 : NULL; }
+        int ps_state_rewind_count(void);
+        if (at >= 0 && ps_frames >= at && ps_state_rewind_count() >= 3) {
+            static uint32_t sb[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT]; void ps_png_write(const char *, const uint8_t *, int, int);
+            draw_rewind(sb, frame, width, 3, ps_state_rewind_count()); ps_png_write(path, (const uint8_t *)sb, width, GEN_RENDER_HEIGHT); at = -1;
+        }
+    }
     if (!s_open) return;
     static uint32_t buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
     int sel = 0, n = item_count();
@@ -579,6 +750,7 @@ void ps_menu_run(uint8_t *frame, int width) {
             if (sel == n - 1) { save(); exit(0); }
             if (sel == n - 2) { save(); ps_restart(); }
             if (sel == n - 6) { pad_setup(frame, width, buf); prev[4] = true; continue; }
+            if (level_select_ready() && sel == n - 7) { save(); level_select(); }
             if (sel == n - 5) { save_slot(); continue; }
             if (sel == n - 4) { load_slot(); continue; }
             if (sel == n - 3) s_open = false; else change(sel, +1);
