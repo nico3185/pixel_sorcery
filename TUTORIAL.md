@@ -19,6 +19,10 @@ whole machine instantly (`engine/src/ps_state.c`), one per slot.
 Keys: arrows, Z/X/C = A/B/C, Return = Start, Esc quits. Gamepads work by button position
 (left/bottom/right face buttons = A/B/C, Start = Start), Switch Pro included.
 
+**Rewind**: Backspace or the gamepad's left shoulder goes back one second per press, up to 30
+seconds (a snapshot of the whole machine every second, in memory). The session's recording is cut
+there, so it still replays to what you played.
+
 **Settings menu**: F1 or Tab, gamepad Back/Select (Switch: Minus) or Guide (Home), or pause
 the game with Start and press **C** (a "C: SETTINGS" hint shows while paused). Aspect
 ratio, widescreen enemies, low latency, volume, fullscreen, level select (Game Genie

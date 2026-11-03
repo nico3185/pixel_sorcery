@@ -12,7 +12,24 @@ recompiled build, compare 68K RAM at every controller poll, and iterate:
   sidebyside.py ROM GAMEDIR POLLS [--max-iter N]
 GAMEDIR/sidebyside.json: {"exe": "build/coi", "mask": "FE00-10000,F370-F372"}
 """
-import sys, argparse, json, os, re, subprocess, sys
+import sys, argparse, json, os, re, subprocess, time
+try:
+    import fcntl
+except ImportError:          # Windows: no fcntl, msvcrt's byte-range lock instead
+    fcntl = None
+    import msvcrt
+
+
+def lock_file(f, wait):
+    """Exclusive lock on an open file; False if already held and wait is False."""
+    if fcntl:
+        try: fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB)); return True
+        except BlockingIOError: return False
+    while True:
+        try: msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1); return True
+        except OSError:
+            if not wait: return False
+            time.sleep(1)
 
 ENG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = next((p for p in (os.path.join(ENG, '.venv', 'bin', 'python'),
@@ -94,6 +111,11 @@ def main():
     mask_s = cfg.get('mask', '')
     mask = [tuple(int(v, 16) for v in m.split('-')) for m in mask_s.split(',') if m]
     work = os.path.join(game, 'build', 'sidebyside'); os.makedirs(work, exist_ok=True)
+    # one check per game at a time: the checkpoints and dumps below share this folder, and two
+    # recordings checked at once overwrite each other's orig.ck (a false divergence, 0 words)
+    lock = open(os.path.join(work, '.lock'), 'w')
+    if not lock_file(lock, False):
+        print(f'waiting: another check of {os.path.basename(game)} is running'); lock_file(lock, True)
     tracer = exe_path(os.path.join(game, 'build-trace', 'genrecomp_build', 'genrecomp_trace'))
     exe = exe_path(os.path.join(game, cfg['exe']))
     n = sum(1 for _ in open(polls))
@@ -104,7 +126,11 @@ def main():
     ev = []
     if os.path.exists(meta):
         ev = [list(map(int, (l.split() + ['0'])[2:6])) for l in open(meta) if l.startswith('logic ')]
-    if cfg.get('wide_objects_logic') and any(e[0] and e[3] for e in ev):   # title hooks widen activation
+    # title hooks that widen object activation (recomp.json hooks calling ps_wide_full_x /
+    # ps_wide_obj_margin) change game logic when widescreen enemies are on at a wide aspect
+    hooks = json.load(open(os.path.join(game, 'recomp.json'))).get('hooks') or {}
+    obj_hooks = any(re.search(r'ps_wide_(full_x|obj_margin)', v) for v in hooks.values())
+    if cfg.get('wide_objects_logic', obj_hooks) and any(e[0] and e[3] for e in ev):
         print('session played with widescreen enemies on a wide picture: game logic differs from the original by design; not comparable')
         sys.exit(2)
     oc_cfg = cfg.get('oracle', {})

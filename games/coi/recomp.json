@@ -3289,7 +3289,18 @@
     "0x240000": "sub_240000",
     "0x6E424A": "sub_6E424A",
     "0xCAB200": "sub_CAB200",
-    "0xFF6C11": "sub_FF6C11"
+    "0xFF6C11": "sub_FF6C11",
+    "0x003C02": "sub_003C02",
+    "0x003C0E": "sub_003C0E",
+    "0x003C1A": "sub_003C1A",
+    "0x003C3A": "sub_003C3A",
+    "0x003C3E": "sub_003C3E",
+    "0x003C80": "sub_003C80",
+    "0x00FD1E": "sub_00FD1E",
+    "0x00FD72": "sub_00FD72",
+    "0x00CD72": "sub_00CD72",
+    "0x00CD94": "sub_00CD94",
+    "0x00B9E2": "sub_00B9E2"
   },
   "offset_tables": [],
   "hooks": {

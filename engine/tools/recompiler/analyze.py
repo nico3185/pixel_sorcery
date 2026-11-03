@@ -136,6 +136,12 @@ class M68KAnalyzer:
 
     def load_config(self, cfg):
         self.EXPLICIT_SEEDS = {int(k, 16): v for k, v in cfg.get('seeds', {}).items()}
+        # "overlap_ties": "inner" - two overlapping instructions founded alike in every way: drop
+        # the one starting inside the other (_resolve_overlaps). Off by default: the cartridge
+        # titles keep both (their outputs are verified as generated)
+        self.drop_inner_ties = cfg.get('overlap_ties') == 'inner'
+        # padding word around a loaded program (Mega CD images): never a table or load target
+        self.filler = int(cfg['filler'], 16) if 'filler' in cfg else None
         # Dispatch tables the scans can't recognise: count entries of 'size'
         # bytes (2 or 4, signed) at 'table', each an offset from 'base'
         # (0 for absolute addresses). Every target becomes an entry point.
@@ -222,7 +228,7 @@ class M68KAnalyzer:
                         work.append(b)
 
         direct = set().union(*sources)
-        dropped = set()
+        dropped = set(); ties = 0
         addrs = sorted(self.instructions)
         for a in addrs:
             if a in dropped:
@@ -242,10 +248,15 @@ class M68KAnalyzer:
                         # handler's MOVEM at $000586)
                         seed_wins = ra == 0
                         dropped.add(b if (a in direct) == seed_wins else a)
+                    elif getattr(self, 'drop_inner_ties', False):
+                        # founded alike in every way: still not both code. The one starting
+                        # first keeps its bytes (SHCD R13D: flow into $20D36A, inside a
+                        # CMPI at $20D366, ran a bogus ORI.B on every pass)
+                        dropped.add(b); ties += 1
         for a in dropped:
             del self.instructions[a]
         if dropped:
-            print(f"  dropped {len(dropped)} instructions overlapping better-founded code")
+            print(f"  dropped {len(dropped)} instructions overlapping better-founded code ({ties} ties)")
         return dropped
 
     def _covered(self):
@@ -263,6 +274,9 @@ class M68KAnalyzer:
         if not hasattr(self, '_cov_cache') or self._cov_n != len(self.instructions):
             self._cov_cache, self._cov_n = self._covered(), len(self.instructions)
         return t not in self._cov_cache and self._in_code_range(t)
+
+    def _is_filler(self, t):
+        return getattr(self, 'filler', None) is not None and self.rom.read16(t) == self.filler
 
     def _in_code_range(self, t):
         return any(lo <= t < hi for lo, hi in self.CODE_RANGES)
@@ -305,6 +319,8 @@ class M68KAnalyzer:
                 if code_range >= len(addrs) * 0.5 and i not in self.instructions:
                     self.jump_tables[i] = addrs
                     for a in addrs:
+                        if self._is_filler(a):
+                            continue
                         targets.add(a)
                         if a not in self.labels:
                             self.labels[a] = f"jt_{a:06X}"
@@ -322,14 +338,14 @@ class M68KAnalyzer:
             if mnemonic.split('.')[0] in ('lea', 'pea'):
                 # Look for absolute addresses in operand
                 target = self._parse_absolute_addr(op_str)
-                if target and 0x200 <= target < self.rom.size and not (target & 1):
+                if target and 0x200 <= target < self.rom.size and not (target & 1) and not self._is_filler(target):
                     targets.add(target)
             elif mnemonic == 'move.l' and '#$' in op_str:
                 # move.l #$XXXXXX, ...
                 try:
                     imm_str = op_str.split('#$')[1].split(',')[0].strip()
                     val = int(imm_str, 16)
-                    if 0x200 <= val < self.rom.size and not (val & 1):
+                    if 0x200 <= val < self.rom.size and not (val & 1) and not self._is_filler(val):
                         targets.add(val)
                 except (ValueError, IndexError):
                     pass

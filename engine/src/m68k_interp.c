@@ -28,20 +28,87 @@
 #include <string.h>
 
 #include "ps_portable.h"
+#ifdef PS_SUBCPU
+extern const uint16_t ps_m68k_cycles[0x10000];
+#define ps_m68k_nhooks 0
+static uint32_t run_hook(uint32_t pc) { (void)pc; return 0; }
+#else
 /* generated per title (recomp_cycles.c); tools without generated code (the reference
  * runner, tests) get this empty default and never interpret */
 #if defined(_MSC_VER)
 extern const uint16_t ps_m68k_cycles[0x10000];
 const uint16_t ps_m68k_cycles_ps_default[0x10000] = { 0 };
 PS_ALTNAME(ps_m68k_cycles, ps_m68k_cycles_ps_default)
+#elif defined(__MINGW32__)
+/* MinGW (PE/COFF): weak data is unreliable there (a .weak alias was read instead of the
+ * title's pointer; weak undefined refs do not link through .refptr): plain externs, the
+ * defaults are members of the ps_defaults archive, linked last (engine/src/defaults/). */
+extern const uint16_t ps_m68k_cycles[0x10000];
 #else
 __attribute__((weak)) const uint16_t ps_m68k_cycles[0x10000] = { 0 };
+#endif
+/* title hooks (recomp.json "hooks"), generated per title (recomp_hooks.c, sorted by pc): each
+ * returns where to go on, 0 = run the instruction. Weak empty default as above. */
+#if defined(_MSC_VER)
+extern const uint32_t *ps_m68k_hook_pc; extern uint32_t (*const *ps_m68k_hook_fn)(void); extern int ps_m68k_nhooks;
+const uint32_t *ps_m68k_hook_pc_ps_default = NULL; uint32_t (*const *ps_m68k_hook_fn_ps_default)(void) = NULL;
+int ps_m68k_nhooks_ps_default = 0;
+PS_ALTNAME(ps_m68k_hook_pc, ps_m68k_hook_pc_ps_default)
+PS_ALTNAME(ps_m68k_hook_fn, ps_m68k_hook_fn_ps_default)
+PS_ALTNAME(ps_m68k_nhooks, ps_m68k_nhooks_ps_default)
+#elif defined(__MINGW32__)
+extern const uint32_t *ps_m68k_hook_pc; extern uint32_t (*const *ps_m68k_hook_fn)(void); extern int ps_m68k_nhooks;
+#else
+__attribute__((weak)) const uint32_t *ps_m68k_hook_pc = NULL;
+__attribute__((weak)) uint32_t (*const *ps_m68k_hook_fn)(void) = NULL;
+__attribute__((weak)) int ps_m68k_nhooks = 0;
+#endif
+static uint32_t run_hook(uint32_t pc) {
+    int lo = 0, hi = ps_m68k_nhooks - 1;
+    if (hi < 0 || pc < ps_m68k_hook_pc[0] || pc > ps_m68k_hook_pc[hi]) return 0;
+    while (lo <= hi) {
+        int m = (lo + hi) / 2;
+        if (ps_m68k_hook_pc[m] == pc) {
+            uint32_t t = ps_m68k_hook_fn[m]();
+            if (t == 1) {                       /* a skip whose length the generator never saw */
+                static uint32_t warned;
+                if (warned != pc) { warned = pc; fprintf(stderr, "interp: hook at $%06X skips an instruction never converted; run as is\n", pc); }
+                return 0;
+            }
+            return t;
+        }
+        if (ps_m68k_hook_pc[m] < pc) lo = m + 1; else hi = m - 1;
+    }
+    return 0;
+}
+#endif
+/* PS_SUBCPU (s68k_interp.c): the same interpreter as the Mega CD's sub CPU - runs are slices of a
+ * free-running CPU, not calls: an RTS always pops, and the instruction boundary (s68k_boundary:
+ * exceptions taken, interrupts, STOP, the end of the slice) decides where to go on, 0 = stop */
+#ifdef PS_SUBCPU
+#define SUB_DEPTH0(d) 0
+uint32_t s68k_boundary(uint32_t next);
+void s68k_stop(void);
+#else
+#define SUB_DEPTH0(d) ((d) == 0)
 #endif
 void func_table_tail(uint32_t m68k_addr);
 void recomp_m68k_exception(uint8_t vector);
 
 static uint32_t s_pc;                               /* the instruction being executed */
 static uint32_t s_next;                             /* fetch pointer */
+/* PS_INTERP_COVER=file: at exit, one bit per even address of the 24-bit space (1 MB) for every
+ * instruction the interpreter ran - the code not compiled yet (SHCD: by program region) */
+static uint8_t *s_icover; static int s_icover_init;
+static void icover_write(void) {
+    FILE *f = fopen(getenv("PS_INTERP_COVER"), "wb");
+    if (f) { fwrite(s_icover, 1, 1 << 20, f); fclose(f); }
+}
+static void icover_init(void) {
+    s_icover_init = 1;
+    const char *e = getenv("PS_INTERP_COVER");
+    if (e && *e && (s_icover = calloc(1, 1 << 20))) atexit(icover_write);
+}
 static long s_entered, s_insns;
 
 static uint16_t fetch16(void) { uint16_t v = bus_read16(s_next); s_next += 2; return v; }
@@ -218,11 +285,19 @@ static void interp_loop(uint32_t entry) {
     s_entered++;
     s_next = entry;
     for (;;) {
+#ifdef PS_SUBCPU
+        if (!(s_next = s68k_boundary(s_next))) return;
+        (void)s_icover_init; (void)icover_init;
+#else
+        if (!s_icover_init) icover_init();
         if ((int)(g_cyc - g_cyc_event) >= 0) {
             g_m68k_ipc = s_next; g_m68k_ipc_kind = 1; bus_cycle_event(); g_m68k_ipc = 0; g_m68k_ipc_kind = 0;
             if (g_m68k_redirect) { s_next = g_m68k_redirect; g_m68k_redirect = 0; }
         }
+#endif
         s_pc = s_next;
+        if (s_icover) s_icover[(s_pc & 0xFFFFFF) >> 4] |= (uint8_t)(1u << ((s_pc >> 1) & 7));
+        if (ps_m68k_nhooks) { uint32_t t = run_hook(s_pc); if (t) { s_next = t; continue; } }
         uint16_t op = fetch16();
         unsigned base = ps_m68k_cycles[op];
         s_insns++;
@@ -295,7 +370,7 @@ static void interp_loop(uint32_t entry) {
             if (op == 0x4E75 || op == 0x4E77) {                  /* RTS / RTR */
                 ICYC(base);
                 if (op == 0x4E77) { m68k_set_ccr((uint8_t)bus_read16(g_m68k.a[7])); g_m68k.a[7] += 2; }
-                if (depth == 0) {
+                if (SUB_DEPTH0(depth)) {
                     if ((int)(g_cyc - g_cyc_event) >= 0) {      /* an interrupt after the RTS (see CYCR) */
                         g_m68k_ipc = bus_read32(g_m68k.a[7]) & 0xFFFFFF; bus_cycle_event(); g_m68k_ipc = 0;
                         if (g_m68k_redirect) { uint32_t t = g_m68k_redirect; g_m68k_redirect = 0; g_m68k.a[7] += 4; func_table_tail(t); return; }
@@ -312,7 +387,11 @@ static void interp_loop(uint32_t entry) {
             }
             if (op == 0x4E71) { ICYC(base); break; }               /* NOP */
             if (op == 0x4E70) { g_cyc += 132 * 7; g_refresh += 128 * 7; ICYC(base); break; }   /* RESET (external devices only): 132 clocks */
+#ifdef PS_SUBCPU
+            if (op == 0x4E72) { m68k_set_sr(fetch16()); ICYC(base); s68k_stop(); break; }   /* STOP: waits for an interrupt */
+#else
             if (op == 0x4E72) { m68k_set_sr(fetch16()); ICYC(base); break; }   /* STOP: runs on to the interrupt */
+#endif
             if (op == 0x4E76) { ICYC(base); if (g_m68k.flag_V) { g_m68k.pc = s_next; IEV0(); recomp_m68k_exception(7); } else g_cyc += 4 * 7; break; }
             if ((op & 0xFFF0) == 0x4E40) { ICYC(base); g_m68k.pc = s_next; IEV0(); recomp_m68k_exception((uint8_t)(32 + (op & 15))); break; }
             if ((op & 0xFFF8) == 0x4E50) {                         /* LINK */

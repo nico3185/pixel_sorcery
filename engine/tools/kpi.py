@@ -3,8 +3,13 @@
 
 Dynamic (what the original executed, recorded by the GPGX tracer with PS_PCCOVER - sidebyside.py
 does it on every replay - into games/T/build/cover/*.bin, one bit per even address < $400000):
-  A  coverage         = executed instructions we converted / instructions we converted
+  A  coverage         = executed instructions we converted / instructions we converted; for a cart
+                         carrying another game, only this title's code (sidebyside.json
+                         "code_ranges" + functions outside them the original ran, see reachable())
   B  interpreted-only = instructions the original executed in ROM that we never converted (target 0)
+  R  reachable        = executed / converted instructions in reachable functions: those that ran and
+                         every function their code names, transitively (live()); a routine nothing
+                         reachable names can't run, so it leaves the target. Table and kpi.json only
   never entered       = generated functions no recording ever entered (the to-do list for bots/fuzzing)
 Replay exactness (games/T/build/robust.json, see --results):
   C  recordings whose replay MATCHes the original: compiled build / every mixed seed; polls verified
@@ -49,13 +54,66 @@ COLS = ['date', 'git_sha', 'title', 'converted', 'executed_converted', 'coverage
 
 # ---------------------------------------------------------------- generated C, coverage bitmaps
 
-def generated(game, rom_size):
+def generated(game, rom_size, bodies=None, refs=None):
+    """Converted instructions and function entries; bodies (a dict), if given, gets each
+    function's instructions, and refs (a dict) the 24-bit constants it names (callees, jump and
+    table targets: _jt = 0x..., case 0x..., /* sub_... */)."""
     insns, entries = set(), set()
     for f in glob.glob(os.path.join(game, 'src', 'recomp', 'recomp_*.c')):
         s = open(f).read()
         insns.update(int(x, 16) for x in re.findall(r'ITRACE\(0x([0-9A-F]+)\)', s))
         entries.update(int(x, 16) for x in re.findall(r'^void \w+_([0-9A-F]{6})\(void\) \{', s, re.M))
+        if bodies is not None:
+            for m in re.finditer(r'^void \w+_([0-9A-F]{6})\(void\) \{(.*?)^\}', s, re.M | re.S):
+                bodies[int(m.group(1), 16)] = {int(x, 16) for x in re.findall(r'ITRACE\(0x([0-9A-F]+)\)', m.group(2))}
+                if refs is not None:
+                    refs[int(m.group(1), 16)] = {int(x, 16) for x in re.findall(r'(?:0x|sub_)([0-9A-F]{6})\b', m.group(2))}
     return {a for a in insns if a < rom_size}, {a for a in entries if a < rom_size}
+
+
+def reachable(conv, ex, bodies, ranges):
+    """The title's own code: converted instructions inside sidebyside.json "code_ranges", plus every
+    function outside them that the original ran at least once (all its instructions). For carts
+    that carry another game (SHK2: SHK + SH2 + the lock-on code at $300000) the other game's
+    code converts but this title never reaches it; counting it would hide the real coverage."""
+    inside = {a for a in conv if any(lo <= a < hi for lo, hi in ranges)}
+    for body in bodies.values():
+        if body & ex and not body <= inside: inside |= body & conv
+    return inside
+
+
+def live(conv, ex, bodies, refs):
+    """Reachable code: the functions that ran, plus every function their code names, followed
+    to the end (callees of callees...). A function nothing reachable names - a leftover routine,
+    a debug path no flag enables - can't run, so it is not part of the target (KPI R)."""
+    todo = [f for f, body in bodies.items() if body & ex]
+    seen = set(todo)
+    while todo:
+        for g in refs.get(todo.pop(), ()):
+            if g in bodies and g not in seen:
+                seen.add(g); todo.append(g)
+    return set().union(*(bodies[f] for f in seen)) & conv if seen else set()
+
+
+def map_kpi(game, conv_all, ex):
+    """KPI S and M from a reassembling disassembly's code map (disasm_map.py, build/disasm_map.json):
+    S = share of the map's instructions the generator converts (completeness, proven statically);
+    M = share of the map's instructions verified recordings have run (coverage of real code: data
+    decoded as code no longer counts). None, None without a map."""
+    try:
+        code = {int(a, 16) for a in json.load(open(os.path.join(game, 'build', 'disasm_map.json')))['code_addrs']}
+    except (OSError, ValueError, KeyError):
+        return None, None
+    return 100 * len(code & conv_all) / max(1, len(code)), 100 * len(code & ex) / max(1, len(code))
+
+
+def rt_pct(game):
+    """KPI RT: share of the converted instructions roundtrip.py re-encodes byte for byte (its last run)"""
+    try:
+        r = json.load(open(os.path.join(game, 'build', 'roundtrip.json')))
+        return 100 * r['exact'] / max(1, r['instructions'])
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def executed(game, rom_size):
@@ -116,11 +174,27 @@ def norm_name(n):
     return n
 
 
+def as_dict(recs):
+    """robust.json's recordings: robust.sh writes a list [{"recording", "compiled": "MATCH: ... at
+    all N polls", "mixed": "MATCH"|...}], --results a dict keyed by recording"""
+    if not isinstance(recs, list):
+        return recs
+    conv = {}
+    for r in recs:
+        c, m = r.get('compiled', ''), r.get('mixed', '')
+        n = re.search(r'at all (\d+) polls', c)
+        conv[r['recording']] = {'compiled': 'MATCH' if c.startswith('MATCH') else c,
+                                'mixed': {'all': 'MATCH' if m.startswith('MATCH') else m},
+                                'polls': int(n.group(1)) if n else 0}
+    return conv
+
+
 def import_results(spec):
     t, files = spec.split('=', 1)
     game = os.path.join(REPO, 'games', t)
     path = os.path.join(game, 'build', 'robust.json')
     rob = json.load(open(path)) if os.path.exists(path) else {'recordings': {}, 'sources': []}
+    rob['recordings'] = as_dict(rob['recordings']); rob.setdefault('sources', [])
     for f in files.split(','):
         for k, v in parse_results(f).items():
             old = rob['recordings'].get(k, {'polls': 0, 'mixed': {}})
@@ -140,17 +214,7 @@ def replay_kpi(game):
     path = os.path.join(game, 'build', 'robust.json')
     if not os.path.exists(path):
         return None
-    recs = json.load(open(path))['recordings']
-    if isinstance(recs, list):
-        # robust.sh's format: [{"recording", "compiled": "MATCH: ... at all N polls", "mixed": "MATCH"|...}]
-        conv = {}
-        for r in recs:
-            c, m = r.get('compiled', ''), r.get('mixed', '')
-            n = re.search(r'at all (\d+) polls', c)
-            conv[r['recording']] = {'compiled': 'MATCH' if c.startswith('MATCH') else c,
-                                    'mixed': {'all': 'MATCH' if m.startswith('MATCH') else m},
-                                    'polls': int(n.group(1)) if n else 0}
-        recs = conv
+    recs = as_dict(json.load(open(path))['recordings'])
     comp = [k for k, v in recs.items() if v.get('compiled') == 'MATCH']
     mixed = [k for k, v in recs.items() if v.get('compiled') == 'MATCH' and v['mixed']
              and all(x == 'MATCH' for x in v['mixed'].values())]
@@ -300,22 +364,32 @@ def title_kpi(t, roms, do_static):
     game = os.path.join(REPO, 'games', t)
     cfg = json.load(open(os.path.join(game, 'sidebyside.json')))
     rom = open(os.path.join(roms, cfg['rom']), 'rb').read()
-    conv, entries = generated(game, len(rom))
+    bodies, refs = {}, {}
+    conv, entries = generated(game, len(rom), bodies, refs)
     ex, covers = executed(game, len(rom))
+    conv_all = conv            # B, D, E, F: everything converted
+    if cfg.get('code_ranges'):
+        ranges = [tuple(int(v, 16) for v in r.split('-')) for r in cfg['code_ranges']]
+        conv = reachable(conv, ex, bodies, ranges)
+        entries = {e for e in entries if e in conv}
     both = ex & conv
-    interp = sorted(ex - conv)
+    interp = sorted(ex - conv_all)
     never = sorted(entries - ex)
-    k = {'title': t, 'converted': len(conv), 'executed': len(ex), 'executed_converted': len(both),
+    reach = live(conv, ex, bodies, refs)
+    k = {'title': t, 'converted': len(conv), 'converted_all': len(conv_all), 'executed': len(ex), 'executed_converted': len(both),
          'coverage_pct': 100 * len(both) / max(1, len(conv)), 'interpreted_only': len(interp),
          'interpreted_only_first': ['$%06X' % a for a in interp[:50]], 'cover_files': covers,
          'functions': len(entries), 'functions_never_entered': len(never),
-         'never_entered': ['$%06X' % a for a in never], 'replay': replay_kpi(game)}
+         'never_entered': ['$%06X' % a for a in never], 'replay': replay_kpi(game),
+         'reachable': len(reach), 'reachable_pct': 100 * len(reach & ex) / max(1, len(reach)),
+         'roundtrip_pct': rt_pct(game)}
+    k['static_pct'], k['map_cov_pct'] = map_kpi(game, conv_all, ex)
     if do_static:
-        cb, strong, weak = static_kpi(rom, conv)
+        cb, strong, weak = static_kpi(rom, conv_all)
         k.update(code_bytes=cb, code_pct_rom=100 * cb / len(rom), suspects_strong=len(strong),
                  suspects_weak=len(weak), suspect_strong_list=['$%06X-%06X' % tuple(x) for x in strong],
                  suspect_weak_list=['$%06X-%06X' % tuple(x) for x in weak])
-    k['reference'] = reference_kpi(t, rom, conv)
+    k['reference'] = reference_kpi(t, rom, conv_all)
     json.dump(k, open(os.path.join(game, 'build', 'kpi.json'), 'w'), indent=1)
     return k
 
@@ -353,13 +427,16 @@ def main():
     rows = []
     for t in o.titles or TITLES:
         k = title_kpi(t, o.roms, not o.no_static)
-        rows.append(row(k, date, sha))
+        rows.append(dict(row(k, date, sha), reachable_pct='%.2f' % k['reachable_pct'],   # R, RT: table and kpi.json
+                         roundtrip_pct='' if k['roundtrip_pct'] is None else '%.2f' % k['roundtrip_pct'],
+                         static_pct='' if k['static_pct'] is None else '%.2f' % k['static_pct'],
+                         map_cov_pct='' if k['map_cov_pct'] is None else '%.2f' % k['map_cov_pct']))
         f = k['reference'] or {}
         for n in f.get('notes', []):
             print(f'  {t}: reference {n}', file=sys.stderr)
-    hdr = ('title', 'conv', 'exec∩conv', 'A cov%', 'B interp', 'C rec', 'C comp', 'C mixed', 'polls', 'fn',
+    hdr = ('title', 'conv', 'exec∩conv', 'A cov%', 'R reach%', 'S map%', 'M mapcov%', 'RT rt%', 'B interp', 'C rec', 'C comp', 'C mixed', 'polls', 'fn',
            'never', 'D code%', 'E strong', 'E weak', 'F ref%')
-    keys = ('title', 'converted', 'executed_converted', 'coverage_pct', 'interpreted_only', 'recordings',
+    keys = ('title', 'converted', 'executed_converted', 'coverage_pct', 'reachable_pct', 'static_pct', 'map_cov_pct', 'roundtrip_pct', 'interpreted_only', 'recordings',
             'match_compiled', 'match_mixed', 'polls_verified', 'functions', 'functions_never_entered',
             'code_pct_rom', 'suspects_strong', 'suspects_weak', 'ref_pct')
     w = [max(len(h), *(len(str(r[k])) for r in rows)) for h, k in zip(hdr, keys)]
@@ -370,7 +447,7 @@ def main():
         os.makedirs(os.path.dirname(HIST), exist_ok=True)
         new = not os.path.exists(HIST)
         with open(HIST, 'a', newline='') as f:
-            wr = csv.DictWriter(f, COLS)
+            wr = csv.DictWriter(f, COLS, extrasaction='ignore')
             if new:
                 wr.writeheader()
             wr.writerows(rows)

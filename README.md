@@ -45,23 +45,23 @@ full-game TAS input runs) is replayed on the native port and on the original, on
 of the game's code compiled and again with 30% of it sent through the interpreter. All of them
 match the original **exactly at every controller poll**. The table measures how much of each
 game that exercises (`engine/tools/kpi.py`, numbers from `docs/kpi/history.csv`,
-2026-10-27 18:44):
+2026-11-01 14:52):
 
 | Code | Instructions recompiled | Run in verified replays | Left to the interpreter | Recordings that MATCH (compiled / mixed) | Controller polls verified |
 |---|---:|---:|---:|---|---:|
-| SH1 | 23,740 | 12,426 (52%) | 0 | 7/7 / 7/7 | 278,311 |
-| SH2 | 51,831 | 28,945 (56%) | 0 | 19/19 / 19/19 | 1,486,587 |
-| SH3 | 73,932 | 18,414 (25%) | 0 | 5/5 / 5/5 | 35,453 |
-| SHK | 118,223 | 46,288 (39%) | 0 | 10/10 / 10/10 | 313,507 |
-| SH3K | 162,224 | 60,993 (38%) | 0 | 36/36 / 36/36 | 3,602,761 |
-| SHK2 | 166,352 | 8,172 (5%) | 0 | 5/5 / 5/5 | 7,193 |
-| SHK1 | 36,057 | 10,101 (28%) | 0 | 2/2 / 2/2 | 26,754 |
-| COI | 24,414 | 9,388 (38%) | 0 | 14/14 / 14/14 | 266,623 |
-| QS | 23,731 | 6,159 (26%) | 0 | 2/2 / 2/2 | 5,642 |
-| QS-R1 | 23,346 | 10,737 (46%) | 0 | 3/3 / 3/3 | 121,457 |
-| WOI | 27,770 | 5,812 (21%) | 0 | 2/2 / 2/2 | 4,894 |
-| WOI-US | 27,501 | 7,551 (27%) | 0 | 4/4 / 4/4 | 173,056 |
-| **All** | **759,121** | **224,986 (30%)** | **0** | **all** | **6,322,238** |
+| SH1 | 28,475 | 17,848 (63%) | 0 | 79/79 / 79/79 | 903,121 |
+| SH2 | 55,404 | 35,412 (64%) | 0 | 74/74 / 74/74 | 2,395,821 |
+| SH3 | 83,845 | 34,484 (41%) | 0 | 75/75 / 75/75 | 540,346 |
+| SHK | 129,950 | 47,085 (36%) | 0 | 57/59 / 57/59 | 601,708 |
+| SH3K | 172,541 | 62,791 (36%) | 0 | 44/44 / 44/44 | 4,142,106 |
+| SHK2 | 45,165 | 25,893 (57%) | 0 | 70/70 / 70/70 | 445,246 |
+| SHK1 | 37,567 | 17,129 (46%) | 0 | 60/60 / 60/60 | 488,440 |
+| COI | 24,433 | 12,625 (52%) | 0 | 59/59 / 59/59 | 1,478,596 |
+| QS | 23,988 | 13,082 (55%) | 0 | 28/28 / 28/28 | 248,233 |
+| QS-R1 | 23,377 | 10,737 (46%) | 0 | 3/3 / 3/3 | 121,457 |
+| WOI | 27,825 | 8,087 (29%) | 0 | 5/5 / 5/5 | 21,491 |
+| WOI-US | 27,540 | 7,623 (28%) | 0 | 12/12 / 12/12 | 319,688 |
+| **All** | **680,110** | **292,796 (43%)** | **0** | **all** | **11,706,253** |
 
 - **Instructions recompiled:** 68000 instructions the recompiler turned into C.
 - **Run in verified replays:** of those, the ones the original actually executed during a
@@ -121,6 +121,23 @@ mkdir -p ../roms        # your dumps, named as in the table above (or ROM=/path/
 - **Check a port yourself:** `engine/tools/recomp.sh ../roms/sh2.bin games/sh2` (regenerate,
   build, self-check); `engine/tools/check.sh sh2 my_run.bk2` (any `.polls`/`.gmv`/`.bk2` ->
   MATCH or the first divergence).
+
+## Quick start (Linux)
+
+Download `pixelsorcery_<version>_all.deb` from the
+[releases](https://github.com/nico3185/pixel_sorcery/releases) (Debian / Ubuntu, any
+architecture), then:
+
+```sh
+sudo apt install ./pixelsorcery_0.1.0_all.deb   # the ./ makes apt read the file; it also installs
+                                               # the compiler, cmake, ninja, SDL2, Python, capstone
+pixelsorcery                # the build screen: finds your dumps, compiles the native ports
+pixelsorcery roms ~/roms    # or link the games in a folder without the screen
+pixelsorcery play sh2       # play a built title (pixelsorcery play lists them)
+```
+
+Everything it makes stays in `~/.local/share/pixelsorcery`. Native ports only: the emulator core
+is not in the package, so there is no self-check and no Mega CD title.
 
 **TUTORIAL.md** explains every tool: decompiling (static analysis + traced coverage),
 recompiling, verifying side by side, the Mega CD disc builder and relocator.

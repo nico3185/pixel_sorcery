@@ -15,21 +15,63 @@ regenerated where stale, then ninja; self-check: recomp.sh. Logs: games/TITLE/bu
 Zip archives are looked into too (a dump inside one is extracted into ../roms).
 --scan DIR: print what the folder holds and exit (no screen). --prepare DIR: also put the ROMs in
 place (as Enter does before building), for build_all.sh --roms DIR."""
-import curses, hashlib, json, os, re, signal, subprocess, sys, threading, time, zipfile
+import curses, hashlib, json, os, re, shutil, signal, subprocess, sys, threading, time, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TOOLS = os.path.join(ROOT, 'engine', 'tools')
 ROMS = os.path.normpath(os.environ.get('PS_ROMS_DIR') or os.path.join(ROOT, '..', 'roms'))   # PS_ROMS_DIR: tests
 PY = os.path.join(ROOT, 'engine', '.venv', 'bin', 'python')
+if not os.path.exists(PY): PY = sys.executable          # Windows download: its bundled Python runs this
 CAT = {k: v for k, v in json.load(open(os.path.join(TOOLS, 'roms.json'))).items() if not k.startswith('_')}
 PREFS = os.path.expanduser('~/Library/Application Support/PixelSorcery/build_ui.json')
 EXTS = ('.bin', '.md', '.gen', '.68k', '.sgd')
 
 
+# without Genesis Plus GX's sources (the Mac app's tree) only native ports build: no self-check,
+# and no title whose runtime still needs the emulator core (SHCD)
+NATIVE_ONLY = not os.path.exists(os.path.join(ROOT, 'engine', 'ext', 'Genesis-Plus-GX', 'core', 'system.c'))
+
+
+def native_port(folder):
+    try: return 'genrecomp_native' in open(os.path.join(ROOT, 'games', folder, 'CMakeLists.txt')).read()
+    except OSError: return False
+
+
+def titles_py():
+    """titles() without zsh: the folders with a sidebyside.json in titles.zsh's shelf order, its codes
+    (ps_code) and the names in launchers/all.txt (the folder name when it has none)"""
+    src = open(os.path.join(TOOLS, 'titles.zsh')).read()
+    code = dict(re.findall(r'([\w-]+) ([\w-]+)', re.search(r'ps_code=\((.*?)\)', src, re.S).group(1)))
+    order = re.search(r'ps_order=\((.*?)\)', src, re.S).group(1).split()
+    names = {}
+    try:
+        for l in open(os.path.join(ROOT, 'launchers', 'all.txt')):
+            if l.startswith('game '):
+                f = [x.strip() for x in l[5:].split('|')]
+                names.setdefault(f[0], f[1] if len(f) > 1 else f[0])
+    except OSError:
+        pass
+    have = sorted(d for d in os.listdir(os.path.join(ROOT, 'games'))
+                  if os.path.exists(os.path.join(ROOT, 'games', d, 'sidebyside.json')))
+    ordered = [d for d in order if d in have] + [d for d in have if d not in order]
+    def name(d):                                # as ps_name: a sibling's name for other versions
+        if d in names: return names[d]
+        for base, n in names.items():
+            if d.startswith(base + '-'): return f'{n} ({d[len(base) + 1:].upper()})'   # a later revision
+            if base.startswith(d + '-'):           # the other region: Europe here (USA name -> its base)
+                n = re.sub(r' \(.*\)$', '', n)
+                return re.sub(re.escape('-' + base[len(d) + 1:]) + '$', '', n, flags=re.I) + ' (Europe)'
+        return d
+    return [(d, code.get(d, d), name(d)) for d in ordered]
+
+
 def titles():
     """[(folder, code, name)] in shelf order, from titles.zsh (the names play.sh shows)"""
+    if not shutil.which('zsh'):                 # Windows: the same list read by Python
+        return titles_py()
     out = subprocess.run(['zsh', '-c', f'ROOT={ROOT!r}; source {TOOLS}/titles.zsh; ps_tsv'], capture_output=True, text=True).stdout
-    return [tuple(l.split('\t')) for l in out.splitlines() if l.count('\t') == 2]
+    return [tuple(l.split('\t')) for l in out.splitlines() if l.count('\t') == 2
+            and (not NATIVE_ONLY or native_port(l.split('\t')[0]))]
 
 
 def shelf(name):
@@ -47,6 +89,14 @@ def shelf(name):
 SIZES = {e['size'] for e in CAT.values() if 'size' in e}   # only dumps of these sizes are read
 SERIALS = {e['serial'] for e in CAT.values() if 'serial' in e}
 NOSERIAL = {e['size'] for e in CAT.values() if 'size' in e and 'serial' not in e}   # the patch chip
+def many(v): return v if isinstance(v, list) else [v]       # a disc title: one serial and hash per region
+DISCS = {d for e in CAT.values() if 'disc' in e for d in many(e['disc'])}
+def cue_track(cue):
+    """a .cue's first track file (the data track)"""
+    for l in open(cue, errors='replace'):
+        m = re.match(r'\s*FILE\s+"(.+)"', l)
+        if m: return os.path.join(os.path.dirname(cue), m.group(1))
+    raise OSError('no FILE in ' + cue)
 def head(path):
     """the first bytes of a ROM (its header at $180), without reading or decompressing the rest"""
     if '::' in path:
@@ -64,6 +114,21 @@ _hash_cache = {}
 def identify(path):
     """(catalogue key, 'verified' | 'other dump') or None"""
     try:
+        if path.lower().endswith('.cue'):                  # a disc: the data track's header and hash
+            track = cue_track(path); st = os.stat(track); key = (track, st.st_size, st.st_mtime)
+            if key not in _hash_cache:
+                with open(track, 'rb') as f: h = f.read(0x200)
+                o = 0x10 if h[:12] == b'\x00' + b'\xff' * 10 + b'\x00' else 0      # raw 2352-byte sectors
+                ser = h[o + 0x180:o + 0x18E].decode('latin1')
+                if ser not in DISCS: return None
+                sha = hashlib.sha1()
+                with open(track, 'rb') as f:
+                    for b in iter(lambda: f.read(1 << 20), b''): sha.update(b)
+                _hash_cache[key] = (sha.hexdigest(), ser)
+            sha, ser = _hash_cache[key]
+            for k, e in CAT.items():
+                if ser in many(e.get('disc', [])): return k, ('verified' if sha in many(e['sha1']) else 'other dump')
+            return None
         if '::' in path:
             z, m = path.split('::', 1); st = os.stat(z); key = (path, st.st_mtime)
         else:
@@ -91,17 +156,48 @@ def identify(path):
     return None
 
 
+def bios_dir():
+    """where the runtime and generate.sh look for the Mega CD BIOS (scd_jp/eu/us.bin; PS_SCD_BIOS overrides)"""
+    if os.environ.get('PS_SCD_BIOS'): return os.environ['PS_SCD_BIOS']
+    if sys.platform == 'darwin': return os.path.expanduser('~/Library/Application Support/PixelSorcery/bios')
+    if os.name == 'nt' or os.environ.get('MSYSTEM'): return os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'PixelSorcery', 'bios')
+    return os.path.join(os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'), 'pixelsorcery', 'bios')
+
+def bios_region(path):
+    """'jp' / 'eu' / 'us' for a Mega CD (Model 1) BIOS dump - 128 KB, "BOOT ROM" in its header's title, a
+    "BR " serial, the region letter at $1F0 - else None"""
+    try:
+        if '::' in path or os.stat(path).st_size != 0x20000: return None
+        with open(path, 'rb') as f: h = f.read(0x200)
+    except OSError: return None
+    if b'BOOT ROM' not in h[0x120:0x150] or h[0x180:0x183] != b'BR ': return None
+    return {'J': 'jp', 'E': 'eu', 'U': 'us'}.get(chr(h[0x1F0]))
+
+BIOS_FOUND = {}                                                # region -> (the player's BIOS dump, verified) (scan)
+BIOS_SHA1 = json.load(open(os.path.join(TOOLS, 'roms.json')))['_scd_bios']
+def install_bios(log):
+    """link every BIOS found into bios_dir() as scd_REGION.bin, unless one is there already"""
+    d = bios_dir()
+    for r, (p, _) in BIOS_FOUND.items():
+        dst = os.path.join(d, f'scd_{r}.bin')
+        if os.path.exists(dst): continue
+        os.makedirs(d, exist_ok=True)
+        if os.path.lexists(dst): os.remove(dst)                # a dangling link
+        try: os.symlink(os.path.abspath(p), dst)
+        except OSError: shutil.copyfile(p, dst)                # no symlinks (Windows): a copy
+        log(f'Mega CD BIOS ({r}{"" if _ else ", not the verified dump"}): {p}')
+
 def scan(folder):
     """{catalogue key: (path, status)} - verified dumps first, the canonical ../roms name preferred"""
     found = {}
     folders = [folder] + ([ROMS] if os.path.abspath(folder) != ROMS and os.path.isdir(ROMS) else [])
     for top in folders:
-        for dirpath, dirs, files in os.walk(top):
+        for dirpath, dirs, files in os.walk(top, followlinks=True):
             if dirpath.count(os.sep) - top.count(os.sep) >= 2: dirs[:] = []
             cands = []
             for f in sorted(files):
                 p = os.path.join(dirpath, f)
-                if f.lower().endswith(EXTS): cands.append(p)
+                if f.lower().endswith(EXTS + ('.cue',)): cands.append(p)
                 elif f.lower().endswith('.zip'):                   # the members of a matching size
                     try:
                         with zipfile.ZipFile(p) as zf:
@@ -109,12 +205,15 @@ def scan(folder):
                                       if i.file_size in SIZES and i.filename.lower().endswith(EXTS)]
                     except (OSError, zipfile.BadZipFile): pass
             for p in cands:
+                if p.lower().endswith('.bin') and (b := bios_region(p)) and not BIOS_FOUND.get(b, ('', False))[1]:
+                    ok = hashlib.sha1(open(p, 'rb').read()).hexdigest() == BIOS_SHA1.get(b)   # the verified dump first
+                    if ok or b not in BIOS_FOUND: BIOS_FOUND[b] = (p, ok)
                 r = identify(p)
                 if not r: continue
                 k, st = r
                 old = found.get(k)
                 better = old is None or (st == 'verified' and old[1] != 'verified') or \
-                         (st == old[1] and os.path.basename(p) == CAT[k]['file'] and os.path.dirname(p) == ROMS)
+                         (st == old[1] and p == os.path.join(ROMS, CAT[k]['file']))
                 if better: found[k] = (p, st)
     return found
 
@@ -149,11 +248,19 @@ def prepare(plan, log):
     """put every usable ROM in ../roms under its expected name; returns the keys that failed"""
     os.makedirs(ROMS, exist_ok=True)
     bad = []
+    install_bios(log)                                          # the Mega CD BIOS for disc titles
     for k, (st, d) in plan.items():
         if st == 'link':
             dst = os.path.join(ROMS, CAT[k]['file'])
             if os.path.lexists(dst): os.rename(dst, dst + '.old')
-            if '::' in d:                                        # inside an archive: extracted
+            if CAT[k].get('disc'):                               # a disc: its folder, file by file
+                src = os.path.dirname(os.path.abspath(d)); os.makedirs(os.path.dirname(dst), exist_ok=True)
+                for f in os.listdir(src):
+                    if not os.path.lexists(os.path.join(os.path.dirname(dst), f)):
+                        os.symlink(os.path.join(src, f), os.path.join(os.path.dirname(dst), f))
+                if not os.path.lexists(dst): os.symlink(os.path.abspath(d), dst)
+                log(f'linked {CAT[k]["file"]} -> {src}')
+            elif '::' in d:                                      # inside an archive: extracted
                 open(dst, 'wb').write(read_rom(d)); log(f'extracted {CAT[k]["file"]} from {d}')
             else:
                 os.symlink(d, dst); log(f'linked {CAT[k]["file"]} -> {d}')
@@ -189,16 +296,22 @@ class Job:
                 for line in self.proc.stdout:
                     lf.write(line); lf.flush(); self.feed(line.rstrip('\n'))
                 return self.proc.wait()
-            if check:
+            disc_gen = os.path.join(g, 'tools', 'generate.sh')    # a disc title: its own generator
+            if check and os.path.exists(disc_gen):
+                self.result = 'no self-check (disc)'
+            elif check:
                 self.stage = 'analysing, generating C'
                 rc = go([os.path.join(TOOLS, 'recomp.sh'), rom, g])
                 ok = 'SELF-CHECK OK' in open(self.log).read()
                 self.result = 'SELF-CHECK OK' if ok else ('stopped' if stop.is_set() else 'FAILED')
             else:
-                stale = subprocess.run([PY, '-c', f"import sys; sys.argv=['x']; sys.path.insert(0, {TOOLS!r}); import sidebyside; "
+                stale = not os.path.exists(disc_gen) and subprocess.run([PY, '-c', f"import sys; sys.argv=['x']; sys.path.insert(0, {TOOLS!r}); import sidebyside; "
                                         f"sys.exit(0 if sidebyside.generated_stale({g!r}) else 1)"], capture_output=True).returncode == 0
                 rc = 0
-                if stale or not os.listdir(os.path.join(g, 'src', 'recomp')) if os.path.isdir(os.path.join(g, 'src', 'recomp')) else True:
+                if os.path.exists(disc_gen):
+                    self.stage = 'generating C'
+                    rc = go([disc_gen, rom])
+                elif stale or not os.listdir(os.path.join(g, 'src', 'recomp')) if os.path.isdir(os.path.join(g, 'src', 'recomp')) else True:
                     self.stage = 'generating C'
                     rc = go([PY, os.path.join(TOOLS, 'recompiler', 'generate.py'), rom, '-o', os.path.join(g, 'src', 'recomp'),
                              '-c', os.path.join(g, 'recomp.json')])
@@ -226,11 +339,23 @@ class Job:
 
 
 # ------------------------------------------------------------------ engine for the build window
+def built(t):
+    """the time of TITLE's native build (sidebyside.json's "exe", else build/TITLE), 0 when none"""
+    g = os.path.join(ROOT, 'games', t)
+    try: exe = json.load(open(os.path.join(g, 'sidebyside.json'))).get('exe', 'build/' + t)
+    except (OSError, ValueError): exe = 'build/' + t
+    try: return int(os.path.getmtime(os.path.join(g, exe)))
+    except OSError: return 0
+
+
 def engine():
     """--engine: the build window (ps_launcher --build) draws, this does the work. Commands on
-    stdin, one a line: scan FOLDER | start CORES PROCS CHECK TITLE... | stop | quit. State on
-    stdout four times a second, a line each, ended by E:
-      S|folder|running|scanning|cpus     T|folder|code|name|rom state|rom detail|stage|done|total|seconds|result
+    stdin, one a line: scan FOLDER | start CORES PROCS CHECK TITLE... | play TITLE | stop | quit.
+    play: ./play.sh TITLE in its own session (the last build; play.sh builds first if it is missing
+    or stale), its output in games/TITLE/play.log. State on stdout four times a second, a line
+    each, ended by E:
+      S|folder|running|scanning|cpus|native only     T|folder|code|name|rom state|rom detail|stage|done|total|seconds|result|built
+      (built: the native build's time, 0 when there is none)
       N|note (the last few)"""
     import queue
     T = titles(); state = {'folder': ROMS, 'plan': {}, 'scanning': False}
@@ -270,19 +395,25 @@ def engine():
                 if os.path.isdir(f): threading.Thread(target=rescan, args=(os.path.abspath(f),), daemon=True).start()
                 else: note(f'no folder {f}')
             elif c[0] == 'start' and len(c) >= 4 and not any(j.stage != 'done' for j in jobs.values()):
-                threading.Thread(target=start, args=(int(c[1]), int(c[2]), c[3] == '1', c[4:]), daemon=True).start()
+                threading.Thread(target=start, args=(int(c[1]), int(c[2]), c[3] == '1' and not NATIVE_ONLY, c[4:]), daemon=True).start()
+            elif c[0] == 'play' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
+                log = open(os.path.join(ROOT, 'games', c[1], 'play.log'), 'w')
+                subprocess.Popen([os.path.join(ROOT, 'play.sh'), c[1]], cwd=ROOT, stdin=subprocess.DEVNULL,
+                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                note(f'playing {c[1]}')
             elif c[0] == 'stop':
                 stop.set(); [j.kill() for j in jobs.values()]; note('stopped')
         except queue.Empty:
             pass
         running = any(j.stage != 'done' for j in jobs.values())
-        out = [f'S|{state["folder"]}|{int(running)}|{int(state["scanning"])}|{os.cpu_count() or 4}']
+        out = [f'S|{state["folder"]}|{int(running)}|{int(state["scanning"])}|{os.cpu_count() or 4}|{int(NATIVE_ONLY)}']
         for t, code, name in T:
             st, d = state['plan'].get(t, ('missing', ''))
             j = jobs.get(t)
             el = int(((j.t1 or time.time()) - j.t0) if j and j.t0 else 0)
             out.append('|'.join(['T', t, code, name, st, os.path.basename(str(d).split('::')[-1]),
-                                 (j.stage if j else ''), str(j.n if j else 0), str(j.m if j else 0), str(el), (j.result if j else '')]))
+                                 (j.stage if j else ''), str(j.n if j else 0), str(j.m if j else 0), str(el), (j.result if j else ''),
+                                 str(built(t))]))
         out += [f'N|{n}' for n in notes] + ['E']
         try: sys.stdout.write('\n'.join(x.replace('\n', ' ') for x in out) + '\n'); sys.stdout.flush()
         except BrokenPipeError: stop.set(); [j.kill() for j in jobs.values()]; return

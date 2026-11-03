@@ -108,6 +108,22 @@ int ps_audio_end_frame(unsigned int cycles, int16_t *out, int max_frames)
     if (s_amode == 2) { int m = audio_update(ref); wav_put(&s_wref, ref, m); }
 #endif
     n = ps_synth_end_frame(cycles, out, max_frames);
+#ifndef PS_NATIVE
+    if (s_amode == 1 && snd.blips[1] && snd.blips[2] && n > 0) {    /* Mega CD on the emulator core: its PCM and CD audio */
+        static int16_t s_cd[8192];
+        pcm_update((unsigned)n); cdd_update_audio((unsigned)n);
+        for (int b = 1; b <= 2; b++) {
+            int m = blip_read_samples(snd.blips[b], s_cd, n);
+            for (int i = 0; i < 2 * m; i++) {
+                int v = out[i] + s_cd[i];
+                out[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+            }
+        }
+    }
+#else
+    { extern bool g_ps_mcd; void mcd_cdda_mix(int16_t *, int), mcd_pcm_mix(int16_t *, int);
+      if (g_ps_mcd) { mcd_cdda_mix(out, n); mcd_pcm_mix(out, n); } }            /* Mega CD: CD audio, PCM */
+#endif
     wav_put(&s_wav, out, n);
     return n;
 }
@@ -135,8 +151,16 @@ static void (*s_driver)(PsZ80 *) = NULL;
 extern void (*ps_z80_game_driver)(PsZ80 *);
 void (*ps_z80_game_driver_ps_default)(PsZ80 *) = NULL;
 PS_ALTNAME(ps_z80_game_driver, ps_z80_game_driver_ps_default)
+#elif defined(__MINGW32__)
+/* MinGW (PE/COFF): weak data is unreliable there (a .weak alias was read instead of the
+ * title's pointer; weak undefined refs do not link through .refptr): plain externs, the
+ * defaults are members of the ps_defaults archive, linked last (engine/src/defaults/). */
+extern void (*ps_z80_game_driver)(PsZ80 *);
 #else
 __attribute__((weak)) void (*ps_z80_game_driver)(PsZ80 *) = NULL;
+#endif
+#ifndef PS_GAME_DRIVER
+#define PS_GAME_DRIVER ps_z80_game_driver
 #endif
 static int s_mode = -1;                 /* 1 = recomp, 0 = gpgx */
 static FILE *s_fmlog;
@@ -164,11 +188,21 @@ void ps_audio_register_driver(void (*run)(PsZ80 *))
     s_driver = run;
 }
 
+/* Several drivers, each with the code bytes it was recompiled from (a Mega CD disc: the BIOS's,
+ * then the game's): at each /RESET release the one whose image is in Z80 RAM runs. */
+static struct { void (*run)(PsZ80 *); const unsigned char *image; unsigned len; } s_drivers[4];
+static int s_ndrivers;
+void ps_audio_add_driver(void (*run)(PsZ80 *), const unsigned char *image, unsigned len)
+{
+    if (s_ndrivers < 4) { s_drivers[s_ndrivers].run = run; s_drivers[s_ndrivers].image = image; s_drivers[s_ndrivers++].len = len; }
+    if (!s_driver) s_driver = run;
+}
+
 int ps_audio_z80_recomp(void)
 {
     if (s_mode < 0) {
         audio_chips_init();
-        if (!s_driver && ps_z80_game_driver) s_driver = ps_z80_game_driver;
+        if (!s_driver && PS_GAME_DRIVER) s_driver = PS_GAME_DRIVER;
         const char *m = getenv("PS_Z80");
         s_mode = (s_driver && !(m && !strcmp(m, "gpgx"))) ? 1 : 0;
         const char *log = getenv("PS_FMLOG");
@@ -216,24 +250,55 @@ PS_ALTNAME(ps_z80_game_image, ps_z80_game_image_ps_default)
 extern unsigned int ps_z80_game_image_len;
 unsigned int ps_z80_game_image_len_ps_default = 0;
 PS_ALTNAME(ps_z80_game_image_len, ps_z80_game_image_len_ps_default)
+#elif defined(__MINGW32__)
+extern const unsigned char *ps_z80_game_image;
+extern unsigned int ps_z80_game_image_len;
 #else
 __attribute__((weak)) const unsigned char *ps_z80_game_image = NULL;
 __attribute__((weak)) unsigned int ps_z80_game_image_len = 0;
+#endif
+#ifndef PS_GAME_IMAGE
+#define PS_GAME_IMAGE ps_z80_game_image
+#define PS_GAME_IMAGE_LEN ps_z80_game_image_len
 #endif
 
 /* Hardware /RESET released: Z80 restarts at 0 with interrupts off. */
 void ps_audio_z80_reset(void)
 {
-    if (ps_z80_game_image && ps_z80_game_image_len)
-        s_started = memcmp(zram, ps_z80_game_image, ps_z80_game_image_len) == 0;
+    if (s_ndrivers) {
+        s_started = 0;
+        for (int i = 0; i < s_ndrivers && !s_started; i++)
+            if (!memcmp(zram, s_drivers[i].image, s_drivers[i].len)) { s_driver = s_drivers[i].run; s_started = 1; }
+    } else if (PS_GAME_IMAGE && PS_GAME_IMAGE_LEN)
+        s_started = memcmp(zram, PS_GAME_IMAGE, PS_GAME_IMAGE_LEN) == 0;
     else
         s_started = 1;
-    if (getenv("PS_Z80_DEBUG")) {
-        unsigned n = 0; while (n < ps_z80_game_image_len && zram[n] == ps_z80_game_image[n]) n++;
-        fprintf(stderr, "ps_audio: /RESET released, RAM matches image for %u/%u bytes\n", n, ps_z80_game_image_len);
+    if (getenv("PS_Z80_DEBUG"))
+        for (int i = 0; i < s_ndrivers; i++) {
+            unsigned n = 0; while (n < s_drivers[i].len && zram[n] == s_drivers[i].image[n]) n++;
+            unsigned h = 0; for (int k = 0; k < 0x2000; k++) h = h * 31 + zram[k];
+            fprintf(stderr, "ps_audio: /RESET released at frame %ld (RAM hash %08X), driver %d matches for %u/%u bytes\n", s_frame, h, i, n, s_drivers[i].len);
+            static int nd; char nm[600]; snprintf(nm, sizeof nm, "%s.%d", getenv("PS_Z80_DEBUG"), nd);
+            FILE *d = i ? NULL : fopen(nm, "wb"); if (d) { fwrite(zram, 1, 0x2000, d); fclose(d); nd++; }
+        }
+    if (getenv("PS_Z80_DEBUG") && PS_GAME_IMAGE) {
+        unsigned n = 0; while (n < PS_GAME_IMAGE_LEN && zram[n] == PS_GAME_IMAGE[n]) n++;
+        fprintf(stderr, "ps_audio: /RESET released, RAM matches image for %u/%u bytes\n", n, PS_GAME_IMAGE_LEN);
         FILE *d = fopen("/tmp/zram_at_reset.bin", "wb"); if (d) { fwrite(zram, 1, 0x2000, d); fclose(d); }
     }
     if (s_started) fprintf(stderr, "ps_audio: driver uploaded, recompiled Z80 started\n");
+    {   /* PS_Z80_CAPTURE=path%d: Z80 RAM at each /RESET release whose RAM differs from the last one
+         * saved, numbered - a disc's drivers, captured without a Z80 (games/shcd/tools/z80_drivers.sh) */
+        static const char *cap; static int init, nc; static uint8_t last[0x2000];
+        if (!init) { init = 1; cap = getenv("PS_Z80_CAPTURE"); }
+        int any = 0; for (int k = 0; k < 0x2000 && !any; k++) any = zram[k] != 0;
+        if (cap && any && memcmp(last, zram, 0x2000)) {
+            char nm[600]; snprintf(nm, sizeof nm, cap, nc);
+            FILE *d = fopen(nm, "wb");
+            if (d) { fwrite(zram, 1, 0x2000, d); fclose(d); fprintf(stderr, "z80 capture %d at frame %ld\n", nc++, s_frame); }
+            memcpy(last, zram, 0x2000);
+        }
+    }
 #ifndef PS_NATIVE
     /* GPGX's z80_reset() just ran: take its post-reset register state */
     s_z.a = Z80.af.b.h; s_z.f = Z80.af.b.l; s_z.b = Z80.bc.b.h; s_z.c = Z80.bc.b.l;

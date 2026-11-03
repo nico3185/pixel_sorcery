@@ -28,5 +28,7 @@ target_link_libraries(sh3k PRIVATE genrecomp_native)
 
 # sh3k_oracle: same game code on the Genesis Plus GX-backed runtime, for the in-process
 # compare modes (PS_RENDERER=compare, PS_AUDIO=compare) used by recomp.sh
-add_executable(sh3k_oracle $<TARGET_OBJECTS:sh3k_code>)
-target_link_libraries(sh3k_oracle PRIVATE genrecomp)
+if(TARGET genrecomp)   # absent when the engine is built without Genesis Plus GX
+    add_executable(sh3k_oracle $<TARGET_OBJECTS:sh3k_code>)
+    target_link_libraries(sh3k_oracle PRIVATE genrecomp)
+endif()

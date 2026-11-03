@@ -7,14 +7,21 @@
 # per title, so P titles at once (-p P, default N/2), each compiling with N/P cores.
 # ROMs: ../roms/<"rom" in sidebyside.json> (or TITLE.md/.bin/.gen). Logs: games/TITLE/build_all.log
 # --roms DIR: first find the games in DIR (any names, zips too) and put them in ../roms.
-# No arguments in a terminal: the build app (macOS: PixelSorcery Build.app, made by
+# No arguments in a terminal: the build app (macOS: PixelSorcery.app, made by
 # engine/tools/macapp/make_app.sh; elsewhere the terminal screen build_ui.py); --tui: the
 # terminal screen; --menu: the plain menu. Progress: a bar per title.
-set -u
-here=${0:A:h:h:h}; jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc); check=0; titles=(); par=; romdir=
-menu=0
+# --play: then play the (first) title when its build succeeded; the app has Play/Rebuild per title.
+# --roundtrip: then rebuild each title's ROM from the generator's decoding (roundtrip.py --e2e: one
+# assembly source, m68k-elf-as) and compare it with the original ROM by SHA-1 - a column in the table.
+# --coverage: then measure each title's instruction coverage (kpi.py: R = reachable code run by verified
+# recordings, A = all converted code), with the change since the last measurement
+# (games/TITLE/build/coverage_last.txt) - a column in the table; kpi.py adds the numbers to docs/kpi/history.csv.
+set -u; export LC_NUMERIC=C   # printf: a decimal point whatever the locale
+here=${0:A:h:h:h}; [[ $OSTYPE == (msys|cygwin)* ]] && here=$(cygpath -m $here)   # MSYS2: C:/... paths, native Windows python and tools read them too
+jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc); check=0; titles=(); par=; romdir=
+menu=0; play=0; roundtrip=0; coverage=0
 if (( $# == 0 )) && [[ -t 0 && -t 1 ]]; then   # the build app (macOS), else the terminal screen
-  app="$here/launchers/build/PixelSorcery Build.app"
+  app="$here/launchers/build/PixelSorcery.app"
   if [[ $(uname) == Darwin ]] && { [[ -d $app && ! $here/engine/tools/macapp/PixelSorceryBuild.swift -nt $app ]] || $here/engine/tools/macapp/make_app.sh >/dev/null; }; then
     open "$app"; exit 0
   fi
@@ -28,9 +35,12 @@ while (( $# )); do
     -j) jobs=$2; shift ;;
     -j*) jobs=${1#-j} ;;
     --check) check=1 ;;
+    --play) play=1 ;;
+    --roundtrip) roundtrip=1 ;;
+    --coverage) coverage=1 ;;
     -p) par=$2; shift ;;
     --roms) romdir=$2; shift ;;
-    -h|--help) sed -n 2,10p $0; exit 0 ;;
+    -h|--help) sed -n 2,18p $0; exit 0 ;;
     *) t=$(ps_resolve $1) || { print -u2 "unknown or ambiguous title '$1'"; exit 2; }; titles+=($t) ;;
   esac
   shift
@@ -66,7 +76,7 @@ if [[ -n $romdir ]]; then   # --roms DIR: find the games there by content and pu
   print "ROMs from $romdir:"; $py $here/engine/tools/build_ui.py --prepare $romdir || print "(some ROMs could not be prepared)"
 fi
 rom_of() {
-  local t=$1 c def=$(python3 -c "import json;print(json.load(open('$here/games/$t/sidebyside.json')).get('rom',''))")
+  local t=$1 c def=$(python3 -c "import json,sys;sys.stdout.write(json.load(open(sys.argv[1])).get('rom',''))" $here/games/$t/sidebyside.json)
   [[ $t == shk1 ]] && $here/games/shk1/tools/ensure_rom.sh $here/../roms >/dev/null 2>&1
   for c in $def $t.md $t.bin $t.gen; do [[ -n $c && -f $here/../roms/$c ]] && { print $here/../roms/$c; return; }; done
 }
@@ -104,7 +114,7 @@ if (( check )); then
   wait
   for t in $titles; do
     [[ -n ${result[$t]:-} ]] && continue
-    result[$t]=$(grep -E 'SELF-CHECK' $here/games/$t/build_all.log | tail -1); [[ -n ${result[$t]} ]] || result[$t]="FAILED (games/$t/build_all.log)"
+    result[$t]=$(grep -a -E 'SELF-CHECK' $here/games/$t/build_all.log | tail -1); [[ -n ${result[$t]} ]] || result[$t]="FAILED (games/$t/build_all.log)"
   done
 else
   # 1. the C, N titles at a time: missing (first build) or stale
@@ -134,7 +144,7 @@ else
       elif [[ $line == *error:* || $line == FAILED:* ]]; then printf '\n  %s\n' $line
       fi
     done
-    [[ -t 1 ]] && printf '\r%80s\r' ''
+    if [[ -t 1 ]]; then printf '\r%80s\r' ''; fi   # (an && here made the bar fail without a terminal)
   }
   for t in $titles; do
     [[ -n ${result[$t]:-} ]] && continue
@@ -146,7 +156,44 @@ else
     else result[$t]="FAILED (games/$t/build_all.log)"; print "   $t: FAILED"; fi
   done
 fi
-print "\n| title | result |\n|---|---|"
-for t in $titles; do print "| $t | ${result[$t]:-not built} |"; done
+typeset -A rt
+if (( roundtrip )); then   # the ROM rebuilt from the generated decoding, compared with the original
+  command -v ${M68K_AS:-m68k-elf-as} >/dev/null || print -u2 "--roundtrip needs m68k-elf-as (brew install m68k-elf-binutils)"
+  for t in $titles; do
+    [[ -n ${rom[$t]} && ${result[$t]:-} != *FAILED* ]] || continue
+    line=$(PS_ROMS=${rom[$t]:h} $py $here/engine/tools/roundtrip.py $t --e2e 2>&1 | grep -a 'e2e:')
+    case $line in
+      *IDENTICAL*) rt[$t]="ROM identical (sha1 ${${line#*sha1 }%% *})" ;;
+      *differs*) rt[$t]="ROM DIFFERS (games/$t/build/roundtrip.s)"; result[$t]="${result[$t]:-} - round trip FAILED" ;;
+      *) rt[$t]="not run" ;;
+    esac
+    print "   $t: ${rt[$t]}"
+  done
+fi
+typeset -A cov
+if (( coverage )); then   # kpi.py's table: title, conv, exec, A cov%, R reach%, ...
+  print "\nmeasuring coverage (kpi.py)..."
+  for line in ${(f)"$(PS_ROMS=$here/../roms $py $here/engine/tools/kpi.py --no-static $titles 2>/dev/null)"}; do
+    f=(${=line}); t=$f[1]; [[ -n ${rom[$t]:-} && $f[4] == [0-9]* ]] || continue
+    a=$f[4] r=$f[5] last=$here/games/$t/build/coverage_last.txt d=""
+    if [[ -f $last ]]; then
+      p=($(<$last)); d=" ($(printf '%+.2f' $(( r - p[1] ))) / $(printf '%+.2f' $(( a - p[2] ))) since ${p[3]})"
+    fi
+    mkdir -p ${last:h}; print "$r $a $(date +%m-%d_%H:%M)" > $last
+    cov[$t]="R $r% A $a%$d"
+  done
+fi
+hdr="| title | result |"; sep="|---|---|"
+(( roundtrip )) && { hdr+=" round trip |"; sep+="---|"; }
+(( coverage )) && { hdr+=" coverage (R reachable / A all code) |"; sep+="---|"; }
+print "\n$hdr\n$sep"
+for t in $titles; do
+  row="| $t | ${result[$t]:-not built} |"
+  (( roundtrip )) && row+=" ${rt[$t]:-not run} |"
+  (( coverage )) && row+=" ${cov[$t]:-not measured} |"
+  print -r -- $row
+done
 print "\n$#titles titles, $(( SECONDS - t0 )) s, $jobs cores"
-[[ -z ${(M)${(v)result}:#*FAILED*} ]]
+ok=0; [[ -z ${(M)${(v)result}:#*FAILED*} ]] || ok=1
+(( play && ok == 0 )) && exec $here/play.sh $titles[1]
+exit $ok

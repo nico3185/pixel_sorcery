@@ -20,7 +20,9 @@ report=$root/docs/kpi/nightly.md; mkdir -p ${report:h}
   for t in $titles; do [[ -f $out/$t.md ]] && sed -n '3,$p' $out/$t.md | grep "^| $t " ; done | sed '1i\
 | title | recordings | compiled MATCH | mixed MATCH | entry points added | open divergences |\
 |---|---|---|---|---|---|'
-  print "\n## Coverage KPI\n\n\`\`\`"
+  print "\n## ROM round trip (roundtrip.py: re-encoded byte for byte; the rest data decoded as code)\n\n\`\`\`"
+  for t in $titles; do $root/engine/.venv/bin/python -I $tools/roundtrip.py $t --e2e 2>&1 | grep -E "^[a-z]|e2e:"; done
+  print "\`\`\`\n\n## Coverage KPI (RT: round-trip share)\n\n\`\`\`"
   $root/engine/.venv/bin/python -I $tools/kpi.py 2>&1 | tail -20
   print "\`\`\`" } > $report
 print "report: $report"

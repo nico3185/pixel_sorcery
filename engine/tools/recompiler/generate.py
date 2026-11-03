@@ -43,9 +43,15 @@ def _abs_addr(m):
 
 def load_cycle_table():
     """Per-opcode 68000 base cost in master clocks (x7), from the oracle core's table
-    (pinned submodule; the numbers are the documented 68000 instruction timings)."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'ext',
-                        'Genesis-Plus-GX', 'core', 'm68k', 'm68ki_cycles.h')
+    (pinned submodule; the numbers are the documented 68000 instruction timings). Without the
+    submodule (the Mac app's tree): m68k_cycles.txt beside this file, the same numbers, written by
+    engine/tools/macapp/make_dmg.sh."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, '..', '..', 'ext', 'Genesis-Plus-GX', 'core', 'm68k', 'm68ki_cycles.h')
+    if not os.path.exists(path):
+        vals = [int(v) for v in open(os.path.join(here, 'm68k_cycles.txt')).read().split()]
+        assert len(vals) == 0x10000, len(vals)
+        return vals
     txt = open(path).read()
     body = txt[txt.index('{') + 1: txt.rindex('}')]
     vals = [int(eval(v)) for v in re.findall(r'\d+\s*\*\s*\d+|\d+', body)]
@@ -54,6 +60,7 @@ def load_cycle_table():
 
 
 CYCLES = load_cycle_table()
+CONVERTED = set()      # (address, length) of every instruction emitted as C (rom_rest.bin, code2bin.py)
 
 
 def timed(op, raw, c_code, addr=None):
@@ -173,6 +180,8 @@ class M68KTranslator:
         hook = getattr(self, 'hooks', {}).get(addr)
         skip = None
         if hook:
+            if not hasattr(self, 'hook_len'): self.hook_len = {}
+            self.hook_len[addr] = len(raw_bytes)  # the interpreter's copy skips by this (recomp_hooks.c)
             if 'goto skip;' in hook:              # the hook may skip this instruction
                 skip = f"skip_{addr:06X}"
                 hook = hook.replace('goto skip;', f'goto {skip};')
@@ -191,15 +200,21 @@ class M68KTranslator:
         if cheat is not None:
             return lines + self._cheat_pair(cheat, addr, mnemonic, op_str, raw_bytes, func_start, func_end)
 
-        # Dispatch to handler
-        c_code = self._translate(addr, base_mnem, mnemonic, op_str, size, raw_bytes)
+        # Dispatch to handler (words recomp.json lists as data are left to rom_rest.bin and the interpreter)
+        c_code = None if addr in getattr(self, 'data_words', ()) else self._translate(addr, base_mnem, mnemonic, op_str, size, raw_bytes)
         if c_code and ('TODO' in c_code or 'UNHANDLED' in c_code or 'unresolved' in c_code):
             c_code = None                          # a placeholder, not code: the interpreter runs it
         if c_code:
             c_code = self._rmw_autoinc(c_code, op_str, size, mnemonic)
         if c_code:
             op = (raw_bytes[0] << 8) | raw_bytes[1]
-            lines.append(f"    {timed(op, raw_bytes, c_code, addr)}")
+            # the instruction as assembly beside its C: code2bin.py rebuilds the ROM from the generated
+            # code alone and checks each comment against its C by translating it back
+            # !ea: OR/SUB/CMP/AND/ADD #imm,Dn in the EA form (an assembler picks the ORI/SUBI/... one)
+            ea = (op >> 12) in (0x8, 0x9, 0xB, 0xC, 0xD) and (op & 0x3F) == 0x3C and not (op & 0x100) and (op >> 6 & 3) != 3
+            lines.append(f"    {timed(op, raw_bytes, c_code, addr)}  /* asm: {mnemonic} {op_str}{' !ea' if ea else ''} */")
+            if addr is not None:
+                CONVERTED.add((addr, len(raw_bytes)))
         else:
             # Not translated: the interpreter runs from this instruction on, as for code never
             # found (func_table.c's miss path); it charges the instruction's cycles itself.
@@ -1483,6 +1498,28 @@ class CodeGenerator:
                                funcs[i:i + self.MAX_FUNCS_PER_FILE]))
         return chunks
 
+    def _hooks_for_interpreter(self):
+        """The title hooks again, for code the runtime's interpreter runs (m68k_interp.c): each one
+        a function returning where to go on, 0 = run the instruction; "goto skip;" -> the next
+        instruction, "goto loc_/sub_XXXXXX;" -> that address. Without this, a hooked instruction
+        reached in the interpreter (a function not converted, PS_INTERP) ran the original's logic."""
+        hooks = getattr(self.translator, 'hooks', {}) or {}
+        lens = getattr(self.translator, 'hook_len', {})
+        out = ['/* generated: title hooks (recomp.json "hooks") for the interpreter, see generate.py */',
+               '#include "recomp_common.h"', '']
+        for a in sorted(hooks):
+            body = re.sub(r'goto (?:loc|sub)_([0-9A-Fa-f]{6});', lambda m: f'return 0x{m.group(1).upper()}u;', hooks[a])
+            nxt = a + lens[a] if a in lens else 1        # 1: skip of an instruction never converted
+            body = body.replace('goto skip;', f'return 0x{nxt:06X}u;')
+            out.append(f'static uint32_t hook_{a:06X}(void) {{ {body}\n    return 0; }}')
+        pcs = ', '.join(f'0x{a:06X}u' for a in sorted(hooks)) or '0'
+        fns = ', '.join(f'hook_{a:06X}' for a in sorted(hooks)) or '0'
+        out += ['', f'static const uint32_t pcs[] = {{ {pcs} }};',
+                f'static uint32_t (*const fns[])(void) = {{ {fns} }};',
+                'const uint32_t *ps_m68k_hook_pc = pcs;', 'uint32_t (*const *ps_m68k_hook_fn)(void) = fns;',
+                f'int ps_m68k_nhooks = {len(hooks)};', '']
+        return '\n'.join(out)
+
     def _emit(self, name, text):
         self.outputs[name] = text
 
@@ -1520,12 +1557,16 @@ class CodeGenerator:
 
         # Iteratively resolve cross-function call targets until stable.
         # Each pass may discover new targets from newly-split functions.
+        prev = None
         for iteration in range(10):  # safety limit
             unregistered = self.cross_func_targets - set(f['start'] for f in functions)
             # Filter to valid ROM addresses
             unregistered = {a for a in unregistered if 0x200 <= a < self.rom.size and not (a & 1)}
-            if not unregistered:
+            # the same targets left as after the last pass: splitting them made no new function
+            # (functions are only added), so another pass would regenerate the same output
+            if not unregistered or unregistered == prev:
                 break
+            prev = unregistered
             print(f"  Pass {iteration+1}: {len(unregistered)} cross-function targets — splitting and regenerating...")
             for addr in unregistered:
                 if addr not in self.analyzer.labels:
@@ -1550,6 +1591,7 @@ class CodeGenerator:
         rows = ',\n'.join(','.join(str(c) for c in CYCLES[i:i + 32]) for i in range(0, 0x10000, 32))
         self._emit('recomp_cycles.c', '/* generated: 68000 base cost per opcode (master clocks), as the generator charges */\n'
                    '#include <stdint.h>\nconst uint16_t ps_m68k_cycles[0x10000] = {\n' + rows + '\n};\n')
+        self._emit('recomp_hooks.c', self._hooks_for_interpreter())
         self._flush()
 
         # Skip main.c generation — hand-written src/main.c is used instead
@@ -1903,6 +1945,7 @@ def main():
     translator = M68KTranslator(rom, analyzer.labels)
     translator.hooks = {int(k, 16): v for k, v in (cfg.get('hooks') or {}).items()}
     translator.cheat_sites = cheat_sites
+    translator.data_words = {int(a, 16) for a in cfg.get('data', [])}   # words a reassembling map calls data
     translator.orig_data = orig_data
     translator.cheat_names = list(cheats.keys())
     translator.pc_switches = analyzer.pc_switches
@@ -1916,6 +1959,14 @@ def main():
         cf.write(f'const char *ps_cheat_names[] = {{ {", ".join(chr(34) + n + chr(34) for n in names) or "0"} }};\n')
         cf.write(f'int ps_cheat_count = {len(names)};\n')
 
+    # the bytes no instruction was converted from: the ROM with every converted instruction's bytes
+    # zeroed (the data, and code left to the interpreter) - with the asm comments, all code2bin.py
+    # needs to rebuild the ROM from the generated output alone
+    rest = bytearray(orig_data)                 # before any cheat patch
+    for a, n in CONVERTED:
+        rest[a:a + n] = bytes(n)
+    with open(os.path.join(args.output_dir, 'rom_rest.bin'), 'wb') as f:
+        f.write(rest)
     print("\nDone!")
 
 

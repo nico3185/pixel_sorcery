@@ -70,6 +70,8 @@ uint16_t bus_peek16(uint32_t addr) {
     if (addr >= 0x800000 && addr < 0xE00000) addr |= 0xFF0000;  /* DMA source: work RAM mirror */
 #ifdef PS_NATIVE
     if (addr >= 0xE00000) return *(uint16_t *)(work_ram + (addr & 0xFFFF));
+    {   extern bool g_ps_mcd; uint16_t mcd_main_read(uint32_t, uint16_t, bool);   /* booted from CD: BIOS, PRG-RAM, Word RAM */
+        if (g_ps_mcd && addr < 0x400000) return mcd_main_read(addr, 0xFFFF, false); }
     if (addr < 0x400000) { uint32_t n; const uint8_t *rom = ps_hw_rom(&n);
         uint32_t m = 1; while (m < n) m <<= 1; return *(uint16_t *)(rom + (addr & (m - 1))); }
     return 0xFFFF;
@@ -91,6 +93,11 @@ static void ps_clock(int *line, int *cycle, int *lpf) {
 
 void bus_video_init(void) {
     ps_vdp_init(ps_clock, bus_peek16);
+#ifndef PS_NATIVE
+    { int ps_megacd_dma_delayed(unsigned reg23); ps_vdp_set_dma_delayed(ps_megacd_dma_delayed); }
+#else
+    { int mcd_dma_delayed(unsigned reg23); ps_vdp_set_dma_delayed(mcd_dma_delayed); }
+#endif
 }
 
 /* VDP data/control/HV ports, excluding the PSG and test registers. */
@@ -159,7 +166,13 @@ unsigned bus_frame_cycles(void) {
     return t;                     /* the frame time base starts at VBlank, as on the oracle */
 }
 void bus_irq_ack(uint8_t level) {
-    if (level == 6) { s_vint_pending = false; status &= ~0x80; }
+    if (level == 6) {
+        s_vint_pending = false; status &= ~0x80;
+        /* GPGX's IRQ level is "VInt ? 6 : HInt ? 4": an HInt left pending behind the VInt (e.g.
+         * IE1 set while the VInt was pending, which bus_write8/16 do not raise) is asserted once
+         * the VInt is acknowledged, and taken when the handler's RTE lowers the mask. */
+        if (s_hint_pending && (g_ps_vdp.reg[0] & 0x10)) recomp_m68k_interrupt(4);
+    }
     else if (level == 4) s_hint_pending = false;
 }
 /* HInt: counter reaches zero on an active line (or at the VBlank line) */
@@ -186,7 +199,20 @@ static void bus_tick_cycles(void) {
     /* DMA completes instantly here: never leave the busy flag set. */
     status &= ~0x0002;
 }
-static inline void bus_sync_back(void) { if ((int)(m68k.cycles - g_cyc) > 0) g_cyc = m68k.cycles; }
+#ifndef PS_NATIVE
+void ps_megacd_poll_wait(void);
+#endif
+static inline void bus_sync_back(void) {
+#ifndef PS_NATIVE
+    if (m68k.stopped) ps_megacd_poll_wait();     /* Mega CD: main CPU polling the sub CPU */
+    if ((int)(m68k.cycles - g_cyc) > 0) g_cyc = m68k.cycles;
+#else
+    {   /* the native Mega CD: a main CPU found polling the sub CPU idles as the reference's (mcd.c) */
+        extern unsigned g_mcd_main_stopped; unsigned mcd_main_poll_wait(void);
+        if (g_mcd_main_stopped) { unsigned t = mcycles_vdp + mcd_main_poll_wait(); if ((int)(t - g_cyc) > 0) g_cyc = t; }
+    }
+#endif
+}
 
 /* Instruction boundary reached g_cyc_event: run scanlines up to now. */
 /* Next scheduler event (pending delayed IRQ, VInt on the VBlank line, else line end). */
@@ -282,6 +308,15 @@ static void bus_lines(void) {
         bus_z80_to(mcycles_vdp + MCYCLES_PER_LINE);
         if (v_counter == vb) Z80.irq_state = CLEAR_LINE;
         mcycles_vdp += MCYCLES_PER_LINE;
+#ifndef PS_NATIVE
+        { void ps_megacd_line(unsigned int); ps_megacd_line(mcycles_vdp); }   /* sub CPU + CD hardware, this line */
+#else
+        {   /* native Mega CD: the sub CPU for one line - 796 of its clocks, the reference's whole number
+             * (3420 master clocks x 50 MHz / 53.69 MHz = 3184 quarter clocks, the fraction dropped) */
+            extern bool g_ps_mcd; void mcd_line(void);
+            if (g_ps_mcd) mcd_line();
+        }
+#endif
         v_counter = (v_counter + 1) % lines_per_frame;
         if (v_counter == lines_per_frame - 1) { status &= ~0x08; s_hcounter = g_ps_vdp.reg[10]; }
         else if (v_counter < bus_vblank_line()) {        /* active line: HInt counter */
@@ -306,6 +341,9 @@ static void bus_lines(void) {
 #else
             input_end_frame(mcycles_vdp);
             dma_endCycles = 0;
+#endif
+#ifndef PS_NATIVE
+            { void ps_megacd_end_frame(unsigned int); ps_megacd_end_frame(MCYCLES_PER_LINE); }
 #endif
             g_cyc -= mcycles_vdp;
             g_refresh -= mcycles_vdp;
@@ -440,6 +478,11 @@ static void vdp_dma_stall(void) {
     uint32_t n = g_ps_vdp_dma68k_words;
     g_ps_vdp_dma68k_words = 0;
     unsigned t = vdp_dma_end(g_cyc, n, g_ps_vdp_dma68k_vram ? 1 : 0);
+    { extern long ps_frames; static long from = -2;     /* PS_DMA_DBG=FRAME: 68K-bus DMAs of that frame */
+      if (from == -2) from = getenv("PS_DMA_DBG") ? atol(getenv("PS_DMA_DBG")) : -1;
+      if (from >= 0 && ps_frames >= from && ps_frames < from + 6)
+          fprintf(stderr, "dma f%ld line %d words %u reg1 %02X src %02X%02X%02X code %X end line +%u\n", ps_frames, v_counter, n,
+                  g_ps_vdp.reg[1], g_ps_vdp.reg[23], g_ps_vdp.reg[22], g_ps_vdp.reg[21], g_ps_vdp.code, (t - mcycles_vdp) / MCYCLES_PER_LINE); }
     /* Across a line boundary the CPU is re-halted to the DMA end, absorbing its own cost */
     if (t > mcycles_vdp + MCYCLES_PER_LINE && !vdp_dma_in_vblank_segment(t)) g_cyc_skip = 1;
     if ((int)(t - g_cyc) > 0) g_cyc = t;           /* the 68000 is halted during 68K-bus DMA */
@@ -500,11 +543,11 @@ static void bus_watch(uint32_t addr, int size, uint32_t val) {
     static uint32_t s_watch;
     if (!s_init) {
         const char *w = getenv("GENRECOMP_WATCH");
-        s_watch = w ? (uint32_t)strtoul(w, NULL, 16) & 0xFFFFFF : 0xFFFFFFFF;
+        s_watch = w ? (uint32_t)strtoul(w, NULL, 16) & 0xFFFFFF : 0xFFFFFFFF;   /* the first address listed: its writes, with frame and line */
         s_init = 1;
     }
     if (s_watch - addr < (uint32_t)size) {
-        fprintf(stderr, "watch: write%d $%06X = $%X, ", size * 8, addr, val);
+        { extern long ps_frames; fprintf(stderr, "watch: f%ld line %u write%d $%06X = $%X, ", ps_frames, (unsigned)v_counter, size * 8, addr, val); }
         func_table_dump_stack(stderr);
     }
 }
@@ -539,7 +582,7 @@ uint8_t bus_read8(uint32_t addr) {
     }
 
 #ifdef PS_NATIVE
-    return ps_hw_read8(addr);
+    { uint8_t v = ps_hw_read8(addr); bus_sync_back(); return v; }
 #else
     if (map->read8) {
         { uint8_t _v = (uint8_t)map->read8(addr); bus_sync_back(); return _v; }
@@ -570,7 +613,7 @@ uint16_t bus_read16(uint32_t addr) {
     }
 
 #ifdef PS_NATIVE
-    return ps_hw_read16(addr);
+    { uint16_t v = ps_hw_read16(addr); bus_sync_back(); return v; }
 #else
     if (map->read16) {
         { uint16_t _v = (uint16_t)map->read16(addr); bus_sync_back(); return _v; }
@@ -592,8 +635,13 @@ uint32_t bus_read32(uint32_t addr) {
  * Flat 24-bit address space writes
  * ================================================================ */
 
+uint32_t g_ps_mcd_mode_writes;   /* main-CPU writes to the Mega CD memory mode register */
+uint32_t g_ps_wram_code_writes;  /* main-CPU writes over a compiled work RAM program (overlays) */
 void bus_write8(uint32_t addr, uint8_t val) {
     addr &= 0xFFFFFF;
+    if ((addr & 0xFFFFFE) == 0xA12002) g_ps_mcd_mode_writes++;   /* Word RAM handed over: overlays */
+    else if (addr >= 0xFF0000 && (g_ps_overlay_wram_code[(addr & 0xFFFF) >> 4] >> ((addr >> 1) & 7) & 1))
+        g_ps_wram_code_writes++;                                  /* over a compiled work RAM program */
     bus_watch(addr, 1, val);
     bus_tick_cycles();
     s_last_addr = addr;
@@ -620,7 +668,7 @@ void bus_write8(uint32_t addr, uint8_t val) {
     }
 
 #ifdef PS_NATIVE
-    ps_hw_write8(addr, val); return;
+    ps_hw_write8(addr, val); bus_sync_back(); return;
 #else
     if (map->write8) {
         map->write8(addr, val);
@@ -636,6 +684,9 @@ void bus_write8(uint32_t addr, uint8_t val) {
 
 void bus_write16(uint32_t addr, uint16_t val) {
     addr &= 0xFFFFFF;
+    if ((addr & 0xFFFFFE) == 0xA12002) g_ps_mcd_mode_writes++;   /* Word RAM handed over: overlays */
+    else if (addr >= 0xFF0000 && (g_ps_overlay_wram_code[(addr & 0xFFFF) >> 4] >> ((addr >> 1) & 7) & 1))
+        g_ps_wram_code_writes++;                                  /* over a compiled work RAM program */
     bus_watch(addr, 2, val);
     bus_tick_cycles();
     s_last_addr = addr;
@@ -662,7 +713,7 @@ void bus_write16(uint32_t addr, uint16_t val) {
     }
 
 #ifdef PS_NATIVE
-    ps_hw_write16(addr, val); return;
+    ps_hw_write16(addr, val); bus_sync_back(); return;
 #else
     if (map->write16) {
         map->write16(addr, val);

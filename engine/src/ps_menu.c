@@ -66,6 +66,12 @@ PS_ALTNAME(ps_cheat_names, ps_cheat_names_ps_default)
 extern int ps_cheat_count;
 int ps_cheat_count_ps_default = 0;
 PS_ALTNAME(ps_cheat_count, ps_cheat_count_ps_default)
+#elif defined(__MINGW32__)
+/* MinGW (PE/COFF): weak data is unreliable there (a .weak alias was read instead of the
+ * title's pointer; weak undefined refs do not link through .refptr): plain externs, the
+ * defaults are members of the ps_defaults archive, linked last (engine/src/defaults/). */
+extern const char *ps_cheat_names[];
+extern int ps_cheat_count;
 #else
 __attribute__((weak)) const char *ps_cheat_names[] = { 0 };
 __attribute__((weak)) int ps_cheat_count = 0;
@@ -108,7 +114,7 @@ static bool read_file(const char *path, uint8_t *buf, size_t n) {
     bool ok = fread(buf, 1, n, f) == n; fclose(f); return ok;
 }
 static void write_file(const char *path, const uint8_t *buf, size_t n) {
-    char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    char tmp[1100]; if (snprintf(tmp, sizeof tmp, "%s.tmp", path) >= (int)sizeof tmp) return;   /* path too long */
     FILE *f = fopen(tmp, "wb"); if (!f) return;
     bool ok = fwrite(buf, 1, n, f) == n; ok = fclose(f) == 0 && ok;
     if (ok) rename(tmp, path); else remove(tmp);
@@ -135,7 +141,7 @@ static void sram_flush(void) {                       /* every second, when the g
     memcpy(s_sram_disk, sram, sizeof s_sram_disk);
     char path[1100]; sram_save_path(path, sizeof path);
     char dir[1100]; snprintf(dir, sizeof dir, "%s", path);
-    for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(dir, 0755); *q = '/'; }
+    for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; ps_mkdir(dir, 0755); *q = '/'; }
     write_file(path, s_sram_disk, sizeof s_sram_disk);
 }
 void ps_menu_set_title(const char *title) { s_title = title; sram_boot(); }
@@ -164,7 +170,7 @@ static void apply(void) {
 static void save(void) {
     char path[1024]; ini_path(path, sizeof path);
     char dir[1024]; snprintf(dir, sizeof dir, "%s", path);
-    for (char *p = dir + 1; *p; p++) if (*p == '/') { *p = 0; mkdir(dir, 0755); *p = '/'; }
+    for (char *p = dir + 1; *p; p++) if (*p == '/') { *p = 0; ps_mkdir(dir, 0755); *p = '/'; }
     FILE *f = fopen(path, "w"); if (!f) return;
     fprintf(f, "aspect=%d\nwide_objects=%d\nlow_latency=%d\nvolume=%d\nfullscreen=%d\ncheats=%u\ntoggles=%u\nwater=%d\n",
             S.aspect, S.wide_objects, S.low_latency, S.volume, S.fullscreen, S.cheats, S.toggles, S.water);
@@ -299,9 +305,29 @@ void ps_menu_frame_pokes(void) {
 /* ------------------------------------------------------------------ menu loop */
 void ps_menu_request(void) { s_open = true; }
 
+static void copy_lines(const char *src, const char *dst, long lines);
+/* REWIND (Backspace, the gamepad's left shoulder): back STEPS seconds through ps_state.c's ring;
+ * the session's recording is cut to that poll, so the session still replays to what is played */
+void ps_menu_rewind(int steps) {
+    uint8_t *ps_state_rewind_take(int, size_t *, long *); const char *ps_state_load_now(uint8_t *, size_t);
+    size_t n; long poll; uint8_t *b = ps_state_rewind_take(steps, &n, &poll);
+    if (!b) return;
+    const char *rec = getenv("PS_POLL_RECORD");
+    if (rec && *rec) {
+        void ps_poll_flush(void), ps_poll_record_close(void), ps_poll_record_reopen(void);
+        char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.rewind", rec);
+        ps_poll_flush(); copy_lines(rec, tmp, poll);
+        ps_poll_record_close(); copy_lines(tmp, rec, -1); remove(tmp); ps_poll_record_reopen();
+    }
+    fprintf(stderr, "menu: rewound %d s to poll %ld\n", steps, poll);
+    const char *why = ps_state_load_now(b, n);   /* returns only if refused */
+    fprintf(stderr, "menu: rewind refused: %s\n", why);
+}
+
 enum { IT_ASPECT, IT_OBJ, IT_LAT, IT_VOL, IT_FULL, IT_REND, IT_WATER, IT_FIXED };
 
-static int item_count(void) { return IT_FIXED + ps_cheat_count + s_ntoggles + 6; }
+static bool level_select_ready(void);
+static int item_count(void) { return IT_FIXED + ps_cheat_count + s_ntoggles + 6 + level_select_ready(); }
 /* SAVE / LOAD: a save is a machine snapshot (ps_state.c, slotN.state, taken at the next
  * frame's VBlank point) plus the session's inputs up to it (per controller poll) and its
  * setting log. LOAD restores the snapshot in place, instantly; a snapshot of another ROM,
@@ -345,6 +371,8 @@ static void item_text(int i, char *out, size_t n) {
     } else if (i < IT_FIXED + ps_cheat_count + s_ntoggles) {
         int t = i - IT_FIXED - ps_cheat_count;
         snprintf(out, n, "%-19s %s", s_toggles[t].name, (S.toggles >> t) & 1 ? "ON" : "OFF");
+    } else if (level_select_ready() && i == item_count() - 7) {
+        snprintf(out, n, "LEVEL SELECT");
     } else if (i == item_count() - 6) {
         char pn[40]; bool have = input_pad_name(pn, sizeof pn);
         snprintf(out, n, "CONTROLLER SETUP    %s", have ? "" : "(NO GAMEPAD)");
@@ -361,7 +389,7 @@ static void item_text(int i, char *out, size_t n) {
 }
 
 static void change(int i, int dir) {
-    if (i == item_count() - 6) return;
+    if (i == item_count() - 6 || (level_select_ready() && i == item_count() - 7)) return;
     if (i == item_count() - 5 || i == item_count() - 4) { s_slot = (s_slot - 1 + dir + 4) % 4 + 1; s_note[0] = 0; return; }
     if (s_forced && (i == IT_OBJ || i == IT_ASPECT || (i >= IT_FIXED && i < IT_FIXED + ps_cheat_count + s_ntoggles))) return;
     if (i == IT_ASPECT) S.aspect = (S.aspect + dir + 5) % 5;
@@ -383,9 +411,6 @@ static void change(int i, int dir) {
 
 /* RESET: a fresh power-on of the same program (the recompiled game's call stack cannot
  * be unwound in place). The new run records to <session>-resetN.polls. */
-#ifdef __APPLE__
-#include <crt_externs.h>
-#endif
 #ifndef _WIN32
 #include <unistd.h>
 #else
@@ -395,20 +420,78 @@ static void change(int i, int dir) {
 #define execv _execv
 #endif
 static void ps_restart_resume(const char *resume);
-static void ps_restart(void) { ps_restart_resume(NULL); }
+static void ps_restart(void) { unsetenv("GENRECOMP_MOVIE"); ps_restart_resume(NULL); }
+
+/* LEVEL SELECT: the title's level_select.json (games/TITLE, beside the build folder) types the game's
+ * own level-select code for the player - the game restarts with the recipe's "code" presses played as
+ * an input movie from power-on (GENRECOMP_MOVIE: added to the pad, then the pad alone), or with
+ * "unit": "poll" as controller reads replayed at full speed (PS_RESUME), so the session's recording
+ * holds only inputs. Entries: [frame or poll, "BUTTON+BUTTON", frames or polls held]. */
+static char s_ls_path[1100];
+static bool level_select_ready(void) {
+    static int ready = -1;
+    if (ready >= 0) return ready;
+    ready = 0;
+    extern char **platform_launch_argv(void);
+    char **av = platform_launch_argv(), exe[1024];
+    if (!av || !av[0]) return 0;
+    snprintf(exe, sizeof exe, "%s", av[0]);
+    char *sl = strrchr(exe, '/'); if (!sl) sl = strrchr(exe, '\\');
+    if (!sl) return 0;
+    *sl = 0;                                          /* games/TITLE/build */
+    snprintf(s_ls_path, sizeof s_ls_path, "%s/../level_select.json", exe);
+    FILE *f = fopen(s_ls_path, "r");
+    if (f) { ready = 1; fclose(f); }
+    return ready;
+}
+static void level_select(void) {
+    FILE *f = fopen(s_ls_path, "r");
+    if (!f) return;
+    static char js[1 << 16]; size_t len = fread(js, 1, sizeof js - 1, f); fclose(f); js[len] = 0;
+    static uint16_t mv[20000]; long last = 0;
+    memset(mv, 0, sizeof mv);
+    const char *c = strstr(js, "\"code\"");
+    if (!c) return;
+    c = strchr(c, '[');
+    for (const char *e = c + 1; e && *e; ) {               /* each [frame, "BUTTONS", held] */
+        const char *o = strchr(e, '['), *end = strchr(e, ']');
+        if (!o || (end && end < o)) break;                 /* the list's own closing bracket */
+        long fr = strtol(o + 1, NULL, 10);
+        const char *q = strchr(o, '"'); if (!q) break;
+        const char *q2 = strchr(q + 1, '"'); if (!q2) break;
+        long held = strtol(strchr(q2, ',') ? strchr(q2, ',') + 1 : q2, NULL, 10);
+        uint16_t m = 0; char btn[64]; size_t bl = (size_t)(q2 - q - 1) < sizeof btn - 1 ? (size_t)(q2 - q - 1) : sizeof btn - 1;
+        memcpy(btn, q + 1, bl); btn[bl] = 0;
+        static const struct { const char *n; uint16_t m; } k[] = { {"UP", GEN_BTN_UP}, {"DOWN", GEN_BTN_DOWN}, {"LEFT", GEN_BTN_LEFT},
+            {"RIGHT", GEN_BTN_RIGHT}, {"A", GEN_BTN_A}, {"B", GEN_BTN_B}, {"C", GEN_BTN_C}, {"START", GEN_BTN_START} };
+        for (char *t = strtok(btn, "+"); t; t = strtok(NULL, "+"))
+            for (size_t j = 0; j < sizeof k / sizeof k[0]; j++) if (!strcmp(t, k[j].n)) m |= k[j].m;
+        for (long i = fr; i < fr + held && i < (long)(sizeof mv / sizeof mv[0]); i++) { mv[i] |= m; if (i + 1 > last) last = i + 1; }
+        e = strchr(o, ']'); if (e) e++;
+    }
+    const char *rec = getenv("PS_POLL_RECORD");
+    bool polls = strstr(js, "\"unit\"") && strstr(strstr(js, "\"unit\""), "\"poll\"");   /* counted in controller reads */
+    char path[1200]; snprintf(path, sizeof path, "%s.levelselect.%s", rec && *rec ? rec : s_ls_path, polls ? "polls" : "txt");
+    FILE *o = fopen(path, "w");
+    if (!o) return;
+    for (long i = 0; i < last; i++) fprintf(o, polls ? "%04X 0000\n" : "%x\n", mv[i]);
+    fclose(o);
+    fprintf(stderr, "menu: level select: %ld %s of the recipe's input from power-on (%s)\n", last, polls ? "polls" : "frames", s_ls_path);
+    unsetenv("GENRECOMP_MOVIE");
+    if (polls) {                                  /* replayed to its last poll at full speed, then the pad */
+        char r[1300]; snprintf(r, sizeof r, "%s:%ld", path, last);
+        ps_restart_resume(r);
+    }
+    setenv("GENRECOMP_MOVIE", path, 1);
+    ps_restart_resume(NULL);
+}
 static void ps_restart_resume(const char *resume) {
-    char **argv;
-#ifdef __APPLE__
-    argv = *_NSGetArgv();
-#elif defined(_WIN32)
-    argv = __argv;
-#else
-    extern char **environ; static char *fallback[2]; argv = fallback;   /* no argv access: quit */
-    save(); exit(0);
-#endif
+    extern char **platform_launch_argv(void);
+    char **argv = platform_launch_argv();              /* as launched, options included */
+    if (!argv) { save(); exit(0); }
     const char *rec = getenv("PS_POLL_RECORD");
     if (rec && *rec) {
-        static char path[1024]; static int n;
+        static char path[1100]; static int n;
         char base[1024]; snprintf(base, sizeof base, "%s", rec);
         char *d = strrchr(base, '.'); if (d && !strcmp(d, ".polls")) *d = 0;
         char *r = strstr(base, "-reset"); if (r) { n = atoi(r + 6); *r = 0; }
@@ -418,7 +501,7 @@ static void ps_restart_resume(const char *resume) {
     if (resume) setenv("PS_RESUME", resume, 1); else unsetenv("PS_RESUME");
     if (s_meta) fclose(s_meta);
     platform_shutdown();
-    execv(argv[0], argv);
+    ps_execv(argv[0], argv);
     exit(0);                                       /* exec failed */
 }
 
@@ -447,7 +530,7 @@ static void save_slot(void) {
     char p[1100], m[1100], dir[1100];
     slot_path(s_slot, "polls", p, sizeof p); slot_path(s_slot, "meta", m, sizeof m);
     snprintf(dir, sizeof dir, "%s", p);
-    for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(dir, 0755); *q = '/'; }
+    for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; ps_mkdir(dir, 0755); *q = '/'; }
     copy_lines(rec, p, ps_poll_index());
     {   /* the snapshot comes at the next frame; an older one must not be loaded meanwhile */
         void ps_state_request(void (*)(const uint8_t *, size_t, long));
@@ -538,6 +621,9 @@ static void pad_setup(uint8_t *frame, int width, uint32_t *buf) {
 
 /* Modal: called before presenting a frame; returns when the menu is closed. */
 void ps_menu_run(uint8_t *frame, int width) {
+    {   /* PS_LEVEL_SELECT_NOW=1: the LEVEL SELECT entry at the first frame (tests) */
+        static int once; if (!once++ && getenv("PS_LEVEL_SELECT_NOW")) { unsetenv("PS_LEVEL_SELECT_NOW"); if (level_select_ready()) level_select(); }
+    }
     logic_tick();
     if (!s_open) return;
     static uint32_t buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
@@ -573,6 +659,7 @@ void ps_menu_run(uint8_t *frame, int width) {
             if (sel == n - 1) { save(); exit(0); }
             if (sel == n - 2) { save(); ps_restart(); }
             if (sel == n - 6) { pad_setup(frame, width, buf); prev[4] = true; continue; }
+            if (level_select_ready() && sel == n - 7) { save(); level_select(); }
             if (sel == n - 5) { save_slot(); continue; }
             if (sel == n - 4) { load_slot(); continue; }
             if (sel == n - 3) s_open = false; else change(sel, +1);

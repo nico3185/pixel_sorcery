@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* Defined in osd.c */
 extern void genrecomp_config_default(void);
@@ -74,14 +75,55 @@ bool genrecomp_init(const char *window_title, int scale) {
     return true;
 }
 
+#ifdef PS_NATIVE
+/* a Mega CD disc (.cue): the native Mega CD (src/mcd) with the player's BIOS - PS_SCD_BIOS=DIR, else
+ * BIOS folder (Mac: Application Support/PixelSorcery/bios; Linux: ~/.local/share/pixelsorcery/bios; Windows:
+ * %APPDATA%/PixelSorcery/bios; PS_SCD_BIOS overrides; build_ui.py installs the player's dumps there): scd_jp.bin, scd_eu.bin or scd_us.bin for the disc's region (the
+ * region-specific security code in its boot sector, as the reference player picks it; GENRECOMP_REGION=
+ * us/eu/jp forces one) */
+static bool load_megacd(const char *cue) {
+    extern bool g_ps_mcd;
+    bool mcd_load_bios(const char *), mcd_disc_open(const char *), mcd_disc_read(int, uint8_t *); void mcd_power_on(void);
+    const char *dir = getenv("PS_SCD_BIOS"), *home = getenv("HOME"), *r = getenv("GENRECOMP_REGION");
+    char def[512], bios[700];
+    if (!mcd_disc_open(cue)) { fprintf(stderr, "genrecomp: cannot read the disc %s\n", cue); return false; }
+    if (!r || !*r) {                     /* the boot sector's security code: $A1 Japan, $64 Europe, else USA */
+        static uint8_t raw[2352];
+        r = !mcd_disc_read(0, raw) ? "us" : raw[16 + 0x20B] == 0xA1 ? "jp" : raw[16 + 0x20B] == 0x64 ? "eu" : "us";
+    }
+#if defined(__APPLE__)
+    snprintf(def, sizeof def, "%s/Library/Application Support/PixelSorcery/bios", home ? home : ".");
+#elif defined(_WIN32)
+    { const char *ad = getenv("APPDATA"); snprintf(def, sizeof def, "%s/PixelSorcery/bios", ad ? ad : "."); }
+#else
+    { const char *x = getenv("XDG_DATA_HOME");             /* as build_ui.py's bios_dir */
+      if (x && *x) snprintf(def, sizeof def, "%s/pixelsorcery/bios", x);
+      else snprintf(def, sizeof def, "%s/.local/share/pixelsorcery/bios", home ? home : "."); }
+#endif
+    snprintf(bios, sizeof bios, "%s/scd_%s.bin", dir && *dir ? dir : def, !strcmp(r, "eu") ? "eu" : !strcmp(r, "jp") ? "jp" : "us");
+    if (!mcd_load_bios(bios)) { fprintf(stderr, "genrecomp: no Mega CD BIOS at %s (your console's, 128 KB)\n", bios); return false; }
+    /* the console of the disc's region with the Mega CD attached: Japan $00, USA $80, Europe $C0 (PAL) */
+    ps_hw_set_version(!strcmp(r, "jp") ? 0x00 : !strcmp(r, "eu") ? 0xC0 : 0x80);
+    ps_hw_reset();
+    mcd_power_on();
+    g_ps_mcd = true;
+    return true;
+}
+#endif
+
 bool genrecomp_load_rom(const char *path) {
     if (!s_initialized) return false;
 #ifdef PS_NATIVE
-    if (!ps_hw_load_rom(path)) {
-        fprintf(stderr, "genrecomp: cannot load ROM %s\n", path);
-        return false;
+    size_t n = strlen(path);
+    if (n > 4 && !strcasecmp(path + n - 4, ".cue")) {
+        if (!load_megacd(path)) return false;
+    } else {
+        if (!ps_hw_load_rom(path)) {
+            fprintf(stderr, "genrecomp: cannot load ROM %s\n", path);
+            return false;
+        }
+        ps_hw_reset();
     }
-    ps_hw_reset();
 #else
 
     /* GenPlusGX's load_rom expects a mutable char* */
@@ -91,6 +133,7 @@ bool genrecomp_load_rom(const char *path) {
 
     /* Load ROM via GenPlusGX (calls our load_archive in osd.c) */
     ps_60hz(pathbuf);
+    { void ps_megacd_bios(void); ps_megacd_bios(); }      /* Mega CD discs: .cue/.iso/.chd */
     if (!load_rom(pathbuf)) {
         fprintf(stderr, "genrecomp: GenPlusGX rejected the ROM: %s\n", path);
         return false;
@@ -110,6 +153,8 @@ bool genrecomp_load_rom(const char *path) {
 
     /* Hard reset everything */
     system_reset();
+    { void ps_megacd_brm(bool, bool); ps_megacd_brm(false, false); }   /* backup RAM formatted, empty */
+    if (system_hw == SYSTEM_MCD) m68k.cycle_end = MCYCLES_PER_LINE;   /* bus.c runs the main CPU, never GPGX */
 
     /* Re-point bitmap after reset */
     bitmap.data = (uint8 *)s_bitmap_data;
@@ -167,6 +212,13 @@ bool genrecomp_begin_frame(void) {
 static uint8_t s_present_buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT * 4];
 static int s_present_w = GEN_RENDER_WIDTH;
 static uint8_t s_oracle_buf[GEN_RENDER_WIDTH * GEN_RENDER_HEIGHT * 4];
+#ifdef PS_NATIVE
+/* The frame being drawn line by line, handed to s_present_buf after its last active line: a VBlank
+ * handler run from the VBlank callback can outlast the blank (a long DMA with the display on) and
+ * start drawing the next frame before the callback presents this one */
+static uint8_t s_line_buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT * 4];
+#endif
+static int s_line_w = GEN_RENDER_WIDTH;          /* width of the frame being drawn */
 
 #ifndef PS_NATIVE
 /* Renders into `dst` (GEN_RENDER_WIDTH x GEN_RENDER_HEIGHT, XRGB8888).
@@ -214,11 +266,12 @@ static bool gpgx_render_frame(uint8_t *dst) {
     int copy_w = (vp_w > GEN_RENDER_WIDTH) ? GEN_RENDER_WIDTH : vp_w;
     int copy_h = (vp_h > GEN_RENDER_HEIGHT) ? GEN_RENDER_HEIGHT : vp_h;
 
-    /* H32 is narrower than the buffer: don't leave the last H40 frame's
-     * right-hand columns on screen */
+    /* H32 is narrower than the buffer: centred (as the native renderer draws it, and as a TV
+     * shows it), no last H40 frame's columns left on screen */
+    int xoff = (GEN_RENDER_WIDTH - copy_w) / 2;
     if (copy_w < GEN_RENDER_WIDTH) memset(dst, 0, GEN_RENDER_WIDTH * GEN_RENDER_HEIGHT * 4);
     for (int y = 0; y < copy_h; y++)
-        memcpy(dst + y * GEN_RENDER_WIDTH * 4, fb_start + y * bitmap.pitch, copy_w * 4);
+        memcpy(dst + (y * GEN_RENDER_WIDTH + xoff) * 4, fb_start + y * bitmap.pitch, copy_w * 4);
     return true;
 }
 
@@ -226,18 +279,21 @@ static bool gpgx_render_frame(uint8_t *dst) {
 
 #include "genrecomp/ps_wide.h"
 static int s_line_h;                  /* lines of the frame being drawn line by line */
+static int s_xoff;                    /* a picture narrower than the frame (H32 in a wide frame) is centred */
 static bool s_lines_drawn;
 static void native_frame_setup(uint8_t *dst) {
     int w = ps_vdp_width();
     ps_wide_begin_frame();                       /* widescreen only during gameplay, H40 */
     int e = ps_wide_extra();
-    s_present_w = GEN_RENDER_WIDTH + 2 * e;
-    if (w + 2 * e < s_present_w) memset(dst, 0, (size_t)s_present_w * GEN_RENDER_HEIGHT * 4);
+    s_line_w = GEN_RENDER_WIDTH + 2 * e;
+    if (w + 2 * e < s_line_w) memset(dst, 0, (size_t)s_line_w * GEN_RENDER_HEIGHT * 4);
+    s_xoff = w + 2 * e < s_line_w ? (s_line_w - w - 2 * e) / 2 : 0;
     s_line_h = ps_vdp_height() > GEN_RENDER_HEIGHT ? GEN_RENDER_HEIGHT : ps_vdp_height();
 }
 static void native_render_frame(uint8_t *dst) {
     native_frame_setup(dst);
-    ps_render_lines(0, s_line_h, (uint32_t *)dst, s_present_w);
+    s_present_w = s_line_w;
+    ps_render_lines(0, s_line_h, (uint32_t *)dst + s_xoff, s_present_w);
     ps_wide_record(ps_render_plane_entry);       /* cells on the original screen -> world cache */
 }
 
@@ -245,7 +301,7 @@ static void native_render_frame(uint8_t *dst) {
  * state of that moment (raster effects: per-line scroll written by HBlank handlers). */
 void genrecomp_render_line(int line) {
 #ifdef PS_NATIVE
-    if (line == 0) native_frame_setup(s_present_buf);
+    if (line == 0) native_frame_setup(s_line_buf);
     if (line < s_line_h) {
         {   /* PS_LINE_DBG=frame: VDP registers as each line of that frame is drawn */
             static long f = -2; extern long ps_frames;
@@ -254,14 +310,16 @@ void genrecomp_render_line(int line) {
                 fprintf(stderr, "line %3d reg0 %02X reg1 %02X reg7 %02X reg12 %02X cram0 %03X\n", line, g_ps_vdp.reg[0],
                         g_ps_vdp.reg[1], g_ps_vdp.reg[7], g_ps_vdp.reg[12], g_ps_vdp.cram[0]);
         }
-        ps_render_lines(line, line + 1, (uint32_t *)s_present_buf, s_present_w);
+        ps_render_lines(line, line + 1, (uint32_t *)s_line_buf + s_xoff, s_line_w);
         extern uint16_t g_ps_render_flags;
         status |= g_ps_render_flags & 0x60;      /* sprite overflow / collision, as the line is drawn */
         g_ps_render_flags = 0;
     }
     if (line == s_line_h - 1) {
         ps_wide_record(ps_render_plane_entry); s_lines_drawn = true;
-        { void ps_render_water_frame(uint32_t *, int, int); ps_render_water_frame((uint32_t *)s_present_buf, s_present_w, s_line_h); }
+        { void ps_render_water_frame(uint32_t *, int, int); ps_render_water_frame((uint32_t *)s_line_buf, s_line_w, s_line_h); }
+        s_present_w = s_line_w;
+        memcpy(s_present_buf, s_line_buf, (size_t)s_line_w * GEN_RENDER_HEIGHT * 4);
     }
 #else
     (void)line;

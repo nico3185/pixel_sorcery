@@ -84,7 +84,14 @@
 #define cdStream            FILE
 #define cdStreamOpen(fname) fopen(fname, "rb")
 #define cdStreamClose       fclose
-#define cdStreamRead        fread
+#define cdStreamRead        ps_cd_stream_read
+/* a short read (end of a truncated image, a read error) leaves zeros, not stale memory: the core
+ * does not check fread's count */
+static inline size_t ps_cd_stream_read(void *buf, size_t size, size_t n, FILE *f) {
+    size_t got = fread(buf, size, n, f);
+    if (got < n) memset((char *)buf + got * size, 0, (n - got) * size);
+    return got;
+}
 #define cdStreamSeek        fseek
 #define cdStreamTell        ftell
 #define cdStreamGets        fgets

@@ -5,8 +5,9 @@
 # 0 bad returns, and 0 frames differing between the native renderer and GPGX; with a
 # recompiled Z80 driver + native YM2612/PSG, the write stream (values + cycles) must equal
 # GPGX's Z80 + chips, and the native synth's output must match GPGX's spectrally (librosa).
-set -eu
+set -eu; setopt pipefail
 eng=${0:A:h}/..; rom=${1:A}; game=${2:A}; shift 2
+[[ $OSTYPE == (msys|cygwin)* ]] && { eng=$(cygpath -m $eng); rom=$(cygpath -m $rom); game=$(cygpath -m $game); }   # MSYS2: C:/... paths for native tools
 frames=3000; [[ ${1:-} == --frames ]] && frames=$2
 py=$eng/.venv/bin/python
 [[ -x $py ]] || { python3 -m venv $eng/.venv; $eng/.venv/bin/pip -q install capstone; }
@@ -40,15 +41,16 @@ PY
 fi
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null && if [[ -n ${PS_BUILD_PROGRESS:-} ]]; then
   ninja -C build ${PS_JOBS:+-j $PS_JOBS}             # build UI: ninja's [done/total] lines on stdout
-else ninja -C build ${PS_JOBS:+-j $PS_JOBS} >/dev/null; fi   # PS_JOBS: cores (build_all.sh -j)
+else NINJA_STATUS="[%f/%t] " ninja -C build ${PS_JOBS:+-j $PS_JOBS} | ${0:A:h}/progress.zsh "${PWD:t}: building"; fi   # PS_JOBS: cores (build_all.sh -j)
 native=$(find build -maxdepth 1 -type f -perm -u+x ! -name '*.*' ! -name '*_oracle' | head -1)   # shipped port
 exe=${native}_oracle                         # same game code on the GPGX-backed runtime (compare modes)
 args=(--headless --frames $frames); [[ -f selfcheck.args ]] && args+=(${(z)"$(<selfcheck.args)"})
 log=build/selfcheck.log
 PS_DIFF_LOG=1 PS_RENDERER=compare $exe $args $rom >$log 2>&1 || true
 misses=$(grep -c "no function at" $log || true); rts=$(grep -c "RTS to" $log || true)
+ramcode=$(grep -c "RAM code at" $log || true)   # code the game wrote to RAM: interpreted by design, not a miss
 diffline=$(grep "\[compare\] frame" $log | tail -1 | sed 's/.*| //')
-print "self-check over $frames frames: misses=$misses bad_returns=$rts video=${diffline:-n/a}"
+print "self-check over $frames frames: misses=$misses bad_returns=$rts video=${diffline:-n/a}$( (( ramcode )) && print " RAM routines (interpreted by design)=$ramcode")"
 [[ $misses == 0 && $rts == 0 && $diffline == "0/"* ]] || { print -u2 "SELF-CHECK FAILED (see $log)"; exit 1; }
 if [[ -f audio/driver.json ]]; then
   # 1. recompiled Z80 + native chips vs GPGX Z80 + GPGX chips: identical FM/PSG write streams

@@ -11,6 +11,7 @@ PsVdp g_ps_vdp;
 
 static ps_vdp_clock_fn          s_clock;
 static ps_vdp_peek16_fn         s_peek16;
+static ps_vdp_dma_delayed_fn    s_dma_delayed;
 static ps_vdp_vram_observer_fn  s_vram_observer;
 
 /* Line timing (master clocks within a 3420-clock line), from the VDP's
@@ -38,6 +39,7 @@ void ps_vdp_reset(void) {
     s_vram_observer = keep;
 }
 
+void ps_vdp_set_dma_delayed(ps_vdp_dma_delayed_fn fn) { s_dma_delayed = fn; }
 void ps_vdp_set_vram_observer(ps_vdp_vram_observer_fn fn) { s_vram_observer = fn; }
 
 /* ------------------------------------------------------------------ */
@@ -123,6 +125,10 @@ bool     g_ps_vdp_dma68k_vram;
 static void dma_from_68k(void) {
     PsVdp *d = &g_ps_vdp;
     uint32_t len = dma_length();
+    if (s_dma_delayed && s_dma_delayed(d->reg[23]) && len > 1) {   /* Word RAM: one word late */
+        d->addr = (d->addr + d->reg[15]) & 0xFFFF;
+        len--;
+    }
     g_ps_vdp_dma68k_words = len;
     g_ps_vdp_dma68k_vram = (d->code & 0x0F) == 0x01;
     uint32_t src = (d->reg[22] << 8) | d->reg[21];          /* in words */

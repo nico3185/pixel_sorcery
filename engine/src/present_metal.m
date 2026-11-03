@@ -3,14 +3,15 @@
  *
  * SDL's Metal renderer hands frames to a CAMetalLayer queue and only blocks when the queue
  * is full, so the wait lands in bursts and the frame loop cannot tell when a refresh
- * happens. Here a CVDisplayLink signals every refresh: platform_sdl.c waits for it, sleeps
+ * happens. Here a display link signals every refresh: platform_sdl.c waits for it, sleeps
  * most of the refresh (low latency), runs the frame and presents it, and the drawable is
  * shown on the next refresh. The picture is the emulated frame scaled into the window,
  * letterboxed, nearest-neighbour, like SDL_RenderSetLogicalSize.
+ * The link is the window's view's CADisplayLink (macOS 14+; it follows the window from display
+ * to display), run on a thread of its own so its ticks never wait for the frame loop.
  */
 #import <Metal/Metal.h>
-#import <QuartzCore/CAMetalLayer.h>
-#import <CoreVideo/CoreVideo.h>
+#import <QuartzCore/QuartzCore.h>
 #import <AppKit/AppKit.h>
 #include <SDL.h>
 #include <SDL_metal.h>
@@ -27,9 +28,12 @@ static id<MTLRenderPipelineState> s_pipe;
 static id<MTLSamplerState> s_samp;
 static id<MTLTexture> s_tex;
 static int s_tw, s_th;
-static CVDisplayLinkRef s_link;
+static CADisplayLink *s_link;
+static CFRunLoopRef s_link_loop;           /* the link's thread's run loop */
+static _Atomic double s_period;            /* seconds between refreshes, from the ticks (0: none yet) */
 static dispatch_semaphore_t s_vbl;
 static _Atomic uint64_t s_vcount;          /* refreshes since start */
+static long s_untimed;                     /* of which counted by metal_wait_vblank's timeout */
 static SDL_Window *s_win;
 
 static const char *k_shader =
@@ -42,25 +46,33 @@ static const char *k_shader =
     "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]]) {\n"
     "    return float4(t.sample(s, in.uv).rgb, 1); }\n";
 
-static CVReturn on_vbl(CVDisplayLinkRef l, const CVTimeStamp *now, const CVTimeStamp *out,
-                       CVOptionFlags fi, CVOptionFlags *fo, void *ctx) {
-    (void)l; (void)now; (void)out; (void)fi; (void)fo; (void)ctx;
+@interface PSVblank : NSObject
+- (void)tick:(CADisplayLink *)l;
+- (void)loop:(id)unused;
+@end
+@implementation PSVblank
+- (void)tick:(CADisplayLink *)l {
+    double p = l.targetTimestamp - l.timestamp;
+    if (p > 0) s_period = p;
     s_vcount++;
     dispatch_semaphore_signal(s_vbl);
-    return kCVReturnSuccess;
 }
-
-/* the display the window is on, for the display link */
-static void follow_display(void) {
-    SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
-    CGDirectDisplayID id = CGMainDisplayID();
-    if (SDL_GetWindowWMInfo(s_win, &wm)) {
-        NSScreen *sc = wm.info.cocoa.window.screen;
-        NSNumber *n = sc.deviceDescription[@"NSScreenNumber"];
-        if (n) id = (CGDirectDisplayID)n.unsignedIntValue;
+- (void)loop:(id)unused {                  /* the link's thread: its run loop, until shutdown */
+    (void)unused;
+    @autoreleasepool {
+        [s_link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
+        s_link_loop = CFRunLoopGetCurrent();
+        dispatch_semaphore_signal(s_vbl);   /* started */
     }
-    static CGDirectDisplayID cur;              /* re-targeting resets the link: a refresh is lost */
-    if (s_link && id != cur) { CVDisplayLinkSetCurrentCGDisplay(s_link, id); cur = id; }
+    CFRunLoopRun();
+}
+@end
+
+/* the screen the window is on (the main screen when SDL cannot tell) */
+static NSScreen *window_screen(void) {
+    SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
+    NSScreen *sc = SDL_GetWindowWMInfo(s_win, &wm) ? wm.info.cocoa.window.screen : nil;
+    return sc ? sc : [NSScreen mainScreen];
 }
 
 bool metal_present_init(SDL_Window *win) {
@@ -90,27 +102,37 @@ bool metal_present_init(SDL_Window *win) {
     sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterNearest;
     s_samp = [s_dev newSamplerStateWithDescriptor:sd];
     s_vbl = dispatch_semaphore_create(0);
-    if (CVDisplayLinkCreateWithActiveCGDisplays(&s_link) != kCVReturnSuccess) return false;
-    CVDisplayLinkSetOutputCallback(s_link, on_vbl, NULL);
-    follow_display();
-    CVDisplayLinkStart(s_link);
-    return true;
+    if (@available(macOS 14.0, *)) {
+        SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
+        NSView *v = SDL_GetWindowWMInfo(win, &wm) ? wm.info.cocoa.window.contentView : nil;
+        if (!v) return false;
+        PSVblank *t = [PSVblank new];
+        s_link = [[v displayLinkWithTarget:t selector:@selector(tick:)] retain];
+        float hz = (float)window_screen().maximumFramesPerSecond;   /* every refresh, ProMotion too */
+        if (hz > 0) s_link.preferredFrameRateRange = CAFrameRateRangeMake(hz, hz, hz);
+        [NSThread detachNewThreadSelector:@selector(loop:) toTarget:t withObject:nil];
+        dispatch_semaphore_wait(s_vbl, DISPATCH_TIME_FOREVER);
+        return true;
+    }
+    return false;                              /* older macOS: platform_sdl.c keeps SDL's renderer */
 }
 
 /* the display's refresh rate (Hz), 0 if unknown */
 double metal_refresh_hz(void) {
     if (!s_link) return 0;
-    follow_display();
-    CVTime t = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(s_link);
-    return t.timeValue ? (double)t.timeScale / (double)t.timeValue : 0;
+    if (s_period > 0) return 1.0 / s_period;
+    NSInteger hz = window_screen().maximumFramesPerSecond;   /* before the first tick */
+    return hz > 0 ? (double)hz : 0;
 }
 
 /* block until refresh number n has happened (returns at once if it already has); returns
  * the current count. A frame that ran late then starts right away instead of losing a
- * whole refresh, which waiting for "the next" refresh would cost. */
+ * whole refresh, which waiting for "the next" refresh would cost. No tick for 50 ms (the
+ * display asleep, the window off every screen): that wait counts as a refresh, so the game
+ * keeps running (at 20 frames a second) instead of hanging. */
 uint64_t metal_wait_vblank(uint64_t n) {
     while (s_vcount < n)
-        dispatch_semaphore_wait(s_vbl, dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC));
+        if (dispatch_semaphore_wait(s_vbl, dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC)) != 0) { s_vcount++; s_untimed++; }
     while (dispatch_semaphore_wait(s_vbl, DISPATCH_TIME_NOW) == 0) ;   /* drop the backlog */
     return s_vcount;
 }
@@ -124,6 +146,7 @@ static long s_drained;                          /* frames not presented to drain
  * fullscreen, ~38 ms in a window), drifting up slowly so a moved window re-learns it */
 static double s_c2s_last, s_c2s_floor;
 long metal_drained(void) { return s_drained; }
+long metal_untimed(void) { return s_untimed; }
 
 static double s_q_sum; static long s_q_n; static int s_q_max;   /* in flight when presenting */
 static double s_sub_sum; static long s_sub_n;   /* commit -> on screen */
@@ -209,6 +232,9 @@ void metal_present_frame(const uint8_t *xrgb, int w, int h, double poll_ms_ago) 
 }
 
 void metal_present_shutdown(void) {
-    if (s_link) { CVDisplayLinkStop(s_link); CVDisplayLinkRelease(s_link); s_link = NULL; }
+    if (s_link) {
+        [s_link invalidate]; [s_link release]; s_link = nil;
+        if (s_link_loop) { CFRunLoopStop(s_link_loop); s_link_loop = NULL; }
+    }
     if (s_view) { SDL_Metal_DestroyView(s_view); s_view = NULL; }
 }

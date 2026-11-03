@@ -34,4 +34,17 @@
 
 #endif
 
+/* Windows (MinGW and MSVC): mkdir takes no mode; exec's argument vector is const */
+#ifdef _WIN32
+#include <direct.h>
+#include <process.h>
+#define ps_mkdir(path, mode) _mkdir(path)
+#define ps_execv(path, argv) _execv(path, (const char *const *)(argv))
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#define ps_mkdir(path, mode) mkdir(path, mode)
+#define ps_execv(path, argv) execv(path, argv)
+#endif
+
 #endif /* PS_PORTABLE_H */

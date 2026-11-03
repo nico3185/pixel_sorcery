@@ -59,3 +59,9 @@ games/*/movies/play-*
 robust_report.md
 games/*/recordings/
 .claude/worktrees/
+
+# Mega CD disc files extracted by cd_extract.py (game data)
+games/*/disc/
+
+# funclut.py: the SQLite lookup table, rebuilt from docs/lut/functions.jsonl
+docs/lut/functions.db

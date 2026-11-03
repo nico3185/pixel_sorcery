@@ -139,7 +139,7 @@ void osd_input_update(void)
 {
 }
 
-/* 60 Hz switch: NTSC video timing and master clock on any console region; the version register
+/* Disc region and 60 Hz switch: NTSC video timing and master clock on any console region; the version register
  * keeps the region's PAL bit (the European Mega CD BIOS refuses an NTSC one). On by default for
  * discs (.cue/.iso/.chd: the compilation runs everything at 60 Hz), PS_60HZ=0/1 overrides. */
 void ps_60hz(const char *path) {
@@ -147,4 +147,8 @@ void ps_60hz(const char *path) {
     int on = e ? atoi(e) : (x && (!strcasecmp(x, ".cue") || !strcasecmp(x, ".iso") || !strcasecmp(x, ".chd")));
     config.vdp_mode = on ? 1 : 0;
     config.master_clock = on ? 1 : 0;
+    /* a disc boots only on its own region's BIOS (the security code): the region comes from
+     * the disc unless GENRECOMP_REGION says otherwise */
+    int disc = x && (!strcasecmp(x, ".cue") || !strcasecmp(x, ".iso") || !strcasecmp(x, ".chd"));
+    if (disc && !getenv("GENRECOMP_REGION")) config.region_detect = 0;
 }

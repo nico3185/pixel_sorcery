@@ -133,6 +133,8 @@ void recomp_input_update(void) {
         if (ay < -16000) buttons |= GEN_BTN_UP;    if (ay > 16000) buttons |= GEN_BTN_DOWN;
     }
     buttons |= platform_scripted_buttons();
+    { extern int g_ps_boot_hidden;                  /* booting unseen: Start through the BIOS menu */
+      if (g_ps_boot_hidden) buttons = (g_ps_boot_hidden == 2 && platform_frame_number() % 16 < 4) ? GEN_BTN_START : 0; }
     {   /* game paused: C opens the settings menu (not passed to the game) */
         extern bool ps_menu_paused(void); extern void ps_menu_request(void);
         static uint16_t prev_c;

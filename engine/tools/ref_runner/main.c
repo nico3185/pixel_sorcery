@@ -77,6 +77,7 @@ int main(int argc, char *argv[]) {
     char path[MAXPATHLEN];
     strncpy(path, argv[1], sizeof(path) - 1);
     path[sizeof(path) - 1] = 0;
+    { void ps_60hz(const char *); ps_60hz(path); }   /* discs: their region's BIOS, 60 Hz (as genrecomp) */
     if (!load_rom(path)) { fprintf(stderr, "ref: cannot load %s\n", argv[1]); return 1; }
     audio_init(44100, 0);
     input.system[0] = SYSTEM_GAMEPAD;  /* before system_init: io_init binds ports */
