@@ -327,6 +327,7 @@ void ps_menu_rewind(int steps) {
 enum { IT_ASPECT, IT_OBJ, IT_LAT, IT_VOL, IT_FULL, IT_REND, IT_WATER, IT_FIXED };
 
 static bool level_select_ready(void);
+static char s_stage_name[64][16], s_stage_poke[64][160]; static int s_nstages, s_stage_sel;   /* the recipe's "stages" */
 static int item_count(void) { return IT_FIXED + ps_cheat_count + s_ntoggles + 6 + level_select_ready(); }
 /* SAVE / LOAD: a save is a machine snapshot (ps_state.c, slotN.state, taken at the next
  * frame's VBlank point) plus the session's inputs up to it (per controller poll) and its
@@ -372,7 +373,8 @@ static void item_text(int i, char *out, size_t n) {
         int t = i - IT_FIXED - ps_cheat_count;
         snprintf(out, n, "%-19s %s", s_toggles[t].name, (S.toggles >> t) & 1 ? "ON" : "OFF");
     } else if (level_select_ready() && i == item_count() - 7) {
-        snprintf(out, n, "LEVEL SELECT");
+        if (s_nstages) snprintf(out, n, "LEVEL SELECT        < %s >", s_stage_name[s_stage_sel]);
+        else snprintf(out, n, "LEVEL SELECT");
     } else if (i == item_count() - 6) {
         char pn[40]; bool have = input_pad_name(pn, sizeof pn);
         snprintf(out, n, "CONTROLLER SETUP    %s", have ? "" : "(NO GAMEPAD)");
@@ -389,6 +391,7 @@ static void item_text(int i, char *out, size_t n) {
 }
 
 static void change(int i, int dir) {
+    if (level_select_ready() && i == item_count() - 7 && s_nstages) { s_stage_sel = (s_stage_sel + dir + s_nstages) % s_nstages; return; }
     if (i == item_count() - 6 || (level_select_ready() && i == item_count() - 7)) return;
     if (i == item_count() - 5 || i == item_count() - 4) { s_slot = (s_slot - 1 + dir + 4) % 4 + 1; s_note[0] = 0; return; }
     if (s_forced && (i == IT_OBJ || i == IT_ASPECT || (i >= IT_FIXED && i < IT_FIXED + ps_cheat_count + s_ntoggles))) return;
@@ -420,7 +423,7 @@ static void change(int i, int dir) {
 #define execv _execv
 #endif
 static void ps_restart_resume(const char *resume);
-static void ps_restart(void) { unsetenv("GENRECOMP_MOVIE"); ps_restart_resume(NULL); }
+static void ps_restart(void) { unsetenv("GENRECOMP_MOVIE"); unsetenv("GENRECOMP_POKE"); ps_restart_resume(NULL); }
 
 /* LEVEL SELECT: the title's level_select.json (games/TITLE, beside the build folder) types the game's
  * own level-select code for the player - the game restarts with the recipe's "code" presses played as
@@ -441,7 +444,20 @@ static bool level_select_ready(void) {
     *sl = 0;                                          /* games/TITLE/build */
     snprintf(s_ls_path, sizeof s_ls_path, "%s/../level_select.json", exe);
     FILE *f = fopen(s_ls_path, "r");
-    if (f) { ready = 1; fclose(f); }
+    if (!f) return ready;
+    ready = 1;
+    static char js[1 << 16]; size_t len = fread(js, 1, sizeof js - 1, f); fclose(f); js[len] = 0;
+    const char *st = strstr(js, "\"stages\"");             /* [["NAME", "C=V:A=W[;...]"], ...]: one start per stage */
+    for (const char *q = st ? strchr(st, '[') + 1 : NULL; q && s_nstages < 64; ) {
+        const char *o = strchr(q, '['), *e = strchr(q, ']');
+        if (!o || (e && e < o)) break;
+        char a[160] = "", b[160] = "";
+        if (sscanf(o, "[ \"%159[^\"]\" , \"%159[^\"]\"", a, b) == 2) {
+            snprintf(s_stage_name[s_nstages], sizeof s_stage_name[0], "%s", a);
+            snprintf(s_stage_poke[s_nstages], sizeof s_stage_poke[0], "%s", b); s_nstages++;
+        }
+        q = strchr(o, ']'); if (q) q++;
+    }
     return ready;
 }
 static void level_select(void) {
@@ -450,8 +466,15 @@ static void level_select(void) {
     static char js[1 << 16]; size_t len = fread(js, 1, sizeof js - 1, f); fclose(f); js[len] = 0;
     static uint16_t mv[20000]; long last = 0;
     memset(mv, 0, sizeof mv);
+    {   /* RAM starts: the chosen stage's pokes, or the recipe's "poke" (GENRECOMP_POKE, kept beside the session) */
+        char pk[200] = "";
+        const char *pp = strstr(js, "\"poke\"");
+        if (s_nstages) snprintf(pk, sizeof pk, "%s", s_stage_poke[s_stage_sel]);
+        else if (pp) sscanf(strchr(pp, ':') + 1, " \"%199[^\"]\"", pk);
+        if (*pk) setenv("GENRECOMP_POKE", pk, 1); else unsetenv("GENRECOMP_POKE");
+    }
     const char *c = strstr(js, "\"code\"");
-    if (!c) return;
+    if (!c) { unsetenv("GENRECOMP_MOVIE"); fprintf(stderr, "menu: level select: %s\n", getenv("GENRECOMP_POKE") ? getenv("GENRECOMP_POKE") : "-"); ps_restart_resume(NULL); return; }
     c = strchr(c, '[');
     for (const char *e = c + 1; e && *e; ) {               /* each [frame, "BUTTONS", held] */
         const char *o = strchr(e, '['), *end = strchr(e, ']');
@@ -497,6 +520,11 @@ static void ps_restart_resume(const char *resume) {
         char *r = strstr(base, "-reset"); if (r) { n = atoi(r + 6); *r = 0; }
         snprintf(path, sizeof path, "%s-reset%d.polls", base, n + 1);
         setenv("PS_POLL_RECORD", path, 1);
+        const char *pk = getenv("GENRECOMP_POKE");       /* a RAM start: kept beside the session, which replays with it */
+        if (pk && *pk) {
+            char pf[1100]; snprintf(pf, sizeof pf, "%s-reset%d.poke", base, n + 1);
+            FILE *o = fopen(pf, "w"); if (o) { fprintf(o, "%s\n", pk); fclose(o); }
+        }
     }
     if (resume) setenv("PS_RESUME", resume, 1); else unsetenv("PS_RESUME");
     if (s_meta) fclose(s_meta);
@@ -702,8 +730,9 @@ static void rewind_ui(const uint8_t *frame, int width) {
 
 /* Modal: called before presenting a frame; returns when the menu is closed. */
 void ps_menu_run(uint8_t *frame, int width) {
-    {   /* PS_LEVEL_SELECT_NOW=1: the LEVEL SELECT entry at the first frame (tests) */
-        static int once; if (!once++ && getenv("PS_LEVEL_SELECT_NOW")) { unsetenv("PS_LEVEL_SELECT_NOW"); if (level_select_ready()) level_select(); }
+    {   /* PS_LEVEL_SELECT_NOW=N: the LEVEL SELECT entry at the first frame, its Nth stage (tests) */
+        static int once; if (!once++ && getenv("PS_LEVEL_SELECT_NOW")) { int k = atoi(getenv("PS_LEVEL_SELECT_NOW")); unsetenv("PS_LEVEL_SELECT_NOW");
+            if (level_select_ready()) { if (k > 0 && k <= s_nstages) s_stage_sel = k - 1; level_select(); } }
     }
     logic_tick();
     if (s_rw_open) { s_rw_open = false; rewind_ui(frame, width); }

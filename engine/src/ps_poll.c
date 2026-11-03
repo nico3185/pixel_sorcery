@@ -130,6 +130,21 @@ static void pad_write_hook(int port, unsigned int data, unsigned int ctrl)
 
 static void load_replay(const char *path)
 {
+    {   /* SESSION.poke beside SESSION.polls: the RAM start the session began with (the menu's level select) */
+        char pf[600]; snprintf(pf, sizeof pf, "%s", path);
+        char *d = strrchr(pf, '.'); if (d && !strcmp(d, ".polls")) strcpy(d, ".poke");
+        FILE *k = d ? fopen(pf, "r") : NULL; char pk[200];
+        if (k && fgets(pk, sizeof pk, k) && !getenv("GENRECOMP_POKE")) {
+            pk[strcspn(pk, "\r\n")] = 0;
+#ifdef _WIN32
+            _putenv_s("GENRECOMP_POKE", pk);
+#else
+            setenv("GENRECOMP_POKE", pk, 1);
+#endif
+            fprintf(stderr, "ps_poll: with the RAM start %s (%s)\n", pk, pf);
+        }
+        if (k) fclose(k);
+    }
     FILE *f = fopen(path, "r");
     if (!f) { fprintf(stderr, "ps_poll: cannot open %s\n", path); return; }
     long cap = 1 << 16;

@@ -1,0 +1,13 @@
+{
+ "_doc": "SHK has no level select of its own (its code checker is never called, and the level-select screen lives in the locked-on half): the settings menu's LEVEL SELECT starts the chosen stage - when Start leaves the title (game mode $FFF600 = $8C) the zone/act word $FFFE10 is set, before the level loads. Each start checked: game mode $0C, the zone kept, the player moving. The session keeps the poke (SESSION.poke) and replays with it.",
+ "stages": [
+  ["MHZ1", "FFF600=8C00:FFFE10=0700"], ["MHZ2", "FFF600=8C00:FFFE10=0701"],
+  ["FBZ1", "FFF600=8C00:FFFE10=0400"], ["FBZ2", "FFF600=8C00:FFFE10=0401"],
+  ["SOZ1", "FFF600=8C00:FFFE10=0800"], ["SOZ2", "FFF600=8C00:FFFE10=0801"],
+  ["LRZ1", "FFF600=8C00:FFFE10=0900"], ["LRZ2", "FFF600=8C00:FFFE10=0901"],
+  ["SSZ", "FFF600=8C00:FFFE10=0A00"],
+  ["DEZ1", "FFF600=8C00:FFFE10=0B00"], ["DEZ2", "FFF600=8C00:FFFE10=0B01"],
+  ["DDZ", "FFF600=8C00:FFFE10=0C00"]
+ ],
+ "code": [[700, "START", 4]]
+}

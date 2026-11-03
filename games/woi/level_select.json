@@ -1,0 +1,118 @@
+{
+ "_doc": "WOI has no level select: the settings menu's LEVEL SELECT plays the menus as a recorded session did (title, options, Start: controller reads replayed at full speed) and starts the chosen stage. The stage number is the word $FFFFDA (1-5; the loader indexes its tables with it and $FFFFDC/$FFFFDE), which the game sets to 1 when a game starts ($21FF2), so two pokes: the first time it reads 1 (the title, frame ~853) it is set back to 0, the next time (the game's start) it is set to the stage. Checked: stages 1-5 load with their own pictures (6 is black, 7 crashes). The session keeps the pokes (SESSION.poke).",
+ "unit": "poll",
+ "code": [
+  [
+   58,
+   "C",
+   9
+  ],
+  [
+   125,
+   "START",
+   10
+  ],
+  [
+   146,
+   "START",
+   10
+  ],
+  [
+   162,
+   "START",
+   10
+  ],
+  [
+   177,
+   "START",
+   8
+  ],
+  [
+   217,
+   "START",
+   14
+  ],
+  [
+   335,
+   "START",
+   14
+  ],
+  [
+   416,
+   "START",
+   9
+  ],
+  [
+   518,
+   "START",
+   13
+  ],
+  [
+   631,
+   "RIGHT",
+   13
+  ],
+  [
+   661,
+   "LEFT",
+   12
+  ],
+  [
+   686,
+   "C",
+   8
+  ],
+  [
+   775,
+   "C",
+   12
+  ],
+  [
+   878,
+   "RIGHT",
+   12
+  ],
+  [
+   907,
+   "LEFT",
+   8
+  ],
+  [
+   931,
+   "RIGHT",
+   8
+  ],
+  [
+   952,
+   "C",
+   8
+  ],
+  [
+   1076,
+   "START",
+   14
+  ]
+ ],
+ "stages": [
+  [
+   "STAGE 1",
+   "FFFFDA=0001:FFFFDA=0000;FFFFDA=0001:FFFFDA=0001"
+  ],
+  [
+   "STAGE 2",
+   "FFFFDA=0001:FFFFDA=0000;FFFFDA=0001:FFFFDA=0002"
+  ],
+  [
+   "STAGE 3",
+   "FFFFDA=0001:FFFFDA=0000;FFFFDA=0001:FFFFDA=0003"
+  ],
+  [
+   "STAGE 4",
+   "FFFFDA=0001:FFFFDA=0000;FFFFDA=0001:FFFFDA=0004"
+  ],
+  [
+   "STAGE 5",
+   "FFFFDA=0001:FFFFDA=0000;FFFFDA=0001:FFFFDA=0005"
+  ]
+ ]
+}
