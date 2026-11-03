@@ -18,7 +18,7 @@ pkg=$(mktemp -d)/pixelsorcery_${version}_all; share=$pkg/usr/share/pixelsorcery
 mkdir -p $pkg/DEBIAN $pkg/usr/bin $share $pkg/usr/share/applications $pkg/usr/share/icons/hicolor/256x256/apps
 print "pixelsorcery $version"
 $root/engine/.venv/bin/python $root/engine/tools/public_export.py --rev $rev --out $share/payload > /dev/null
-rm -rf $share/payload/engine/ext/Genesis-Plus-GX
+rm -rf $share/payload/engine/ext/Genesis-Plus-GX $share/payload/engine/patches/genesis-plus-gx.patch   # no core code: not even the patch's context lines
 $root/engine/.venv/bin/python -c "import sys; sys.path.insert(0, '$root/engine/tools/recompiler'); import generate as g
 v = g.CYCLES; open(sys.argv[1], 'w').write(''.join(' '.join(map(str, v[i:i + 16])) + '\n' for i in range(0, len(v), 16)))" \
   $share/payload/engine/tools/recompiler/m68k_cycles.txt

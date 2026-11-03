@@ -28,7 +28,7 @@ plutil -remove PSRepo $app/Contents/Info.plist
 plutil -replace CFBundleShortVersionString -string $version $app/Contents/Info.plist
 print "  payload: public snapshot of $rev"
 $root/engine/.venv/bin/python $root/engine/tools/public_export.py --rev $rev --out $res/payload > /dev/null
-rm -rf $res/payload/engine/ext/Genesis-Plus-GX
+rm -rf $res/payload/engine/ext/Genesis-Plus-GX $res/payload/engine/patches/genesis-plus-gx.patch   # no core code: not even the patch's context lines
 # the recompiler's 68000 timing table (documented instruction timings), read from the core's header
 $root/engine/.venv/bin/python -c "import sys; sys.path.insert(0, '$root/engine/tools/recompiler'); import generate as g
 v = g.CYCLES; open(sys.argv[1], 'w').write(''.join(' '.join(map(str, v[i:i + 16])) + '\\n' for i in range(0, len(v), 16)))" \
