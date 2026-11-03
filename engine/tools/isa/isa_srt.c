@@ -17,6 +17,7 @@ uint8_t g_m68k_irq_pending;
 unsigned int g_cyc, g_cyc_event;
 
 static uint8_t mem[1 << 24];
+void s68k_irq_acknowledge(int level) { (void)level; }
 uint8_t s68k_read8(uint32_t a) { return mem[a & 0xFFFFFF]; }
 uint16_t s68k_read16(uint32_t a) { a &= 0xFFFFFF; return (uint16_t)(mem[a] << 8 | mem[(a + 1) & 0xFFFFFF]); }
 uint32_t s68k_read32(uint32_t a) { return (uint32_t)s68k_read16(a) << 16 | s68k_read16(a + 2); }

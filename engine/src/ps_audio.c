@@ -108,6 +108,9 @@ int ps_audio_end_frame(unsigned int cycles, int16_t *out, int max_frames)
     if (s_amode == 2) { int m = audio_update(ref); wav_put(&s_wref, ref, m); }
 #endif
     n = ps_synth_end_frame(cycles, out, max_frames);
+#ifdef PS_NATIVE
+    { extern bool g_ps_mcd; void mcd_cdda_mix(int16_t *, int); if (g_ps_mcd) mcd_cdda_mix(out, n); }   /* Mega CD: CD audio */
+#endif
     wav_put(&s_wav, out, n);
     return n;
 }
@@ -135,8 +138,16 @@ static void (*s_driver)(PsZ80 *) = NULL;
 extern void (*ps_z80_game_driver)(PsZ80 *);
 void (*ps_z80_game_driver_ps_default)(PsZ80 *) = NULL;
 PS_ALTNAME(ps_z80_game_driver, ps_z80_game_driver_ps_default)
+#elif defined(__MINGW32__)
+/* MinGW (PE/COFF): weak data is unreliable there (a .weak alias was read instead of the
+ * title's pointer; weak undefined refs do not link through .refptr): plain externs, the
+ * defaults are members of the ps_defaults archive, linked last (engine/src/defaults/). */
+extern void (*ps_z80_game_driver)(PsZ80 *);
 #else
 __attribute__((weak)) void (*ps_z80_game_driver)(PsZ80 *) = NULL;
+#endif
+#ifndef PS_GAME_DRIVER
+#define PS_GAME_DRIVER ps_z80_game_driver
 #endif
 static int s_mode = -1;                 /* 1 = recomp, 0 = gpgx */
 static FILE *s_fmlog;
@@ -168,7 +179,7 @@ int ps_audio_z80_recomp(void)
 {
     if (s_mode < 0) {
         audio_chips_init();
-        if (!s_driver && ps_z80_game_driver) s_driver = ps_z80_game_driver;
+        if (!s_driver && PS_GAME_DRIVER) s_driver = PS_GAME_DRIVER;
         const char *m = getenv("PS_Z80");
         s_mode = (s_driver && !(m && !strcmp(m, "gpgx"))) ? 1 : 0;
         const char *log = getenv("PS_FMLOG");
@@ -216,21 +227,28 @@ PS_ALTNAME(ps_z80_game_image, ps_z80_game_image_ps_default)
 extern unsigned int ps_z80_game_image_len;
 unsigned int ps_z80_game_image_len_ps_default = 0;
 PS_ALTNAME(ps_z80_game_image_len, ps_z80_game_image_len_ps_default)
+#elif defined(__MINGW32__)
+extern const unsigned char *ps_z80_game_image;
+extern unsigned int ps_z80_game_image_len;
 #else
 __attribute__((weak)) const unsigned char *ps_z80_game_image = NULL;
 __attribute__((weak)) unsigned int ps_z80_game_image_len = 0;
+#endif
+#ifndef PS_GAME_IMAGE
+#define PS_GAME_IMAGE ps_z80_game_image
+#define PS_GAME_IMAGE_LEN ps_z80_game_image_len
 #endif
 
 /* Hardware /RESET released: Z80 restarts at 0 with interrupts off. */
 void ps_audio_z80_reset(void)
 {
-    if (ps_z80_game_image && ps_z80_game_image_len)
-        s_started = memcmp(zram, ps_z80_game_image, ps_z80_game_image_len) == 0;
+    if (PS_GAME_IMAGE && PS_GAME_IMAGE_LEN)
+        s_started = memcmp(zram, PS_GAME_IMAGE, PS_GAME_IMAGE_LEN) == 0;
     else
         s_started = 1;
     if (getenv("PS_Z80_DEBUG")) {
-        unsigned n = 0; while (n < ps_z80_game_image_len && zram[n] == ps_z80_game_image[n]) n++;
-        fprintf(stderr, "ps_audio: /RESET released, RAM matches image for %u/%u bytes\n", n, ps_z80_game_image_len);
+        unsigned n = 0; while (n < PS_GAME_IMAGE_LEN && zram[n] == PS_GAME_IMAGE[n]) n++;
+        fprintf(stderr, "ps_audio: /RESET released, RAM matches image for %u/%u bytes\n", n, PS_GAME_IMAGE_LEN);
         FILE *d = fopen("/tmp/zram_at_reset.bin", "wb"); if (d) { fwrite(zram, 1, 0x2000, d); fclose(d); }
     }
     if (s_started) fprintf(stderr, "ps_audio: driver uploaded, recompiled Z80 started\n");

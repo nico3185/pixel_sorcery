@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* Defined in osd.c */
 extern void genrecomp_config_default(void);
@@ -74,14 +75,38 @@ bool genrecomp_init(const char *window_title, int scale) {
     return true;
 }
 
+#ifdef PS_NATIVE
+/* a Mega CD disc (.cue): the native Mega CD (src/mcd) with the player's BIOS - PS_SCD_BIOS=DIR, else
+ * Application Support/PixelSorcery/bios, scd_us.bin (GENRECOMP_REGION=eu/jp: scd_eu.bin, scd_jp.bin) */
+static bool load_megacd(const char *cue) {
+    extern bool g_ps_mcd;
+    bool mcd_load_bios(const char *), mcd_disc_open(const char *); void mcd_power_on(void);
+    const char *dir = getenv("PS_SCD_BIOS"), *home = getenv("HOME"), *r = getenv("GENRECOMP_REGION");
+    char def[512], bios[700];
+    snprintf(def, sizeof def, "%s/Library/Application Support/PixelSorcery/bios", home ? home : ".");
+    snprintf(bios, sizeof bios, "%s/scd_%s.bin", dir && *dir ? dir : def, r && !strcmp(r, "eu") ? "eu" : r && !strcmp(r, "jp") ? "jp" : "us");
+    if (!mcd_load_bios(bios)) { fprintf(stderr, "genrecomp: no Mega CD BIOS at %s (your console's, 128 KB)\n", bios); return false; }
+    if (!mcd_disc_open(cue)) { fprintf(stderr, "genrecomp: cannot read the disc %s\n", cue); return false; }
+    ps_hw_reset();
+    mcd_power_on();
+    g_ps_mcd = true;
+    return true;
+}
+#endif
+
 bool genrecomp_load_rom(const char *path) {
     if (!s_initialized) return false;
 #ifdef PS_NATIVE
-    if (!ps_hw_load_rom(path)) {
-        fprintf(stderr, "genrecomp: cannot load ROM %s\n", path);
-        return false;
+    size_t n = strlen(path);
+    if (n > 4 && !strcasecmp(path + n - 4, ".cue")) {
+        if (!load_megacd(path)) return false;
+    } else {
+        if (!ps_hw_load_rom(path)) {
+            fprintf(stderr, "genrecomp: cannot load ROM %s\n", path);
+            return false;
+        }
+        ps_hw_reset();
     }
-    ps_hw_reset();
 #else
 
     /* GenPlusGX's load_rom expects a mutable char* */
@@ -217,11 +242,12 @@ static bool gpgx_render_frame(uint8_t *dst) {
     int copy_w = (vp_w > GEN_RENDER_WIDTH) ? GEN_RENDER_WIDTH : vp_w;
     int copy_h = (vp_h > GEN_RENDER_HEIGHT) ? GEN_RENDER_HEIGHT : vp_h;
 
-    /* H32 is narrower than the buffer: don't leave the last H40 frame's
-     * right-hand columns on screen */
+    /* H32 is narrower than the buffer: centred (as the native renderer draws it, and as a TV
+     * shows it), no last H40 frame's columns left on screen */
+    int xoff = (GEN_RENDER_WIDTH - copy_w) / 2;
     if (copy_w < GEN_RENDER_WIDTH) memset(dst, 0, GEN_RENDER_WIDTH * GEN_RENDER_HEIGHT * 4);
     for (int y = 0; y < copy_h; y++)
-        memcpy(dst + y * GEN_RENDER_WIDTH * 4, fb_start + y * bitmap.pitch, copy_w * 4);
+        memcpy(dst + (y * GEN_RENDER_WIDTH + xoff) * 4, fb_start + y * bitmap.pitch, copy_w * 4);
     return true;
 }
 
@@ -229,6 +255,7 @@ static bool gpgx_render_frame(uint8_t *dst) {
 
 #include "genrecomp/ps_wide.h"
 static int s_line_h;                  /* lines of the frame being drawn line by line */
+static int s_xoff;                    /* a picture narrower than the frame (H32 in a wide frame) is centred */
 static bool s_lines_drawn;
 static void native_frame_setup(uint8_t *dst) {
     int w = ps_vdp_width();
@@ -236,11 +263,12 @@ static void native_frame_setup(uint8_t *dst) {
     int e = ps_wide_extra();
     s_present_w = GEN_RENDER_WIDTH + 2 * e;
     if (w + 2 * e < s_present_w) memset(dst, 0, (size_t)s_present_w * GEN_RENDER_HEIGHT * 4);
+    s_xoff = w + 2 * e < s_present_w ? (s_present_w - w - 2 * e) / 2 : 0;
     s_line_h = ps_vdp_height() > GEN_RENDER_HEIGHT ? GEN_RENDER_HEIGHT : ps_vdp_height();
 }
 static void native_render_frame(uint8_t *dst) {
     native_frame_setup(dst);
-    ps_render_lines(0, s_line_h, (uint32_t *)dst, s_present_w);
+    ps_render_lines(0, s_line_h, (uint32_t *)dst + s_xoff, s_present_w);
     ps_wide_record(ps_render_plane_entry);       /* cells on the original screen -> world cache */
 }
 
@@ -257,7 +285,7 @@ void genrecomp_render_line(int line) {
                 fprintf(stderr, "line %3d reg0 %02X reg1 %02X reg7 %02X reg12 %02X cram0 %03X\n", line, g_ps_vdp.reg[0],
                         g_ps_vdp.reg[1], g_ps_vdp.reg[7], g_ps_vdp.reg[12], g_ps_vdp.cram[0]);
         }
-        ps_render_lines(line, line + 1, (uint32_t *)s_present_buf, s_present_w);
+        ps_render_lines(line, line + 1, (uint32_t *)s_present_buf + s_xoff, s_present_w);
         extern uint16_t g_ps_render_flags;
         status |= g_ps_render_flags & 0x60;      /* sprite overflow / collision, as the line is drawn */
         g_ps_render_flags = 0;

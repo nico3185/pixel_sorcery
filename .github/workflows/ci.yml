@@ -48,4 +48,6 @@ jobs:
           cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-Werror
           cmake --build build
       - name: self-checks
-        run: python engine/tools/recompiler/test_analyze.py
+        run: |
+          ctest --test-dir build --output-on-failure   # native-only: the instruction edge cases
+          python engine/tools/recompiler/test_analyze.py

@@ -3275,7 +3275,12 @@
     "0x015A56": "sub_015A56",
     "0x004FB4": "sub_004FB4",
     "0x004FC2": "sub_004FC2",
-    "0x00DA86": "sub_00DA86"
+    "0x00DA86": "sub_00DA86",
+    "0x0156E0": "sub_0156E0",
+    "0x0156E4": "sub_0156E4",
+    "0x015796": "sub_015796",
+    "0x01588A": "sub_01588A",
+    "0x01588E": "sub_01588E"
   },
   "hooks": {
     "0x00608E": "extern void qs_gameplay_frame(void); qs_gameplay_frame();",

@@ -112,6 +112,7 @@ uint32_t s68k_boundary(uint32_t next) {
     int l = irq_level();
     if (l) {
         s_irq &= ~(1u << l); s_stopped = 0;
+        s68k_irq_acknowledge(l);                         /* the source's pending flag drops (mcd_bus.c) */
         push_frame(next);
         g_s68k.int_mask = (uint8_t)l;
         g_scyc += 44 * 7;                                /* interrupt acknowledge + vector fetch */

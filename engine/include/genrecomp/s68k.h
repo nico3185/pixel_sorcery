@@ -15,5 +15,6 @@ void s68k_reset(void);                  /* SSP and PC from the vectors at 0 */
 void s68k_run(unsigned int end);        /* run until the cycle counter reaches end (68000 clocks x 7) */
 void s68k_set_irq(int level);           /* level 1-7, autovectored */
 void s68k_clear_irq(int level);
+void s68k_irq_acknowledge(int level);   /* provided by the Mega CD runtime: interrupt taken at that level */
 extern unsigned int g_scyc;             /* the sub CPU's cycle counter */
 #endif

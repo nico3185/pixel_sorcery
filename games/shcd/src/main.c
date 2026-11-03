@@ -36,6 +36,9 @@ int main(int argc, char *argv[]) {
     { void ps_overlays_register(void), ps_megacd_overlays(void); ps_overlays_register(); ps_megacd_overlays(); }
 #endif
     g_ps_boot_hidden = !getenv("PS_CD_MENU") && !getenv("PS_POLL_REPLAY") && !getenv("GENRECOMP_MOVIE") ? 2 : 0;
+#ifndef PS_OVERLAYS
+    g_ps_boot_hidden = 0;          /* the end of the boot is seen through the overlays: none here, so the BIOS screen shows (press Start) */
+#endif
     bus_set_vblank_callback(on_vblank);
     ps_menu_set_title("shcd");
     g_m68k.a[7] = bus_read32(0);

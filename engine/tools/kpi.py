@@ -95,6 +95,18 @@ def live(conv, ex, bodies, refs):
     return set().union(*(bodies[f] for f in seen)) & conv if seen else set()
 
 
+def map_kpi(game, conv_all, ex):
+    """KPI S and M from a reassembling disassembly's code map (disasm_map.py, build/disasm_map.json):
+    S = share of the map's instructions the generator converts (completeness, proven statically);
+    M = share of the map's instructions verified recordings have run (coverage of real code: data
+    decoded as code no longer counts). None, None without a map."""
+    try:
+        code = {int(a, 16) for a in json.load(open(os.path.join(game, 'build', 'disasm_map.json')))['code_addrs']}
+    except (OSError, ValueError, KeyError):
+        return None, None
+    return 100 * len(code & conv_all) / max(1, len(code)), 100 * len(code & ex) / max(1, len(code))
+
+
 def rt_pct(game):
     """KPI RT: share of the converted instructions roundtrip.py re-encodes byte for byte (its last run)"""
     try:
@@ -371,6 +383,7 @@ def title_kpi(t, roms, do_static):
          'never_entered': ['$%06X' % a for a in never], 'replay': replay_kpi(game),
          'reachable': len(reach), 'reachable_pct': 100 * len(reach & ex) / max(1, len(reach)),
          'roundtrip_pct': rt_pct(game)}
+    k['static_pct'], k['map_cov_pct'] = map_kpi(game, conv_all, ex)
     if do_static:
         cb, strong, weak = static_kpi(rom, conv_all)
         k.update(code_bytes=cb, code_pct_rom=100 * cb / len(rom), suspects_strong=len(strong),
@@ -415,13 +428,15 @@ def main():
     for t in o.titles or TITLES:
         k = title_kpi(t, o.roms, not o.no_static)
         rows.append(dict(row(k, date, sha), reachable_pct='%.2f' % k['reachable_pct'],   # R, RT: table and kpi.json
-                         roundtrip_pct='' if k['roundtrip_pct'] is None else '%.2f' % k['roundtrip_pct']))
+                         roundtrip_pct='' if k['roundtrip_pct'] is None else '%.2f' % k['roundtrip_pct'],
+                         static_pct='' if k['static_pct'] is None else '%.2f' % k['static_pct'],
+                         map_cov_pct='' if k['map_cov_pct'] is None else '%.2f' % k['map_cov_pct']))
         f = k['reference'] or {}
         for n in f.get('notes', []):
             print(f'  {t}: reference {n}', file=sys.stderr)
-    hdr = ('title', 'conv', 'exec∩conv', 'A cov%', 'R reach%', 'RT rt%', 'B interp', 'C rec', 'C comp', 'C mixed', 'polls', 'fn',
+    hdr = ('title', 'conv', 'exec∩conv', 'A cov%', 'R reach%', 'S map%', 'M mapcov%', 'RT rt%', 'B interp', 'C rec', 'C comp', 'C mixed', 'polls', 'fn',
            'never', 'D code%', 'E strong', 'E weak', 'F ref%')
-    keys = ('title', 'converted', 'executed_converted', 'coverage_pct', 'reachable_pct', 'roundtrip_pct', 'interpreted_only', 'recordings',
+    keys = ('title', 'converted', 'executed_converted', 'coverage_pct', 'reachable_pct', 'static_pct', 'map_cov_pct', 'roundtrip_pct', 'interpreted_only', 'recordings',
             'match_compiled', 'match_mixed', 'polls_verified', 'functions', 'functions_never_entered',
             'code_pct_rom', 'suspects_strong', 'suspects_weak', 'ref_pct')
     w = [max(len(h), *(len(str(r[k])) for r in rows)) for h, k in zip(hdr, keys)]

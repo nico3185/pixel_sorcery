@@ -39,6 +39,11 @@ static uint32_t run_hook(uint32_t pc) { (void)pc; return 0; }
 extern const uint16_t ps_m68k_cycles[0x10000];
 const uint16_t ps_m68k_cycles_ps_default[0x10000] = { 0 };
 PS_ALTNAME(ps_m68k_cycles, ps_m68k_cycles_ps_default)
+#elif defined(__MINGW32__)
+/* MinGW (PE/COFF): weak data is unreliable there (a .weak alias was read instead of the
+ * title's pointer; weak undefined refs do not link through .refptr): plain externs, the
+ * defaults are members of the ps_defaults archive, linked last (engine/src/defaults/). */
+extern const uint16_t ps_m68k_cycles[0x10000];
 #else
 __attribute__((weak)) const uint16_t ps_m68k_cycles[0x10000] = { 0 };
 #endif
@@ -51,6 +56,8 @@ int ps_m68k_nhooks_ps_default = 0;
 PS_ALTNAME(ps_m68k_hook_pc, ps_m68k_hook_pc_ps_default)
 PS_ALTNAME(ps_m68k_hook_fn, ps_m68k_hook_fn_ps_default)
 PS_ALTNAME(ps_m68k_nhooks, ps_m68k_nhooks_ps_default)
+#elif defined(__MINGW32__)
+extern const uint32_t *ps_m68k_hook_pc; extern uint32_t (*const *ps_m68k_hook_fn)(void); extern int ps_m68k_nhooks;
 #else
 __attribute__((weak)) const uint32_t *ps_m68k_hook_pc = NULL;
 __attribute__((weak)) uint32_t (*const *ps_m68k_hook_fn)(void) = NULL;

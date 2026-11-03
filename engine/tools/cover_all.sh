@@ -2,7 +2,7 @@
 # cover_all.sh [MINUTES] [TITLE...] — raise every focus title's instruction coverage, no person and
 # no LLM in the loop: per title (in parallel, CPU through heavy.sh)
 #   1. level starts: one recording per act through the game's own level select
-#      (level_starts.py, games/T/level_select.json; titles without a recipe skip it);
+#      (level_starts.py, games/T/level_select*.json - each recipe; titles without one skip it);
 #   2. each start replayed by sidebyside.py, compiled and mixed (PS_INTERP=random:30:1): a start
 #      that does not MATCH is reported (FINDING) and its coverage bitmap set aside, so KPI A only
 #      counts verified play; new entry points are merged into recomp.json on the way;
@@ -20,7 +20,7 @@ one() {
   local t=$1 g=$root/games/$1
   local rom=$root/../roms/$(python3 -c "import json;print(json.load(open('$g/sidebyside.json'))['rom'])")
   if [[ -f $g/level_select.json ]]; then
-    $H $py $eng/tools/level_starts.py $t | sed 's/^/  /'
+    for r in $g/level_select*.json; do $H $py $eng/tools/level_starts.py $t --recipe ${r:t} | sed 's/^/  /'; done
     for p in $g/recordings/start-*.polls(N); do
       local n=${p:t:r}
       local c=$($H $py $eng/tools/sidebyside.py $rom $g $p --max-iter 4 2>&1 | grep -E "^MATCH|^STOP" | tail -1)

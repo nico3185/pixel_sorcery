@@ -10,7 +10,7 @@
 # the instruction (divergence.sh). TITLE: a games/ directory or a unique prefix; ROM: $ROM,
 # else ../roms/<"rom" in sidebyside.json>.
 set -eu
-eng=${0:A:h}/..; root=$eng/..
+[[ $OSTYPE == (msys|cygwin)* ]] && eng=$(cygpath -m ${0:A:h}/..) || eng=${0:A:h}/..; root=$eng/..   # MSYS2: C:/... paths for native tools
 title=${1:?usage: check.sh TITLE RECORDING [--max-iter N]}; rec=${2:?usage: check.sh TITLE RECORDING}; rec=${rec:A}; shift 2
 iters=1; [[ ${1:-} == --max-iter ]] && iters=$2
 titles=(${(f)"$(cd $root/games && for d in */; do [[ -f $d/sidebyside.json ]] && print ${d%/}; done)"})
@@ -20,7 +20,7 @@ if (( ! ${titles[(Ie)$title]} )); then
   title=$m[1]
 fi
 game=$root/games/$title
-romdef=$(python3 -c "import json;print(json.load(open('$game/sidebyside.json')).get('rom',''))")
+romdef=$(python3 -c "import json,sys;sys.stdout.write(json.load(open(sys.argv[1])).get('rom',''))" $game/sidebyside.json)
 rom=${ROM:-$root/../roms/$romdef}
 [[ -f $rom ]] || { print -u2 "ROM not found: $rom (set ROM=path)"; exit 1; }
 py=$eng/.venv/bin/python
