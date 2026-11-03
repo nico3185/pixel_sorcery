@@ -36,8 +36,11 @@ def to_gas(addr, mnem, ops):
     """capstone text -> GNU as (Motorola syntax, register prefix optional)"""
     # PC-relative: capstone prints the target address; GNU as wants the displacement from the
     # extension word (addr + 2)
+    # the displacement is relative to its own extension word: after MOVEM's register mask, or after
+    # a bit number (BTST #n,(d16,pc)), it is the second word
+    base = addr + (4 if mnem.startswith('movem') or (mnem.startswith('btst') and ops.lstrip().startswith('#')) else 2)
     def pcrel(m):
-        disp = int(m.group(1), 16) - (addr + 2)
+        disp = int(m.group(1), 16) - base
         idx = m.group(2)
         return f'({disp},pc{"," + idx.strip() if idx else ""})'
     ops = re.sub(r'\$([0-9a-fA-F]+)\(pc(?:,\s*([^)]+))?\)', pcrel, ops)

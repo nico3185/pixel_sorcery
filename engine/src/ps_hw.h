@@ -45,6 +45,7 @@ extern void (*io_pad_write_hook)(int port, unsigned int data, unsigned int ctrl)
 bool     ps_hw_load_rom(const char *path);
 const uint8_t *ps_hw_rom(uint32_t *size);
 void     ps_hw_reset(void);
+void     ps_hw_set_version(uint8_t v);
 void     ps_hw_end_frame(unsigned int cycles);
 
 /* 68000 accesses outside the VDP ports (handled by ps_vdp) */

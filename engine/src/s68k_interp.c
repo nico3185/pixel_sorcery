@@ -133,6 +133,12 @@ void s68k_reset(void) {
     g_s68k.pc = s68k_read32(4) & 0xFFFFFF;
     s_irq = 0; s_stopped = 0; s_jump = 0;
 }
+/* the instruction the sub CPU is executing (mcd.c: polling is the same instruction reading again) */
+uint32_t s68k_cur_pc(void) { return s_pc; }
+/* an interrupt the sub CPU would take now (mcd.c: it ends a poll idle, as taking one does on the reference) */
+int s68k_irq_ready(void) { return irq_level() != 0; }
+/* a sub CPU found polling idles through the rest of its run (mcd.c) */
+void s68k_end_run(void) { if ((int)(g_scyc - s_end) < 0) g_scyc = s_end; }
 void s68k_run(unsigned int end) {
     s_end = end;
     if ((int)(g_scyc - s_end) >= 0) return;
@@ -141,3 +147,13 @@ void s68k_run(unsigned int end) {
         s68k_interp_run(g_s68k.pc);                  /* returns at the slice's end */
     }
 }
+
+/* ps_state.c: the sub CPU between two runs (registers, clock, pending interrupts, STOP) */
+void ps_state_blob(void *p, unsigned long n);
+#define B(v) ps_state_blob(&(v), sizeof (v))
+void s68k_state(void) {
+    B(g_s68k); B(g_scyc); B(g_scyc_event); B(g_scyc_skip); B(g_scyc_refresh); B(g_scyc_refresh_hold); B(g_scyc_icost);
+    B(g_s68k_pf); B(g_s68k_irq_pending); B(g_s68k_irq_phase_at); B(g_s68k_irq_phase_set);
+    B(s_jump); B(s_stopped); B(s_irq); B(s_end);
+}
+#undef B

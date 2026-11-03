@@ -6,6 +6,7 @@
  * the reference player's may differ (checked by the stage starts).
  */
 #include "mcd.h"
+unsigned long g_mcd_gpu_ops;                      /* graphics operations started (PS_MCD_TRACE) */
 #include <string.h>
 
 static struct {
@@ -60,6 +61,7 @@ static void render(uint32_t address, unsigned width) {
 static void start(void) {
     if (g_mcd.io.wram_mode) return;                        /* 2 Mbit Word RAM only */
     g.active = true;
+    g_mcd_gpu_ops++;
     g.period = 5u * g.image.hdots;
     g.counter = 0;
     g.image.address = (g.image.base << 1) + g.image.offset;
@@ -82,8 +84,9 @@ void mcd_gpu_step(unsigned clocks) {
         g.image.address += 8;
         if (!--g.image.vdots) {
             g.active = false;
+            mcd_sub_wake(1u << 8);                  /* a sub CPU polling the operation's end goes on */
             McdIrq *q = &g_mcd.gpu_irq;
-            if (!q->pending) { q->pending = true; mcd_irq_sync(); }
+            if (q->enable && !q->pending) { q->pending = true; mcd_irq_sync(); }   /* only while enabled (the reference) */
             break;
         }
     }
@@ -126,3 +129,9 @@ void mcd_gpu_write(uint32_t a, bool upper, bool lower, uint16_t v) {
     }
 }
 void mcd_gpu_power(void) { memset(&g, 0, sizeof g); }
+
+/* ps_state.c: the graphics chip */
+void ps_state_blob(void *p, unsigned long n);
+#define B(v) ps_state_blob(&(v), sizeof (v))
+void mcd_gpu_state(void) { B(g); }
+#undef B

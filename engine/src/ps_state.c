@@ -137,7 +137,47 @@ static char s_save_path[1024];
 static void (*s_save_cb)(const uint8_t *, size_t, long);   /* a requested snapshot (menu) */
 static long s_reload_at = -1;
 static char s_reload_path[1024];
-static void rearm(void) { ps_state_armed = s_save_at >= 0 || s_save_cb || s_reload_at >= 0; }
+/* rewind: the last RW_SLOTS snapshots in memory, one every RW_EVERY frames, while a session is played
+ * (PS_POLL_RECORD, set by play.sh and the app; PS_REWIND=1 forces it, PS_NO_REWIND=1 turns it off);
+ * the menu steps back through them (ps_menu.c) */
+enum { RW_SLOTS = 30, RW_EVERY = 60, RW_TW = 160, RW_TH = 112 };
+static struct { uint8_t *b; size_t n; long poll, frame; uint32_t thumb[RW_TW * RW_TH]; } s_rw[RW_SLOTS];
+static int s_rw_head, s_rw_count, s_rw_on; static long s_rw_last = -1000000;
+static void rearm(void) { ps_state_armed = s_save_at >= 0 || s_save_cb || s_reload_at >= 0 || s_rw_on; }
+static void rewind_tick(long poll) {
+    if (!s_rw_on || ps_frames - s_rw_last < RW_EVERY) return;
+    s_rw_last = ps_frames;
+    free(s_rw[s_rw_head].b);
+    s_rw[s_rw_head].b = capture(&s_rw[s_rw_head].n); s_rw[s_rw_head].poll = poll; s_rw[s_rw_head].frame = ps_frames;
+    {   /* its picture for the timeline: the frame on screen, half size */
+        const uint8_t *genrecomp_get_framebuffer(void); int genrecomp_present_width(void);
+        const uint32_t *f = (const uint32_t *)genrecomp_get_framebuffer(); int w = genrecomp_present_width();
+        for (int y = 0; y < RW_TH; y++)
+            for (int x = 0; x < RW_TW; x++) s_rw[s_rw_head].thumb[y * RW_TW + x] = f[(y * 2) * w + x * w / RW_TW];
+    }
+    s_rw_head = (s_rw_head + 1) % RW_SLOTS;
+    if (s_rw_count < RW_SLOTS) s_rw_count++;
+}
+/* the timeline (ps_menu.c): how many snapshots are held, and the picture (RW_TW x RW_TH) and age in
+ * frames of the one STEPS back (1: the newest) */
+int ps_state_rewind_count(void) { return s_rw_count; }
+const uint32_t *ps_state_rewind_thumb(int steps, int *w, int *h, long *age) {
+    if (steps < 1 || steps > s_rw_count) return NULL;
+    int i = (s_rw_head + RW_SLOTS - steps) % RW_SLOTS;
+    *w = RW_TW; *h = RW_TH; *age = ps_frames - s_rw[i].frame;
+    return s_rw[i].thumb;
+}
+/* the snapshot STEPS back (1: the newest; fewer if the ring holds fewer), the newer ones dropped, its
+ * poll in *poll; the caller owns it. NULL when there is none */
+uint8_t *ps_state_rewind_take(int steps, size_t *n, long *poll) {
+    if (!s_rw_count) return NULL;
+    if (steps > s_rw_count) steps = s_rw_count;
+    for (int k = 1; k < steps; k++) { s_rw_head = (s_rw_head + RW_SLOTS - 1) % RW_SLOTS; free(s_rw[s_rw_head].b); s_rw[s_rw_head].b = NULL; s_rw_count--; }
+    s_rw_head = (s_rw_head + RW_SLOTS - 1) % RW_SLOTS; s_rw_count--;
+    uint8_t *b = s_rw[s_rw_head].b; *n = s_rw[s_rw_head].n; *poll = s_rw[s_rw_head].poll; s_rw[s_rw_head].b = NULL;
+    s_rw_last = ps_frames;                 /* the next one a full step after the restore */
+    return b;
+}
 
 void ps_state_request(void (*done)(const uint8_t *, size_t, long)) { s_save_cb = done; rearm(); }
 
@@ -167,6 +207,12 @@ void ps_state_vblank_point(void) {
         fprintf(stderr, "ps_state: %s %s at poll %ld, frame %ld, PC $%06X (%zu bytes)\n", ok ? "saved" : "cannot write",
                 s_save_path, poll, ps_frames, g_m68k_ipc, n);
         free(b); s_save_at = -1;
+    }
+    rewind_tick(poll);
+    {   /* PS_REWIND_AT=FRAME:STEPS: a rewind at that frame, as the key does (tests) */
+        static long at = -2; static int steps;
+        if (at == -2) { const char *e = getenv("PS_REWIND_AT"); at = e ? atol(e) : -1; steps = e && strchr(e, ':') ? atoi(strchr(e, ':') + 1) : 1; }
+        if (at >= 0 && ps_frames >= at) { at = -1; void ps_menu_rewind(int); ps_menu_rewind(steps); }
     }
     if (s_save_cb) {
         size_t n; uint8_t *b = capture(&n);
@@ -227,6 +273,7 @@ PS_INITIALIZER(ps_state_init)
         const char *c = strchr(e, ':');
         if (c) { s_save_at = atol(e); snprintf(s_save_path, sizeof s_save_path, "%s", c + 1); }
     }
+    s_rw_on = !getenv("PS_NO_REWIND") && ((e = getenv("PS_POLL_RECORD")) && *e || getenv("PS_REWIND"));
     if ((e = getenv("PS_STATE_RELOAD")) && *e) {
         const char *c = strchr(e, ':');
         if (c) { s_reload_at = atol(e); snprintf(s_reload_path, sizeof s_reload_path, "%s", c + 1); }
@@ -259,4 +306,7 @@ void ps_state_request(void (*done)(const uint8_t *, size_t, long)) { (void)done;
 const char *ps_state_check(const uint8_t *b, size_t n) { (void)b; (void)n; return "no snapshots in this build"; }
 const char *ps_state_load_now(uint8_t *b, size_t n) { (void)n; free(b); return "no snapshots in this build"; }
 uint8_t *ps_state_read_file(const char *path, size_t *n) { (void)path; *n = 0; return NULL; }
+uint8_t *ps_state_rewind_take(int steps, size_t *n, long *poll) { (void)steps; *n = 0; *poll = 0; return NULL; }
+int ps_state_rewind_count(void) { return 0; }
+const uint32_t *ps_state_rewind_thumb(int steps, int *w, int *h, long *age) { (void)steps; *w = *h = 0; *age = 0; return NULL; }
 #endif

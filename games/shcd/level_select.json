@@ -1,0 +1,13 @@
+{
+ "_doc": "SHCD stage select (the settings menu's LEVEL SELECT, tools/stage_movie.py): the BIOS menu's Start then CD-ROM, then on the title screen Up, Down, Down, Left, Right, B; Down moves the cursor, Start loads the entry",
+ "code": [
+  [300, "START", 4],
+  [420, "START", 4],
+  [1200, "UP", 6],
+  [1220, "DOWN", 6],
+  [1240, "DOWN", 6],
+  [1260, "LEFT", 6],
+  [1280, "RIGHT", 6],
+  [1300, "B", 6]
+ ]
+}

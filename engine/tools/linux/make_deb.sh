@@ -1,12 +1,13 @@
 #!/bin/zsh
 # make_deb.sh [--rev REV] [--version V] [OUTDIR] - pixelsorcery_V_all.deb (default in build/deb): the
 # Linux download. Like the Mac app it holds no game: the public snapshot of REV (codenames, no game
-# data) without Genesis Plus GX - so native ports only, and no title still needing the emulator core
-# (SHCD) - installed in /usr/share/pixelsorcery. The `pixelsorcery` command copies it to
+# data) without Genesis Plus GX - so native ports only (SHCD included: the native Mega CD), and no
+# title still needing the emulator core - installed in /usr/share/pixelsorcery. The `pixelsorcery` command copies it to
 # ~/.local/share/pixelsorcery/workspace on first run (and each new version), then opens the build
 # screen (build_ui.py) or plays a title (play.sh). The compiler, cmake, ninja, SDL2, Python and
 # capstone come from the distribution (Depends), so the package is the same for every architecture.
-# dpkg-deb runs in a Debian container (Docker) when this machine has none.
+# dpkg-deb runs in a Debian container (Docker) when this machine has none. Beside the package: its SHA-256,
+# and with PS_GPG_KEY a detached GPG signature (.asc) by that key.
 set -eu; setopt pipefail
 here=${0:A:h}; root=${here:h:h:h}; rev=HEAD; version=
 [[ ${1:-} == --rev ]] && { rev=$2; shift 2; }
@@ -17,7 +18,7 @@ pkg=$(mktemp -d)/pixelsorcery_${version}_all; share=$pkg/usr/share/pixelsorcery
 mkdir -p $pkg/DEBIAN $pkg/usr/bin $share $pkg/usr/share/applications $pkg/usr/share/icons/hicolor/256x256/apps
 print "pixelsorcery $version"
 $root/engine/.venv/bin/python $root/engine/tools/public_export.py --rev $rev --out $share/payload > /dev/null
-rm -rf $share/payload/engine/ext/Genesis-Plus-GX
+rm -rf $share/payload/engine/ext/Genesis-Plus-GX $share/payload/engine/patches/genesis-plus-gx.patch   # no core code: not even the patch's context lines
 $root/engine/.venv/bin/python -c "import sys; sys.path.insert(0, '$root/engine/tools/recompiler'); import generate as g
 v = g.CYCLES; open(sys.argv[1], 'w').write(''.join(' '.join(map(str, v[i:i + 16])) + '\n' for i in range(0, len(v), 16)))" \
   $share/payload/engine/tools/recompiler/m68k_cycles.txt
@@ -81,4 +82,7 @@ if command -v dpkg-deb >/dev/null; then dpkg-deb --root-owner-group --build $pkg
 else docker run --rm -v ${pkg:h}:/pkg -v $out:/out debian:stable-slim dpkg-deb --root-owner-group --build /pkg/${pkg:t} /out/${deb:t} >/dev/null
 fi
 rm -rf ${pkg:h}
+(cd ${deb:h} && { sha256sum ${deb:t} 2>/dev/null || shasum -a 256 ${deb:t}; } > ${deb:t}.sha256)   # the download's checksum
+# PS_GPG_KEY: the owner's signing key - a detached signature beside the package (gpg --verify X.asc X)
+[[ -n ${PS_GPG_KEY:-} ]] && gpg --batch --yes --local-user "$PS_GPG_KEY" --armor --detach-sign -o $deb.asc $deb
 print "$deb ($(du -h $deb | cut -f1))"

@@ -44,7 +44,7 @@ add_library(genrecomp_native STATIC
     src/ps_menu.c
     src/s68k_interp.c                                  # the native Mega CD: sub CPU and hardware
     src/mcd/mcd.c src/mcd/mcd_bus.c src/mcd/mcd_main.c src/mcd/mcd_cdc.c src/mcd/mcd_cdd.c
-    src/mcd/mcd_disc.c src/mcd/mcd_parts.c src/mcd/mcd_gpu.c
+    src/mcd/mcd_disc.c src/mcd/mcd_parts.c src/mcd/mcd_gpu.c src/mcd/mcd_pcm.c
 )
 target_include_directories(genrecomp_native
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include

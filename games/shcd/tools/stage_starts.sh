@@ -10,18 +10,7 @@ first=${2:-0}; last=${3:-73}; frames=${4:-4000}
 out=$g/build/starts; mkdir -p $out
 one() {
   local k=$1 m=$out/stage$1
-  python3 -c "
-import sys
-k, n = int(sys.argv[1]), int(sys.argv[2]); m = {}
-def press(at, b, d=4):
-    for i in range(at, at + d): m[i] = b
-press(300, 0x80); press(420, 0x80)                     # BIOS menu: Start, then CD-ROM
-for j, b in enumerate([1, 2, 2, 4, 8, 0x10]): press(1200 + j * 20, b, 6)    # the code
-for j in range(2 * k): press(1400 + j * 12, 2, 3)      # Down: the cursor moves every second press
-s = 1400 + 24 * k + 30; press(s, 0x80)                 # Start: the entry
-for i in range(s + 200, n):                            # then right, C every 90 frames
-    m[i] = 0x08 | (0x20 if (i - s) % 90 < 10 else 0)
-open(sys.argv[3], 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(n)))" $k $frames $m.txt
+  python3 $g/tools/stage_movie.py $k $frames $m.txt
   rm -rf $m.c $m.i; mkdir -p $m.c $m.i
   GENRECOMP_MOVIE=$m.txt PS_OVERLAY_LOG=1 PS_INTERP_COVER=$m.cov PS_RENDERER=native PS_FRAMES_DIR=$m.c PS_FRAMES_EVERY=500 \
     $g/build/shcd --headless --frames $frames $cue 2>&1 | grep 'overlay miss' > $m.miss

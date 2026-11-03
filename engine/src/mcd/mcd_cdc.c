@@ -41,7 +41,7 @@ static long now(void) { return (long)(g_scyc / 7); }
 
 static void level5(void) {
     McdIrq *q = &g_mcd.cdc_irq;
-    if (!q->pending) { q->pending = true; mcd_irq_sync(); }
+    if (q->enable && !q->pending) { q->pending = true; mcd_irq_sync(); }   /* only while enabled (the reference) */
 }
 static void level5_clear(void) {
     McdIrq *q = &g_mcd.cdc_irq;
@@ -62,6 +62,7 @@ static void transfer_end(void) {
         c.irq |= DTEI;
     }
     c.edt = true;
+    mcd_sub_wake(1u << 4);                          /* a sub CPU polling the transfer's end goes on */
 }
 
 static uint16_t ram_word(uint16_t a) { a &= 0x3FFE; return (uint16_t)(c.ram[a] << 8 | c.ram[a + 1]); }
@@ -269,3 +270,9 @@ uint16_t mcd_cdc_stopwatch(void) { return c.stopwatch & 0xFFF; }
 void mcd_cdc_stopwatch_reset(void) { c.stopwatch = 0; }
 void mcd_cdc_clock(void) { c.stopwatch = (c.stopwatch + 1) & 0xFFF; }
 void mcd_cdc_power(void) { memset(&c, 0, sizeof c); cdc_reset(); c.host = 0xFFFF; c.dma_address = 0xFFFF; }
+
+/* ps_state.c: the CDC (registers, buffer, DMA and decoder positions) */
+void ps_state_blob(void *p, unsigned long n);
+#define B(v) ps_state_blob(&(v), sizeof (v))
+void mcd_cdc_state(void) { B(c); }
+#undef B

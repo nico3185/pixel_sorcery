@@ -48,6 +48,8 @@ static bool raw_down(SDL_Joystick *j, int c) {
     if (c < 100) return SDL_JoystickGetButton(j, c);
     return SDL_JoystickGetAxis(j, c - 100) > 16000;
 }
+/* a gamepad button held (SDL_GameControllerButton), for the player's fast forward (platform_sdl.c) */
+bool input_pad_button(int b) { return s_pad && SDL_GameControllerGetButton(s_pad, (SDL_GameControllerButton)b); }
 bool input_pad_name(char *out, size_t n) {
     if (!s_pad) return false;
     snprintf(out, n, "%s", SDL_GameControllerName(s_pad)); return true;

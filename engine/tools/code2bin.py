@@ -75,6 +75,10 @@ def assemble(insns):
                     reg = int(re.search(r'd([0-7])\s*$', t[:-3].strip()).group(1))
                     opw = base | reg << 9 | sz << 6 | 0x3C
                     b[0], b[1] = opw >> 8, opw & 0xFF
+                mm = re.match(r'move\.l #\$([0-9a-f]+), d([0-7])$', t)
+                if mm and len(b) == 2:                   # as shortened MOVE.L #imm,Dn to MOVEQ: the long form back
+                    v, r = int(mm.group(1), 16), int(mm.group(2))
+                    b = bytearray([0x20 | r << 1, 0x3C]) + v.to_bytes(4, 'big')
                 out[a] = bytes(b)
             if len(later) >= len(pending): break
             pending = sorted(later)

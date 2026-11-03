@@ -226,11 +226,16 @@ void ps_hw_end_frame(unsigned int cycles) {
         s_pad[p].latency = (int)(s_pad[p].latency - cycles) > 0 ? s_pad[p].latency - cycles : 0;
 }
 
+static uint8_t s_version = 0x80 | 0x20;
+/* the version register's region bits and expansion bit (bit 5 clear: the Mega CD is attached); set
+ * before ps_hw_reset */
+void ps_hw_set_version(uint8_t v) { s_version = v; }
+
 void ps_hw_reset(void) {
     memset(work_ram, 0, sizeof work_ram);
     memset(zram, 0, sizeof zram);
     memset(s_io, 0, sizeof s_io);
-    s_io[0] = 0x80 | 0x20;                        /* overseas, NTSC, no expansion unit */
+    s_io[0] = s_version;                          /* overseas, NTSC, no expansion unit (a disc: ps_hw_set_version) */
     s_io[7] = 0xFF; s_io[0x0A] = 0xFF; s_io[0x0D] = 0xFB;
     for (int p = 0; p < 2; p++) { s_pad[p].state = 0x40; s_pad[p].latency = 0; }
     zstate = 0; s_zbank = 0;
@@ -259,12 +264,13 @@ static void z80_area_write(uint32_t a, uint8_t v) {
 void     mcd_main_write(uint32_t a, bool upper, bool lower, uint16_t data);
 uint16_t mcd_main_io_read(uint32_t a, uint16_t data);
 void     mcd_main_io_write(uint32_t a, bool upper, bool lower, uint16_t data);
+void     mcd_main_io_access(uint32_t a, int size, bool write, uint16_t v);
 static bool mcd_io(uint32_t a) { return g_ps_mcd && (a & 0xFFFF00) == 0xA12000; }
 
 uint8_t ps_hw_read8(uint32_t a) {
     a &= 0xFFFFFF;
-    if (g_ps_mcd && a < 0x400000) { uint16_t w = mcd_main_read(a & ~1u, 0xFFFF, false); return (uint8_t)((a & 1) ? w : w >> 8); }
-    if (mcd_io(a)) { uint16_t w = mcd_main_io_read(a & ~1u, 0xFFFF); return (uint8_t)((a & 1) ? w : w >> 8); }
+    if (g_ps_mcd && a < 0x800000) { uint16_t w = mcd_main_read(a & ~1u, 0xFFFF, false); return (uint8_t)((a & 1) ? w : w >> 8); }
+    if (mcd_io(a)) { mcd_main_io_access(a, 1, false, 0); uint16_t w = mcd_main_io_read(a & ~1u, 0xFFFF); return (uint8_t)((a & 1) ? w : w >> 8); }
     if ((int)(a >> 16) == s_sram_bank) return s_sram[a & 0xFFFF];
     if (a < 0x400000) return READ_BYTE(s_rom, a & s_rom_mask);
     if (a >= 0xE00000) return READ_BYTE(work_ram, a & 0xFFFF);
@@ -283,8 +289,8 @@ uint8_t ps_hw_read8(uint32_t a) {
 
 uint16_t ps_hw_read16(uint32_t a) {
     a &= 0xFFFFFE;
-    if (g_ps_mcd && a < 0x400000) return mcd_main_read(a, 0xFFFF, false);
-    if (mcd_io(a)) return mcd_main_io_read(a, 0xFFFF);
+    if (g_ps_mcd && a < 0x800000) return mcd_main_read(a, 0xFFFF, false);
+    if (mcd_io(a)) { mcd_main_io_access(a, 2, false, 0); return mcd_main_io_read(a, 0xFFFF); }
     if ((int)(a >> 16) == s_sram_bank) return (uint16_t)(s_sram[a & 0xFFFF] << 8 | s_sram[(a & 0xFFFF) + 1]);
     if (a < 0x400000) return *(uint16_t *)(s_rom + (a & s_rom_mask));
     if (a >= 0xE00000) return *(uint16_t *)(work_ram + (a & 0xFFFF));
@@ -304,8 +310,8 @@ uint16_t ps_hw_read16(uint32_t a) {
 
 void ps_hw_write8(uint32_t a, uint8_t v) {
     a &= 0xFFFFFF;
-    if (g_ps_mcd && a < 0x400000) { mcd_main_write(a & ~1u, !(a & 1), a & 1, (uint16_t)(v << 8 | v)); return; }
-    if (mcd_io(a)) { mcd_main_io_write(a & ~1u, !(a & 1), a & 1, (uint16_t)(v << 8 | v)); return; }
+    if (g_ps_mcd && a < 0x800000) { mcd_main_write(a & ~1u, !(a & 1), a & 1, (uint16_t)(v << 8 | v)); return; }
+    if (mcd_io(a)) { mcd_main_io_access(a, 1, true, (uint16_t)(v << 8 | v)); mcd_main_io_write(a & ~1u, !(a & 1), a & 1, (uint16_t)(v << 8 | v)); return; }
     if (a >= 0xE00000) { WRITE_BYTE(work_ram, a & 0xFFFF, v); return; }
     if ((int)(a >> 16) == s_sram_bank) { if (!s_sram_wp) s_sram[a & 0xFFFF] = v; return; }
     if (a == 0xA130F1) { sram_control(v); return; }
@@ -324,8 +330,8 @@ void ps_hw_write8(uint32_t a, uint8_t v) {
 
 void ps_hw_write16(uint32_t a, uint16_t v) {
     a &= 0xFFFFFE;
-    if (g_ps_mcd && a < 0x400000) { mcd_main_write(a, true, true, v); return; }
-    if (mcd_io(a)) { mcd_main_io_write(a, true, true, v); return; }
+    if (g_ps_mcd && a < 0x800000) { mcd_main_write(a, true, true, v); return; }
+    if (mcd_io(a)) { mcd_main_io_access(a, 2, true, v); mcd_main_io_write(a, true, true, v); return; }
     if (a >= 0xE00000) { *(uint16_t *)(work_ram + (a & 0xFFFF)) = v; return; }
     if ((int)(a >> 16) == s_sram_bank) { if (!s_sram_wp) { s_sram[a & 0xFFFF] = (uint8_t)(v >> 8); s_sram[(a & 0xFFFF) + 1] = (uint8_t)v; } return; }
     if (a == 0xA130F0) { sram_control((uint8_t)v); return; }
@@ -359,7 +365,7 @@ uint8_t ps_hw_z80_read(uint16_t a) {
     default: {
         z80_bus_access();
         uint32_t addr = s_zbank | (a & 0x7FFF);
-        if (g_ps_mcd && addr < 0x400000) { uint16_t w = mcd_main_read(addr & ~1u, 0xFFFF, false); return (uint8_t)((addr & 1) ? w : w >> 8); }
+        if (g_ps_mcd && addr < 0x800000) { uint16_t w = mcd_main_read(addr & ~1u, 0xFFFF, false); return (uint8_t)((addr & 1) ? w : w >> 8); }
         if (addr < 0x400000) return READ_BYTE(s_rom, addr & s_rom_mask);
         return 0xFF;
     }
@@ -399,5 +405,6 @@ void ps_hw_state(void) {
     B(Z80); B(input); B(g_dma68k_end); B(s_zbank); B(s_io); B(s_pad);
     B(s_sram); B(s_sram_bank); B(s_sram_wp);
 #undef B
+    { void mcd_state(void); if (g_ps_mcd) mcd_state(); }   /* a disc: the Mega CD too (mcd.c) */
 }
 #endif
