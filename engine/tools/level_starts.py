@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""level_starts.py TITLE [ITEM ...]: one recording per act/stage, from power-on through the game's
+"""level_starts.py TITLE [ITEM ...] [--recipe FILE]: one recording per act/stage, from power-on through the game's
 own level select, played on the ORIGINAL (GPGX tracer) - controller input only, so sidebyside.py
 replays it on both sides like any session (RAM pokes would not be).
 
@@ -14,6 +14,13 @@ Recipe: games/TITLE/level_select.json (input frames and RAM addresses only):
   "also":   [[FRAME_AFTER_LOAD, "BTN", LEN], ...]   optional inputs once in the level (e.g. run right)
   "unit":   "poll"   every FRAME above counts controller reads instead (fed with PS_POLL_REPLAY):
             for a game that reads the pad on irregular frames during the code (SH3's title)
+
+"grid": {"cols": C, "rows": R, "dx": F, "dy": F, "play": F, "pre": [...]} (with debug mode): each item
+  becomes C x R starts NAME-gCCRR - after "pre" (the debug code's in-level key, e.g. [[30, "B", 3]]),
+  fly right c*dx frames then down r*dy frames, B (back to the player), then "also" counted from
+  there (play): starts sampled evenly over the level, controller input only.
+--recipe FILE: another recipe in games/TITLE (e.g. level_select_debug.json, items named dbg-...),
+its starts kept beside the others.
 
 Writes games/TITLE/recordings/start-NAME.polls (git-ignored), its PC coverage
 build/cover/start-NAME.bin (kpi.py KPI A, cover_loop.sh's exploration sources) and the traced
@@ -115,14 +122,32 @@ def run(t, g, rom, cfg, item, name):
 
 
 def main():
-    t = sys.argv[1]
+    args = sys.argv[1:]
+    recipe = 'level_select.json'
+    if '--recipe' in args:
+        i = args.index('--recipe'); recipe = args[i + 1]; del args[i:i + 2]
+    t = args[0]
     g = os.path.join(REPO, 'games', t)
-    cfg = json.load(open(os.path.join(g, 'level_select.json')))
+    cfg = json.load(open(os.path.join(g, recipe)))
     sbs = json.load(open(os.path.join(g, 'sidebyside.json')))
     rom = os.path.abspath(os.path.join(os.environ.get('PS_ROMS', os.path.join(REPO, '..', 'roms')), sbs['rom']))
-    items = sys.argv[2:] or list(cfg['items'])
+    items = args[1:] or list(cfg['items'])
+    jobs = [(cfg, i, cfg['items'][i]) for i in items]
+    gr = cfg.get('grid')
+    if gr:                                     # every item as a C x R matrix of starts (debug flight)
+        jobs = []
+        for i in items:
+            for c in range(gr['cols']):
+                for r in range(gr['rows']):
+                    at = 40
+                    a = [list(x) for x in gr.get('pre', [])]
+                    if c: a.append([at, 'RIGHT', c * gr['dx']]); at += c * gr['dx'] + 4
+                    if r: a.append([at, 'DOWN', r * gr['dy']]); at += r * gr['dy'] + 4
+                    a.append([at, 'B', 3]); at += 10
+                    a += [[at + fa, b, n] for fa, b, n in cfg.get('also', []) if fa < gr['play']]
+                    jobs.append((dict(cfg, also=a), i, f"{cfg['items'][i]}-g{c:02d}{r:02d}"))
     with ThreadPoolExecutor(int(os.environ.get('STARTS_JOBS', '4'))) as ex:
-        for line in ex.map(lambda i: run(t, g, rom, cfg, i, cfg['items'][i]), items):
+        for line in ex.map(lambda j: run(t, g, rom, j[0], j[1], j[2]), jobs):
             print(line, flush=True)
 
 

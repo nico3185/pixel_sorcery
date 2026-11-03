@@ -1,0 +1,169 @@
+{
+ "_doc": "SH1 grid starts: the debug-mode recipe's way in (level select + debug codes), then per level 10 x 10 starts: B (debug on), fly right c*80 then down r*20 frames, B (Sonic again), 10 s of running right and jumping. Starts sampled evenly over each level, controller input only. engine/tools/level_starts.py --recipe starts_grid.json (not run by cover_all.sh: 100 starts per level; GHZ1 added nothing, 2026-11-01)",
+ "code": [
+  [
+   560,
+   "UP",
+   3
+  ],
+  [
+   570,
+   "DOWN",
+   3
+  ],
+  [
+   580,
+   "LEFT",
+   3
+  ],
+  [
+   590,
+   "RIGHT",
+   3
+  ],
+  [
+   610,
+   "UP",
+   3
+  ],
+  [
+   620,
+   "C",
+   3
+  ],
+  [
+   630,
+   "DOWN",
+   3
+  ],
+  [
+   640,
+   "C",
+   3
+  ],
+  [
+   650,
+   "LEFT",
+   3
+  ],
+  [
+   660,
+   "C",
+   3
+  ],
+  [
+   670,
+   "RIGHT",
+   3
+  ],
+  [
+   680,
+   "C",
+   3
+  ],
+  [
+   710,
+   "A+START",
+   10
+  ]
+ ],
+ "move": {
+  "first": 850,
+  "every": 16,
+  "button": "DOWN",
+  "len": 3
+ },
+ "select": {
+  "after": 40,
+  "button": "START",
+  "len": 3
+ },
+ "items": {
+  "0": "grid-GHZ1",
+  "1": "grid-GHZ2",
+  "2": "grid-GHZ3",
+  "3": "grid-MZ1",
+  "4": "grid-MZ2",
+  "5": "grid-MZ3",
+  "6": "grid-SYZ1",
+  "7": "grid-SYZ2",
+  "8": "grid-SYZ3",
+  "9": "grid-LZ1",
+  "10": "grid-LZ2",
+  "11": "grid-LZ3",
+  "12": "grid-SLZ1",
+  "13": "grid-SLZ2",
+  "14": "grid-SLZ3",
+  "15": "grid-SBZ1",
+  "16": "grid-SBZ2",
+  "17": "grid-SBZ3",
+  "18": "grid-FZ",
+  "19": "grid-SS1"
+ },
+ "check": {
+  "mode": "FFF600",
+  "value": "0C",
+  "settle": 240,
+  "load_max": 900,
+  "zone": "FFFE10"
+ },
+ "also": [
+  [
+   0,
+   "RIGHT",
+   600
+  ],
+  [
+   30,
+   "C",
+   12
+  ],
+  [
+   120,
+   "C",
+   12
+  ],
+  [
+   210,
+   "C",
+   12
+  ],
+  [
+   300,
+   "C",
+   12
+  ],
+  [
+   390,
+   "C",
+   12
+  ],
+  [
+   480,
+   "C",
+   12
+  ],
+  [
+   570,
+   "C",
+   12
+  ]
+ ],
+ "item_mode": {
+  "19": "10"
+ },
+ "grid": {
+  "cols": 10,
+  "rows": 10,
+  "dx": 80,
+  "dy": 20,
+  "play": 600,
+  "pre": [
+   [
+    30,
+    "B",
+    3
+   ]
+  ]
+ }
+}

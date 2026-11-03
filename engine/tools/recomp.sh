@@ -7,6 +7,7 @@
 # GPGX's Z80 + chips, and the native synth's output must match GPGX's spectrally (librosa).
 set -eu; setopt pipefail
 eng=${0:A:h}/..; rom=${1:A}; game=${2:A}; shift 2
+[[ $OSTYPE == (msys|cygwin)* ]] && { eng=$(cygpath -m $eng); rom=$(cygpath -m $rom); game=$(cygpath -m $game); }   # MSYS2: C:/... paths for native tools
 frames=3000; [[ ${1:-} == --frames ]] && frames=$2
 py=$eng/.venv/bin/python
 [[ -x $py ]] || { python3 -m venv $eng/.venv; $eng/.venv/bin/pip -q install capstone; }

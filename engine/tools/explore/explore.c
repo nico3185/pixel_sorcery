@@ -64,6 +64,8 @@
  *                         power-on, a cell every F frames of it (default 600): exploration
  *                         branches off anywhere along a person's play
  *   --camera SHIFT        cell variables any title has: the camera (plane-A scroll X, Y) >> SHIFT
+ *   --image WxH:LEVELS    the screen shrunk to WxH blocks of mean brightness in LEVELS steps, part of
+ *                         the cell (Go-Explore's cell; 11x8:8): cells on a title with no RAM mapped yet
  *   --seconds N           stop after N seconds (wall clock)   --max-cells N (default 3000)
  *   --routes K            at the end, DIR/cover_NN.polls: the K routes (power-on, per poll,
  *                         PS_POLL_REPLAY format) that together reach the most new code,
@@ -124,8 +126,28 @@ static int parse_vars(const char *s, var_t *v, int max) {
 }
 
 static int s_cam = -1;    /* --camera SHIFT: the VDP's plane-A scroll (camera X, Y) >> SHIFT is a cell variable */
+/* --image WxH:LEVELS: the screen shrunk to WxH, each block's mean brightness in LEVELS steps, is
+ * part of the cell (Go-Explore's own cell: a game whose RAM is not mapped yet still gets cells) */
+static int s_img_w, s_img_h, s_img_lv;
+static uint64_t image_hash(uint64_t h) {
+    int w = bitmap.viewport.w, ht = bitmap.viewport.h;
+    if (w <= 0 || ht <= 0) return h;
+    for (int by = 0; by < s_img_h; by++)
+        for (int bx = 0; bx < s_img_w; bx++) {
+            int x0 = bx * w / s_img_w, x1 = (bx + 1) * w / s_img_w, y0 = by * ht / s_img_h, y1 = (by + 1) * ht / s_img_h;
+            unsigned long sum = 0, n = 0;
+            for (int y = y0; y < y1; y += 2)
+                for (int x = x0; x < x1; x += 2) {
+                    uint32_t c = *(uint32_t *)(bitmap.data + (y + bitmap.viewport.y) * bitmap.pitch + (x + bitmap.viewport.x) * 4);
+                    sum += ((c >> 16 & 0xFF) * 3 + (c >> 8 & 0xFF) * 6 + (c & 0xFF)) / 10; n++;
+                }
+            h = (h ^ (n ? sum / n * (unsigned)s_img_lv / 256 : 0)) * 1099511628211ull;
+        }
+    return h;
+}
 static uint64_t cell_key(void) {
     uint64_t h = 1469598103934665603ull;
+    if (s_img_lv) h = image_hash(h);
     if (s_cam >= 0) {
         unsigned hs = *(uint16_t *)(vram + (((reg[13] & 0x3F) << 10) & 0xFFFE));
         unsigned vs = *(uint16_t *)(vsram);
@@ -221,7 +243,7 @@ static int s_skip_render;     /* --fast: no picture during bursts (screenshots r
 static void step(uint16_t pad) {
     io_set_pad_state(0, pad);
     io_set_pad_state(1, 0);
-    system_frame_gen(s_skip_render);
+    system_frame_gen(s_skip_render && !s_img_lv);     /* image cells need the picture */
     audio_update(s_audio);
     s_frame++;
 }
@@ -656,6 +678,7 @@ int main(int argc, char *argv[]) {
         else if (!strcmp(a, "--seconds")) { seconds = atol(v); i++; }
         else if (!strcmp(a, "--max-cells")) { s_max_cells = atol(v); i++; }
         else if (!strcmp(a, "--camera")) { s_cam = atoi(v); i++; }
+        else if (!strcmp(a, "--image")) { if (sscanf(v, "%dx%d:%d", &s_img_w, &s_img_h, &s_img_lv) != 3 || s_img_w <= 0 || s_img_h <= 0 || s_img_lv <= 0) s_img_lv = 0; i++; }
         else if (!strcmp(a, "--routes")) { routes = atoi(v); i++; }
         else if (!strcmp(a, "--seed")) { seed = (unsigned)atol(v); i++; }
         else if (!strcmp(a, "--prior")) { if (!load_prior(v)) { fprintf(stderr, "explore: no prior in %s\n", v); return 1; } i++; }

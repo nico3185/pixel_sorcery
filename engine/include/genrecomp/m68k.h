@@ -496,15 +496,16 @@ static inline unsigned m68k_cyc_divs(int32_t d, int16_t s)
         g_m68k.flag_C = false; \
         break; \
     } \
-    int32_t _m68_q = _m68_d / (int32_t)_m68_s; \
-    int32_t _m68_rem = _m68_d % (int32_t)_m68_s; \
+    /* 64-bit: $80000000 / -1 overflows int32_t, which traps on x86 (SIGFPE) */ \
+    int64_t _m68_q = (int64_t)_m68_d / _m68_s; \
+    int64_t _m68_rem = (int64_t)_m68_d % _m68_s; \
     if (_m68_q > 32767 || _m68_q < -32768) { \
         g_m68k.flag_V = true; \
         g_m68k.flag_C = false; \
     } else { \
         g_m68k.flag_V = false; \
         g_m68k.flag_C = false; \
-        uint32_t _m68_res = ((uint16_t)_m68_rem << 16) | ((uint16_t)_m68_q & 0xFFFF); \
+        uint32_t _m68_res = ((uint32_t)(uint16_t)_m68_rem << 16) | (uint16_t)_m68_q; \
         m68k_update_nz16((uint16_t)_m68_q); \
         (dst) = _m68_res; \
     } \

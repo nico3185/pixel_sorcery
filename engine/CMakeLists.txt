@@ -42,6 +42,9 @@ add_library(genrecomp_native STATIC
     src/ps_hw.c
     src/ps_wide.c
     src/ps_menu.c
+    src/s68k_interp.c                                  # the native Mega CD: sub CPU and hardware
+    src/mcd/mcd.c src/mcd/mcd_bus.c src/mcd/mcd_main.c src/mcd/mcd_cdc.c src/mcd/mcd_cdd.c
+    src/mcd/mcd_disc.c src/mcd/mcd_parts.c src/mcd/mcd_gpu.c
 )
 target_include_directories(genrecomp_native
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -55,6 +58,15 @@ if(NOT PS_GIT_VERSION AND DEFINED ENV{PS_VERSION})   # no git (the app's tree): 
 endif()
 set_source_files_properties(src/ps_menu.c PROPERTIES COMPILE_DEFINITIONS "PS_VERSION=\"${PS_GIT_VERSION}\"")
 target_link_libraries(genrecomp_native PUBLIC SDL2::SDL2 ZLIB::ZLIB)
+# MinGW: the per-title data defaults (Z80 driver, cycle table, hooks, cheats) are archive members
+# linked after everything, pulled only when no title object defines them - weak data is
+# unreliable on PE/COFF (src/defaults/, ps_audio.c)
+if(MINGW)
+    add_library(ps_defaults STATIC src/defaults/z80_driver.c src/defaults/m68k_cycles.c
+        src/defaults/m68k_hooks.c src/defaults/cheats.c)
+    target_include_directories(ps_defaults PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(genrecomp_native PUBLIC ps_defaults)
+endif()
 # libm (sin, pow, ...); MSVC's CRT has it built in
 if(NOT WIN32)
     target_link_libraries(genrecomp_native PUBLIC m)
@@ -75,6 +87,12 @@ if(NOT WIN32)
     target_link_libraries(ps_launcher PRIVATE m)
 endif()
 
+# --- Instruction edge cases (ctest), header only: also in native-only builds (Windows CI) ---
+enable_testing()
+add_executable(genrecomp_test_m68k_div tests/test_m68k_div.c)
+target_include_directories(genrecomp_test_m68k_div PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME m68k_div COMMAND genrecomp_test_m68k_div)
+
 # --- Genesis Plus GX hardware backend (static lib) ---
 set(GPGX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ext/Genesis-Plus-GX/core)
 # Without its sources (the app's bundled tree, a plain download) only the native runtime and the
@@ -84,14 +102,16 @@ if(NOT EXISTS ${GPGX_DIR}/system.c)
     return()
 endif()
 # PixelSorcery hooks (Z80 run/reset, Z80 trace; cpu_hook declared extern) on top of the pinned submodule
+# --ignore-whitespace: the submodule mixes CRLF and LF files; Git for Windows converts them
+# (core.autocrlf), MSYS2/Linux git does not, and the patch context then fails to match.
 set(GPGX_PATCH ${CMAKE_CURRENT_SOURCE_DIR}/patches/genesis-plus-gx.patch)
 # games configured in parallel on a fresh checkout would all try to apply it: one at a time
 file(LOCK ${CMAKE_CURRENT_SOURCE_DIR}/ext/.gpgx-patch.lock GUARD FILE)
-execute_process(COMMAND git apply --reverse --check ${GPGX_PATCH}
+execute_process(COMMAND git apply --reverse --check --ignore-whitespace ${GPGX_PATCH}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ext/Genesis-Plus-GX
     RESULT_VARIABLE GPGX_PATCHED OUTPUT_QUIET ERROR_QUIET)
 if(NOT GPGX_PATCHED EQUAL 0)
-    execute_process(COMMAND git apply ${GPGX_PATCH}
+    execute_process(COMMAND git apply --ignore-whitespace ${GPGX_PATCH}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ext/Genesis-Plus-GX
         RESULT_VARIABLE GPGX_APPLY)
     if(NOT GPGX_APPLY EQUAL 0)
@@ -235,6 +255,9 @@ add_library(genrecomp STATIC
     src/ps_menu.c
     src/ps_megacd.c
 )
+if(MINGW)
+    target_link_libraries(genrecomp PUBLIC ps_defaults)
+endif()
 target_include_directories(genrecomp
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -269,7 +292,7 @@ endif()
 # --- Example: minimal recomp ---
 if(GENRECOMP_BUILD_EXAMPLES)
     add_executable(genrecomp_minimal examples/minimal/main.c)
-    target_link_libraries(genrecomp_minimal PRIVATE genrecomp SDL2::SDL2main)
+    target_link_libraries(genrecomp_minimal PRIVATE genrecomp)   # plain main: no SDL.h, so no SDL2main (MinGW: WinMain wants SDL_main)
 endif()
 
 # --- Runtime self-check (ctest) ---
@@ -293,7 +316,7 @@ target_compile_definitions(genrecomp_ref PRIVATE USE_32BPP_RENDERING LSB_FIRST H
 # --- Guided exploration (Go-Explore on the reference interpreter, hints when stuck) ---
 add_executable(genrecomp_explore tools/explore/explore.c tools/explore/zstate.c)
 find_package(ZLIB REQUIRED)
-target_link_libraries(genrecomp_explore PRIVATE genrecomp SDL2::SDL2main ZLIB::ZLIB)
+target_link_libraries(genrecomp_explore PRIVATE genrecomp ZLIB::ZLIB)
 get_target_property(_ref_inc genrecomp_ref INCLUDE_DIRECTORIES)
 target_include_directories(genrecomp_explore PRIVATE ${_ref_inc})
 target_compile_definitions(genrecomp_explore PRIVATE USE_32BPP_RENDERING LSB_FIRST HAVE_NO_SPRITE_LIMIT)
@@ -309,7 +332,7 @@ target_compile_definitions(ps_env PRIVATE USE_32BPP_RENDERING LSB_FIRST HAVE_NO_
 # --- Entry-point tracer (seed bootstrap): -DGENRECOMP_TRACE=ON ---
 if(GENRECOMP_TRACE)
     add_executable(genrecomp_trace tools/trace_runner/main.c)
-    target_link_libraries(genrecomp_trace PRIVATE genrecomp SDL2::SDL2main)
+    target_link_libraries(genrecomp_trace PRIVATE genrecomp)
     target_include_directories(genrecomp_trace PRIVATE ${GPGX_DIR} ${GPGX_DIR}/m68k ${GPGX_DIR}/z80
         ${GPGX_DIR}/sound ${GPGX_DIR}/cart_hw ${GPGX_DIR}/cart_hw/svp ${GPGX_DIR}/cd_hw
         ${GPGX_DIR}/input_hw ${GPGX_DIR}/ntsc ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -70,6 +70,8 @@ uint16_t bus_peek16(uint32_t addr) {
     if (addr >= 0x800000 && addr < 0xE00000) addr |= 0xFF0000;  /* DMA source: work RAM mirror */
 #ifdef PS_NATIVE
     if (addr >= 0xE00000) return *(uint16_t *)(work_ram + (addr & 0xFFFF));
+    {   extern bool g_ps_mcd; uint16_t mcd_main_read(uint32_t, uint16_t, bool);   /* booted from CD: BIOS, PRG-RAM, Word RAM */
+        if (g_ps_mcd && addr < 0x400000) return mcd_main_read(addr, 0xFFFF, false); }
     if (addr < 0x400000) { uint32_t n; const uint8_t *rom = ps_hw_rom(&n);
         uint32_t m = 1; while (m < n) m <<= 1; return *(uint16_t *)(rom + (addr & (m - 1))); }
     return 0xFFFF;
@@ -301,6 +303,12 @@ static void bus_lines(void) {
         mcycles_vdp += MCYCLES_PER_LINE;
 #ifndef PS_NATIVE
         { void ps_megacd_line(unsigned int); ps_megacd_line(mcycles_vdp); }   /* sub CPU + CD hardware, this line */
+#else
+        {   /* native Mega CD: the sub CPU for one line - 796 of its clocks, the reference's whole number
+             * (3420 master clocks x 50 MHz / 53.69 MHz = 3184 quarter clocks, the fraction dropped) */
+            extern bool g_ps_mcd; void mcd_run(unsigned);
+            if (g_ps_mcd) mcd_run(796);
+        }
 #endif
         v_counter = (v_counter + 1) % lines_per_frame;
         if (v_counter == lines_per_frame - 1) { status &= ~0x08; s_hcounter = g_ps_vdp.reg[10]; }

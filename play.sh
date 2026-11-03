@@ -12,6 +12,7 @@
 #   only a minute is given). The new session file contains the replayed part too.
 set -e; setopt pipefail
 here=${0:A:h}
+[[ $OSTYPE == (msys|cygwin)* ]] && here=$(cygpath -m $here)   # MSYS2: C:/... paths for native tools
 ROOT=$here; source $here/engine/tools/titles.zsh
 if [[ $# -eq 0 ]]; then
   print "usage: ./play.sh TITLE [options]   (./play.sh TITLE --help)"; print "titles (the code, a name or a unique prefix):"
@@ -20,8 +21,10 @@ fi
 title=$(ps_resolve $1) || { print -u2 "unknown or ambiguous title '$1'; ./play.sh lists them"; exit 2; }
 shift
 cfg=$here/games/$title/sidebyside.json
-exe=$(python3 -c "import json;print(json.load(open('$cfg')).get('exe','build/$title'))")
-romdef=$(python3 -c "import json;print(json.load(open('$cfg')).get('rom',''))")
+exe=$(python3 -c "import json,sys;sys.stdout.write(json.load(open(sys.argv[1])).get('exe','build/$title'))" $cfg)
+native=0; args=(); for a in "$@"; do [[ $a == --native ]] && native=1 || args+=("$a"); done; set -- "${args[@]}"
+(( native )) && exe=build/${title}_native             # --native: the build without the emulator core (SHCD)
+romdef=$(python3 -c "import json,sys;sys.stdout.write(json.load(open(sys.argv[1])).get('rom',''))" $cfg)
 if [[ ${1:-} == (-h|--help) ]]; then cat <<'HELP'
 Usage: ./play.sh TITLE [--resume [SESSION.polls] MINUTE] [game options]
 
@@ -34,6 +37,7 @@ Usage: ./play.sh TITLE [--resume [SESSION.polls] MINUTE] [game options]
   --list               list recorded sessions (script and app) with duration, logic
                        settings and errors
   --fullscreen         start fullscreen
+  --native             SHCD: the native Mega CD build (no emulator core; no music yet)
   -h, --help           this help
 
 Controls: arrows, Z/X/C = A/B/C, Return = Start, Esc quits; gamepads by position.
@@ -106,4 +110,8 @@ export PS_POLL_RECORD=${PS_POLL_RECORD:-sessions/$stamp.polls}
 exec 2> >(tee sessions/$stamp.log >&2)
 print "session: $game/sessions/$stamp.{polls,log}"
 [[ -n $resume ]] && export PS_RESUME=$resume
+case $exe in
+  *_native) print "build: ${exe:t} - native Mega CD (no emulator core; work in progress: no music, special stages not drawn)" ;;
+  *) [[ $title == shcd ]] && print "build: ${exe:t} - Mega CD on the emulator core (the reference build; ./play.sh $title --native for the native one)" ;;
+esac
 exec env PS_RENDERER=${PS_RENDERER:-native} PS_Z80=${PS_Z80:-recomp} ${exe:A} "$@" $rom

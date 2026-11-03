@@ -26,3 +26,9 @@ if(OVERLAYS)
     target_compile_definitions(shcd PRIVATE PS_OVERLAYS)
 endif()
 target_link_libraries(shcd PRIVATE genrecomp)
+
+# the same disc on the native Mega CD (engine/src/mcd: no emulator core; BACKLOG priority 0) - in
+# progress: everything interpreted for now (the overlays' key comes from the core's Mega CD)
+add_executable(shcd_native src/main.c ${CMAKE_CURRENT_BINARY_DIR}/cycles.c)
+target_include_directories(shcd_native PRIVATE ${GENRECOMP_DIR}/include)
+target_link_libraries(shcd_native PRIVATE genrecomp_native)

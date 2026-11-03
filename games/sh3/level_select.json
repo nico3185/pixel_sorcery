@@ -1,5 +1,5 @@
 {
- "_doc": "SH3 level select: on the title animation (the pad is read on irregular frames, so per controller read: unit poll) Up, Up, Down, Down, Up, Up, Up, Up (checker $4288, table $42CA, sets $FFD0/$FFD2 = 0101), then Up on the title menu and Start (game mode $28); Down moves, Start loads. engine/tools/level_starts.py Items 8-9, 14-17 are zones not on this cart, 24-28 special stages and the sound test (not levels).",
+ "_doc": "SH3 level select: on the title animation (the pad is read on irregular frames, so per controller read: unit poll) Up, Up, Down, Down, Up, Up, Up, Up (checker $4288, table $42CA, sets $FFD0/$FFD2 = 0101), then Up on the title menu and Start (game mode $28); Down moves, Start loads. engine/tools/level_starts.py Items 8-9, 14-17 are zones not on this cart, 24-28 special stages and the sound test (26: game mode $2C, 27: $34 - entered as they are, numbers not chosen; 24, 25 stay on the menu, 28 is the title) (not levels).",
  "unit": "poll",
  "code": [
   [
@@ -89,7 +89,9 @@
   "20": "DPZ",
   "21": "CGZ",
   "22": "EMZ",
-  "23": "Z13"
+  "23": "Z13",
+  "26": "SPEC2C",
+  "27": "SPEC34"
  },
  "also": [
   [
@@ -872,5 +874,9 @@
    "C",
    12
   ]
- ]
+ ],
+ "item_mode": {
+  "26": "2C",
+  "27": "34"
+ }
 }

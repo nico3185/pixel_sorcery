@@ -2790,7 +2790,11 @@
     "0x0F6078": "sub_0F6078",
     "0x0F609E": "sub_0F609E",
     "0x0F60A4": "sub_0F60A4",
-    "0x0F60DE": "sub_0F60DE"
+    "0x0F60DE": "sub_0F60DE",
+    "0x00BC04": "sub_00BC04",
+    "0x00BBAC": "sub_00BBAC",
+    "0x006A24": "sub_006A24",
+    "0x00C620": "sub_00C620"
   },
   "hooks": {
     "0x00BBEC": "extern int ps_wide_sprite_x_range(int *lo, int *hi); int lo, hi; if (ps_wide_sprite_x_range(&lo, &hi)) { int x = (int16_t)g_m68k.d[0]; if (x >= lo && x < hi) goto sub_00BBF8; }",

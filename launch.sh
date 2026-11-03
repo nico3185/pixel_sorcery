@@ -6,6 +6,7 @@
 # ROMs: $ROMS, else roms/ (then ../roms) (passed as --roms; the app also keeps the ones you pick).
 set -e
 here=${0:A:h}
+[[ $OSTYPE == (msys|cygwin)* ]] && here=$(cygpath -m $here)   # MSYS2: C:/... paths for native tools
 shelves=(); rebuild=0
 for a in "$@"; do
   case $a in

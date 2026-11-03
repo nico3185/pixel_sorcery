@@ -21,7 +21,8 @@ ps_name() {     # ps_name FOLDER: the game's name (launchers/all.txt; other vers
       if [[ $1 == $b-* ]]; then                       # e.g. a later revision: the base name + (REV01)
         n="$(awk -F'|' -v t=$b '$1 == "game " t { print $2; exit }' $ROOT/launchers/all.txt) (${(U)${1#$b-}})"; break
       elif [[ $b == $1-* ]]; then                     # the shelf has the other region: Europe here
-        n="$(awk -F'|' -v t=$b '$1 == "game " t { print $2; exit }' $ROOT/launchers/all.txt | sed 's/ (.*)$//') (Europe)"; break
+        n=$(awk -F'|' -v t=$b '$1 == "game " t { print $2; exit }' $ROOT/launchers/all.txt | sed 's/ (.*)$//')
+        n="${n%-${(U)${b#$1-}}} (Europe)"; break     # a codename (WOI-US) loses its region too
       fi
     done
   fi

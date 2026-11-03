@@ -66,6 +66,12 @@ PS_ALTNAME(ps_cheat_names, ps_cheat_names_ps_default)
 extern int ps_cheat_count;
 int ps_cheat_count_ps_default = 0;
 PS_ALTNAME(ps_cheat_count, ps_cheat_count_ps_default)
+#elif defined(__MINGW32__)
+/* MinGW (PE/COFF): weak data is unreliable there (a .weak alias was read instead of the
+ * title's pointer; weak undefined refs do not link through .refptr): plain externs, the
+ * defaults are members of the ps_defaults archive, linked last (engine/src/defaults/). */
+extern const char *ps_cheat_names[];
+extern int ps_cheat_count;
 #else
 __attribute__((weak)) const char *ps_cheat_names[] = { 0 };
 __attribute__((weak)) int ps_cheat_count = 0;

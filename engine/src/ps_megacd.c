@@ -7,6 +7,7 @@
  * standard directory header when new (games otherwise stop at "RAM cartridge is not initialized")
  * and kept in Application Support/PixelSorcery/megacd/{scd,cart}.brm by players (not by tools).
  */
+#include "ps_portable.h"
 #include "shared.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -21,7 +22,16 @@
 static unsigned long s_cnt[2][0x200];               /* [word?][register >> 1 & 0x1FF] */
 static unsigned long s_pcm, s_cdd[16], s_mode[256], s_asic;
 static unsigned s_cdd_first;
+static FILE *s_cddlog;
 static void census_hook(int width, unsigned int a, unsigned int d) {
+    if (s_cddlog && (a & 0x8000) && ((a & 0x1FF) == 0x4B || ((a & 0x1FF) == 0x4A && width == 2))) {
+        extern long ps_frames; fprintf(s_cddlog, "%ld ", ps_frames);
+        for (int i = 0; i < 10; i++) { unsigned r = 0x42 + i; unsigned v = (r & 1) ? scd.regs[r >> 1].byte.l : scd.regs[r >> 1].byte.h;
+                                       if (r == 0x4B) v = d; fprintf(s_cddlog, "%X", v & 0xF); }
+        fprintf(s_cddlog, " (status before) ");
+        for (int i = 0; i < 10; i++) { unsigned r = 0x38 + i; fprintf(s_cddlog, "%X", ((r & 1) ? scd.regs[r >> 1].byte.l : scd.regs[r >> 1].byte.h) & 0xF); }
+        fprintf(s_cddlog, "\n"); fflush(s_cddlog);
+    }
     if (!(a & 0x8000)) { s_pcm++; return; }
     unsigned r = a & 0x1FF;
     s_cnt[width == 2][r >> 1]++;
@@ -44,6 +54,7 @@ static void census_write(void) {
 
 void ps_megacd_bios(void) {
     if (getenv("PS_SCD_CENSUS") && !ps_scd_write_hook) { ps_scd_write_hook = census_hook; atexit(census_write); }
+    if (getenv("PS_CDD_LOG") && !ps_scd_write_hook) { s_cddlog = fopen(getenv("PS_CDD_LOG"), "w"); ps_scd_write_hook = census_hook; }
     const char *dir = getenv("PS_SCD_BIOS"), *home = getenv("HOME");
     char def[512]; snprintf(def, sizeof def, "%s/Library/Application Support/PixelSorcery/bios", home ? home : ".");
     if (!dir || !*dir) dir = def;
@@ -77,7 +88,7 @@ void ps_megacd_brm(bool load_files, bool save) {
         { "scd.brm", scd.bram, sizeof scd.bram },
         { "cart.brm", scd.cartridge.area, scd.cartridge.id ? scd.cartridge.mask + 1 : 0 } };
     char dir[600]; brm_path("", dir, sizeof dir);
-    if (save) for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(dir, 0755); *q = '/'; }
+    if (save) for (char *q = dir + 1; *q; q++) if (*q == '/') { *q = 0; ps_mkdir(dir, 0755); *q = '/'; }
     for (int i = 0; i < 2; i++) {
         if (!b[i].size) continue;
         char p[700]; brm_path(b[i].name, p, sizeof p);
@@ -107,6 +118,8 @@ void ps_megacd_line(unsigned int line_end) {
         cdd.cycles += run * 3;
         if (cdd.cycles >= 500000 * 4) {
             cdd.cycles -= 500000 * 4;
+            {   static FILE *t; static int init; if (!init) { init = 1; const char *f = getenv("PS_CDD_TICKS"); if (f) t = fopen(f, "w"); }
+                if (t) { extern long ps_frames; fprintf(t, "%ld %u\n", ps_frames, v_counter); } }
             cdd_update();
             if (scd.regs[0x37 >> 1].byte.l & 0x04) {
                 scd.pending |= 1 << 4;

@@ -122,11 +122,17 @@ uint16_t ps_hw_rom_patch16(uint32_t addr, uint16_t value) {      /* returns the 
 const uint8_t *ps_hw_rom(uint32_t *size) { if (size) *size = s_rom_size; return s_rom; }
 
 /* ------------------------------------------------------------------ open bus */
+/* booted from a Mega CD disc (native Mega CD, src/mcd): $000000-$3FFFFF is the BIOS, PRG-RAM and
+ * Word RAM, $A12000-$A120FF the gate array */
+bool g_ps_mcd;
+uint16_t mcd_main_read(uint32_t a, uint16_t data, bool dma);
+
 /* Unmapped reads return the word the 68000 prefetched (its next instruction word). */
 static uint16_t prefetch16(void) {
     uint32_t pc = g_m68k_pf ? g_m68k_pf : g_m68k.pc;
     pc &= 0xFFFFFE;
     if (pc >= 0xE00000) return *(uint16_t *)(work_ram + (pc & 0xFFFF));
+    if (g_ps_mcd && pc < 0x400000) return mcd_main_read(pc, 0xFFFF, false);
     if (pc < 0x400000) return *(uint16_t *)(s_rom + (pc & s_rom_mask));
     return 0xFFFF;
 }
@@ -250,8 +256,15 @@ static void z80_area_write(uint32_t a, uint8_t v) {
     }
 }
 
+void     mcd_main_write(uint32_t a, bool upper, bool lower, uint16_t data);
+uint16_t mcd_main_io_read(uint32_t a, uint16_t data);
+void     mcd_main_io_write(uint32_t a, bool upper, bool lower, uint16_t data);
+static bool mcd_io(uint32_t a) { return g_ps_mcd && (a & 0xFFFF00) == 0xA12000; }
+
 uint8_t ps_hw_read8(uint32_t a) {
     a &= 0xFFFFFF;
+    if (g_ps_mcd && a < 0x400000) { uint16_t w = mcd_main_read(a & ~1u, 0xFFFF, false); return (uint8_t)((a & 1) ? w : w >> 8); }
+    if (mcd_io(a)) { uint16_t w = mcd_main_io_read(a & ~1u, 0xFFFF); return (uint8_t)((a & 1) ? w : w >> 8); }
     if ((int)(a >> 16) == s_sram_bank) return s_sram[a & 0xFFFF];
     if (a < 0x400000) return READ_BYTE(s_rom, a & s_rom_mask);
     if (a >= 0xE00000) return READ_BYTE(work_ram, a & 0xFFFF);
@@ -270,6 +283,8 @@ uint8_t ps_hw_read8(uint32_t a) {
 
 uint16_t ps_hw_read16(uint32_t a) {
     a &= 0xFFFFFE;
+    if (g_ps_mcd && a < 0x400000) return mcd_main_read(a, 0xFFFF, false);
+    if (mcd_io(a)) return mcd_main_io_read(a, 0xFFFF);
     if ((int)(a >> 16) == s_sram_bank) return (uint16_t)(s_sram[a & 0xFFFF] << 8 | s_sram[(a & 0xFFFF) + 1]);
     if (a < 0x400000) return *(uint16_t *)(s_rom + (a & s_rom_mask));
     if (a >= 0xE00000) return *(uint16_t *)(work_ram + (a & 0xFFFF));
@@ -289,6 +304,8 @@ uint16_t ps_hw_read16(uint32_t a) {
 
 void ps_hw_write8(uint32_t a, uint8_t v) {
     a &= 0xFFFFFF;
+    if (g_ps_mcd && a < 0x400000) { mcd_main_write(a & ~1u, !(a & 1), a & 1, (uint16_t)(v << 8 | v)); return; }
+    if (mcd_io(a)) { mcd_main_io_write(a & ~1u, !(a & 1), a & 1, (uint16_t)(v << 8 | v)); return; }
     if (a >= 0xE00000) { WRITE_BYTE(work_ram, a & 0xFFFF, v); return; }
     if ((int)(a >> 16) == s_sram_bank) { if (!s_sram_wp) s_sram[a & 0xFFFF] = v; return; }
     if (a == 0xA130F1) { sram_control(v); return; }
@@ -307,6 +324,8 @@ void ps_hw_write8(uint32_t a, uint8_t v) {
 
 void ps_hw_write16(uint32_t a, uint16_t v) {
     a &= 0xFFFFFE;
+    if (g_ps_mcd && a < 0x400000) { mcd_main_write(a, true, true, v); return; }
+    if (mcd_io(a)) { mcd_main_io_write(a, true, true, v); return; }
     if (a >= 0xE00000) { *(uint16_t *)(work_ram + (a & 0xFFFF)) = v; return; }
     if ((int)(a >> 16) == s_sram_bank) { if (!s_sram_wp) { s_sram[a & 0xFFFF] = (uint8_t)(v >> 8); s_sram[(a & 0xFFFF) + 1] = (uint8_t)v; } return; }
     if (a == 0xA130F0) { sram_control((uint8_t)v); return; }
@@ -340,6 +359,7 @@ uint8_t ps_hw_z80_read(uint16_t a) {
     default: {
         z80_bus_access();
         uint32_t addr = s_zbank | (a & 0x7FFF);
+        if (g_ps_mcd && addr < 0x400000) { uint16_t w = mcd_main_read(addr & ~1u, 0xFFFF, false); return (uint8_t)((addr & 1) ? w : w >> 8); }
         if (addr < 0x400000) return READ_BYTE(s_rom, addr & s_rom_mask);
         return 0xFF;
     }
