@@ -446,6 +446,7 @@ void genrecomp_trigger_vblank(void) {
     /* (recompiled code checks this and calls the VBlank handler) */
 }
 
+int genrecomp_present_width(void) { return s_present_w; }   /* the presented frame's width (widescreen) */
 const uint8_t *genrecomp_get_framebuffer(void) {
 #ifdef PS_NATIVE
     return s_present_buf;

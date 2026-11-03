@@ -619,12 +619,103 @@ static void pad_setup(uint8_t *frame, int width, uint32_t *buf) {
     while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }   /* the last press is not "OK" */
 }
 
+/* The rewind timeline (Backspace / left shoulder): the game paused on the last 30 seconds of
+ * snapshots (ps_state.c), the selected one full screen, a filmstrip of its neighbours (older to the
+ * left), a bar and its age. Left goes back, Right forward to the present; A/Return/Start plays from the
+ * selected moment, B/Esc/Backspace returns to the present unchanged. Held arrows repeat. */
+static bool s_rw_open;
+void ps_menu_rewind_request(void) { s_rw_open = true; }
+static void fill(uint32_t *fb, int pitch, int x, int y, int w, int h, uint32_t c) {
+    for (int j = y; j < y + h; j++) if (j >= 0 && j < GEN_RENDER_HEIGHT)
+        for (int i = x; i < x + w; i++) if (i >= 0 && i < pitch) fb[j * pitch + i] = c;
+}
+static void draw_rewind(uint32_t *buf, const uint8_t *frame, int width, int sel, int n) {
+    const uint32_t *ps_state_rewind_thumb(int, int *, int *, long *);
+    /* the selected moment, full size (the snapshots keep a half-size picture) */
+    int tw = 0, th = 0; long age = 0;
+    const uint32_t *t = sel ? ps_state_rewind_thumb(sel, &tw, &th, &age) : NULL;
+    if (t) {
+        for (int y = 0; y < GEN_RENDER_HEIGHT; y++)            /* the picture kept the frame's width */
+            for (int x = 0; x < width; x++) buf[y * width + x] = t[(y * th / GEN_RENDER_HEIGHT) * tw + x * tw / width];
+    } else memcpy(buf, frame, (size_t)width * GEN_RENDER_HEIGHT * 4);
+    /* top band: title and age */
+    for (int i = 0; i < width * 14; i++) buf[i] = (buf[i] >> 2) & 0x3F3F3F;
+    draw_text(buf, width, GEN_RENDER_HEIGHT, 6, 4, "<< REWIND", 0xFFE070);
+    char lab[24];
+    if (sel) snprintf(lab, sizeof lab, "-%ld S", (age + 30) / 60); else snprintf(lab, sizeof lab, "NOW");
+    draw_text(buf, width, GEN_RENDER_HEIGHT, width - 6 - (int)strlen(lab) * 6, 4, lab, 0xFFFFFF);
+    /* bottom band: filmstrip, bar, keys */
+    int by = GEN_RENDER_HEIGHT - 66;
+    for (int i = by * width; i < width * GEN_RENDER_HEIGHT; i++) buf[i] = (buf[i] >> 2) & 0x3F3F3F;
+    const int mw = 48, mh = 34, gap = 6;
+    for (int s = -2; s <= 2; s++) {
+        int step = sel - s, x = width / 2 - mw / 2 + s * (mw + gap), y = by + 4;   /* older to the left */
+        if (step < 0 || step > n) continue;
+        int w2, h2; long a2; const uint32_t *m = step ? ps_state_rewind_thumb(step, &w2, &h2, &a2) : NULL;
+        fill(buf, width, x - 1, y - 1, mw + 2, mh + 2, s == 0 ? 0xFFE070 : 0x404050);
+        for (int j = 0; j < mh; j++)
+            for (int i = 0; i < mw; i++) {
+                uint32_t c = m ? m[(j * h2 / mh) * w2 + i * w2 / mw]
+                               : ((const uint32_t *)frame)[(j * GEN_RENDER_HEIGHT / mh) * width + i * width / mw];
+                buf[(y + j) * width + x + i] = s == 0 ? c : (c >> 1) & 0x7F7F7F;
+            }
+    }
+    int bx = 20, bw = width - 40, bar = by + mh + 12;  /* the 30 s window, the present at the right */
+    fill(buf, width, bx, bar, bw, 2, 0x505060);
+    fill(buf, width, bx + bw - 1 - sel * (bw - 1) / (n > 0 ? n : 1) - 1, bar - 3, 3, 8, 0xFFE070);
+    draw_text(buf, width, GEN_RENDER_HEIGHT, bx, bar + 8, "</>: MOVE   A: PLAY FROM HERE   B: BACK", 0x9090A0);
+}
+static void rewind_ui(const uint8_t *frame, int width) {
+    int ps_state_rewind_count(void);
+    const uint32_t *ps_state_rewind_thumb(int, int *, int *, long *);
+    int n = ps_state_rewind_count();
+    if (!n) return;
+    static uint32_t buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
+    int sel = 1, held = 0;                          /* steps back: 0 = now */
+    bool prev[5] = { true, true, true, true, true };
+    for (;;) {
+        SDL_Event ev; bool quit = false;
+        while (SDL_PollEvent(&ev)) if (ev.type == SDL_QUIT) quit = true;
+        if (quit) { save(); exit(0); }
+        const uint8_t *ks = SDL_GetKeyboardState(NULL);
+        uint16_t pad = recomp_input_read_pad(0);
+        recomp_input_update();
+        bool k[5] = { ks[SDL_SCANCODE_LEFT] || (pad & 0x04), ks[SDL_SCANCODE_RIGHT] || (pad & 0x08),
+                      ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_Z] || (pad & 0x40) || (pad & 0x80),
+                      ks[SDL_SCANCODE_ESCAPE] || ks[SDL_SCANCODE_BACKSPACE] || ks[SDL_SCANCODE_X] || (pad & 0x10), false };
+        bool left = k[0] && !prev[0], right = k[1] && !prev[1], ok = k[2] && !prev[2], back = k[3] && !prev[3];
+        if (k[0] || k[1]) { if (++held > 18 && held % 4 == 0) { left |= k[0]; right |= k[1]; } } else held = 0;
+        memcpy(prev, k, sizeof prev);
+        if (left && sel < n) sel++;
+        if (right && sel > 0) sel--;
+        if (back || (ok && sel == 0)) break;
+        if (ok) {                                   /* play from there: returns only if refused */
+            while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }
+            save(); ps_menu_rewind(sel); break;
+        }
+        draw_rewind(buf, frame, width, sel, n);
+        platform_show_frame(buf, width);
+        SDL_Delay(16);
+    }
+    while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }   /* nothing leaks into the game */
+}
+
 /* Modal: called before presenting a frame; returns when the menu is closed. */
 void ps_menu_run(uint8_t *frame, int width) {
     {   /* PS_LEVEL_SELECT_NOW=1: the LEVEL SELECT entry at the first frame (tests) */
         static int once; if (!once++ && getenv("PS_LEVEL_SELECT_NOW")) { unsetenv("PS_LEVEL_SELECT_NOW"); if (level_select_ready()) level_select(); }
     }
     logic_tick();
+    if (s_rw_open) { s_rw_open = false; rewind_ui(frame, width); }
+    {   /* PS_REWIND_SHOT=FRAME:FILE: the timeline drawn 3 s back at that frame, as a PNG (tests) */
+        static long at = -2; static const char *path; extern long ps_frames;
+        if (at == -2) { const char *e = getenv("PS_REWIND_SHOT"); at = e && strchr(e, ':') ? atol(e) : -1; path = at >= 0 ? strchr(e, ':') + 1 : NULL; }
+        int ps_state_rewind_count(void);
+        if (at >= 0 && ps_frames >= at && ps_state_rewind_count() >= 3) {
+            static uint32_t sb[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT]; void ps_png_write(const char *, const uint8_t *, int, int);
+            draw_rewind(sb, frame, width, 3, ps_state_rewind_count()); ps_png_write(path, (const uint8_t *)sb, width, GEN_RENDER_HEIGHT); at = -1;
+        }
+    }
     if (!s_open) return;
     static uint32_t buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
     int sel = 0, n = item_count();

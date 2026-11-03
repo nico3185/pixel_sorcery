@@ -42,7 +42,8 @@ Usage: ./play.sh TITLE [--resume [SESSION.polls] MINUTE] [game options]
   -h, --help           this help
 
 Controls: arrows, Z/X/C = A/B/C, Return = Start, Esc quits; gamepads by position.
-Rewind: Backspace / gamepad left shoulder, one second per press (up to 30).
+Rewind: Backspace / gamepad left shoulder - a timeline of the last 30 s (Left/Right, A plays, B back).
+Fast forward: hold ] or the gamepad right shoulder.
 Settings menu: F1 / Tab / gamepad Minus or Home / C while paused.
 Environment: ROM=path (default roms/<"rom" in sidebyside.json>), PS_WIDE=4:3|16:9|21:9|32:9.
 HELP
