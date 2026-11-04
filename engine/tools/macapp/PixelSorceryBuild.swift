@@ -137,6 +137,7 @@ struct ContentView: View {
     @State var chosenInit = false
     @State var selection: String?
     @State var log = ""
+    @State var screen: Int? = nil                  // 1 library, 0 build; nil: the library once a game is built
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var available: [Title] { engine.titles.filter(\.usable) }
@@ -144,8 +145,70 @@ struct ContentView: View {
     var effCores: Int { cores == 0 ? engine.cpus : min(cores, engine.cpus) }
     var perProcess: Int { max(1, effCores / max(1, min(processes, max(1, chosen.count)))) }
 
+    var built: [Title] { engine.titles.filter { $0.built > 0 } }
+    var showLibrary: Bool { screen == 1 || (screen == nil && !built.isEmpty && !engine.running) }
+
+    // install (the setup line), choose and build (the build screen), then the library: the games to play
     var body: some View {
+        Group { if showLibrary { library } else { buildScreen } }
+            .padding(16)
+            .frame(minWidth: 900, minHeight: 680)
+            .onChange(of: engine.running) { was, now in if was && !now && !built.isEmpty { screen = 1 } }   // a build done: play
+    }
+
+    var library: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !engine.engineError.isEmpty { Text(engine.engineError).foregroundStyle(.red) }
+            HStack {
+                Text("Your games").font(.title2).bold()
+                Spacer()
+                Button("Controller…") { if let t = built.first { engine.send("pad " + t.id) } }
+                    .help("Set your gamepad's buttons (A B C START X Y Z, REWIND, FORWARD)")
+                Button("Build games…") { screen = 0 }
+            }
+            let sh = shelves()
+            if !sh.isEmpty {                               // the launcher shelves (launch.sh): every game of a collection on one shelf
+                HStack(spacing: 10) {
+                    Text("Collections").font(.headline)
+                    ForEach(sh, id: \.0) { s in Button(s.1) { engine.send("shelf " + s.0) }.controlSize(.large) }
+                }
+            }
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
+                    ForEach(built, id: \.id) { t in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(t.name).font(.headline).lineLimit(2)
+                            Text(t.code.uppercased()).font(.caption).foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                            Button("Play") { engine.send("play " + t.id) }
+                                .buttonStyle(.borderedProminent).controlSize(.large)
+                        }
+                        .padding(12).frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.12)))
+                    }
+                }
+            }
+            ForEach(engine.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+        }
+    }
+
+    // launchers/NAME.txt: (NAME, its "name" line)
+    func shelves() -> [(String, String)] {
+        let dir = engine.repo + "/launchers"
+        let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).filter { $0.hasSuffix(".txt") }.sorted()
+        return files.map { f in
+            let id = String(f.dropLast(4))
+            let text = (try? String(contentsOfFile: dir + "/" + f, encoding: .utf8)) ?? ""
+            let name = text.split(separator: "\n").first { $0.hasPrefix("name ") }.map { String($0.dropFirst(5)) } ?? id
+            return (id, name)
+        }
+    }
+
+    var buildScreen: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if !built.isEmpty && !engine.running {
+                Button("‹ Your games") { screen = 1 }
+            }
             if !engine.engineError.isEmpty { Text(engine.engineError).foregroundStyle(.red) }
             if !engine.setup.isEmpty { HStack { ProgressView().controlSize(.small); Text(engine.setup) } }
             // ROM folder
@@ -211,8 +274,6 @@ struct ContentView: View {
                 }
             }
         }
-        .padding(16)
-        .frame(minWidth: 900, minHeight: 680)
         .onChange(of: engine.titles) { _, ts in        // after each scan: everything found, chosen
             let avail = Set(ts.filter(\.usable).map(\.id))
             if !chosenInit || !chosen.isSubset(of: avail) { chosen = avail; chosenInit = !avail.isEmpty }

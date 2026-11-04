@@ -134,7 +134,6 @@ static double ms_since(uint64_t t) { return (double)(SDL_GetPerformanceCounter()
  * recomp can run where no window may open (over RDP, in CI): frames go to
  * ffmpeg instead of a screen, and scripted presses stand in for a player. */
 static bool s_headless = false;
-static bool user_ff(void);
 static const char *s_record_path = NULL;
 static FILE *s_record = NULL;
 static long s_max_frames = 0;   /* 0 = unlimited */
@@ -244,6 +243,9 @@ bool platform_init(const char *window_title, int scale) {
     /* Gamepads by button position (Xbox layout), not by label: on Nintendo pads the
      * labels are swapped, which scrambled A/B/C for the Genesis layout */
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
+    /* fullscreen as a borderless window over the screen, not a macOS Space of its own: the launcher and the
+     * games it starts then cover each other in place, without the Space switch (no leaving fullscreen) */
+    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
         fprintf(stderr, "platform: SDL_Init failed: %s\n", SDL_GetError());
         return false;
@@ -383,7 +385,7 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
     }
     if (s_metal) {
 #ifdef __APPLE__
-        { extern int ps_poll_fast_forward(void); extern int g_ps_boot_hidden; if ((ps_poll_fast_forward() && (g_ps_boot_hidden || s_frame_no % 30)) || (user_ff() && s_frame_no % 4)) return; }
+        { extern int ps_poll_fast_forward(void); extern int g_ps_boot_hidden; if ((ps_poll_fast_forward() && (g_ps_boot_hidden || s_frame_no % 30))) return; }
         double cost = ms_since(s_poll_t);
         s_cost_ms = cost > s_cost_ms ? cost : s_cost_ms * 0.98 + cost * 0.02;
         metal_present_frame(framebuffer, width, GEN_RENDER_HEIGHT, cost);
@@ -410,7 +412,7 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
     }
     if (!s_texture || !s_renderer) return;
     { extern int ps_poll_fast_forward(void);       /* resuming: show 1 frame in 30 */
-      extern int g_ps_boot_hidden; if ((ps_poll_fast_forward() && (g_ps_boot_hidden || s_frame_no % 30)) || (user_ff() && s_frame_no % 4)) return; }
+      extern int g_ps_boot_hidden; if ((ps_poll_fast_forward() && (g_ps_boot_hidden || s_frame_no % 30))) return; }
 
     SDL_Rect src = { 0, 0, width, GEN_RENDER_HEIGHT };
     if (width != s_shown_w) {                         /* 4:3 <-> widescreen */
@@ -478,7 +480,7 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
 
 void platform_queue_audio(const int16_t *samples, int sample_count) {
     extern int ps_poll_fast_forward(void);
-    if (s_audio_dev > 0 && samples && !ps_poll_fast_forward() && !user_ff()) {
+    if (s_audio_dev > 0 && samples && !ps_poll_fast_forward()) {
         /* Keep the queue near 2 frames (~33 ms) by resampling: the display may run a hair
          * faster than the Genesis' 59.92 Hz (exactly 60 when the pacing is locked to it),
          * which would otherwise make audio lag further and further. The rate follows the
@@ -535,12 +537,6 @@ void platform_show_frame(const uint32_t *pixels, int width) {
     SDL_RenderPresent(s_renderer);
 }
 
-/* the player's fast forward: ] or the gamepad's right shoulder held - no pacing, no sound, 1 frame in 4 */
-static bool user_ff(void) {
-    extern bool input_pad_button(int);
-    if (s_headless) return false;
-    return SDL_GetKeyboardState(NULL)[SDL_SCANCODE_RIGHTBRACKET] || input_pad_button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
-}
 bool platform_poll_events(void) {
     SDL_Event ev;
     s_poll_t = SDL_GetPerformanceCounter();
@@ -551,14 +547,18 @@ bool platform_poll_events(void) {
             (ev.type == SDL_CONTROLLERBUTTONDOWN && (ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK ||
                                                      ev.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE)))
             ps_menu_request();
-        {   /* rewind: Backspace or the left shoulder opens the timeline (ps_menu.c) */
-            extern void ps_menu_rewind_request(void);
-            if ((ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_BACKSPACE && !ev.key.repeat) ||
-                (ev.type == SDL_CONTROLLERBUTTONDOWN && ev.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER))
-                ps_menu_rewind_request();
-        }
         if (ev.type == SDL_QUIT) return false;
         if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE) return false;
+    }
+    {   /* REWIND or FORWARD pressed (Backspace / ], or the pad's buttons set in CONTROLLER SETUP, else the
+         * shoulders): the rewind mode - the game paused on its last 30 s, the buttons held move through
+         * them, A plays from there (ps_menu.c) */
+        extern bool input_hot_held(int); extern void ps_menu_rewind_request(void);
+        static bool was;
+        const uint8_t *ks = SDL_GetKeyboardState(NULL);
+        bool on = ks[SDL_SCANCODE_BACKSPACE] || ks[SDL_SCANCODE_RIGHTBRACKET] || input_hot_held(0) || input_hot_held(1);
+        if (on && !was) ps_menu_rewind_request();
+        was = on;
     }
     return true;
 }
@@ -572,7 +572,7 @@ void platform_frame_sync(void) {
 
 static void frame_sync(void) {
     extern int ps_poll_fast_forward(void);
-    if (s_headless || ps_poll_fast_forward() || user_ff()) return;
+    if (s_headless || ps_poll_fast_forward()) return;
     /* Deadline pacing at the Genesis NTSC rate (vsync is not relied on: it may not block).
      * Input for the next frame is polled as late as possible: `lead` before its deadline,
      * where lead covers the measured frame cost plus a margin. */

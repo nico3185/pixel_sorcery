@@ -17,6 +17,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <unistd.h>                                 /* truncate */
+#endif
 
 /* ------------------------------------------------------------------ 5x7 font (own design) */
 static const char k_chars[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:./-<>%()";
@@ -315,11 +318,15 @@ void ps_menu_rewind(int steps) {
     const char *rec = getenv("PS_POLL_RECORD");
     if (rec && *rec) {
         void ps_poll_flush(void), ps_poll_record_close(void), ps_poll_record_reopen(void);
-        char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.rewind", rec);
-        ps_poll_flush(); copy_lines(rec, tmp, poll);
-        ps_poll_record_close(); copy_lines(tmp, rec, -1); remove(tmp); ps_poll_record_reopen();
+        ps_poll_flush(); ps_poll_record_close();
+#ifndef _WIN32
+        if (truncate(rec, (off_t)poll * 10) != 0)           /* "XXXX XXXX\n" per poll (ps_poll.c) */
+#endif
+        {   char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.rewind", rec);
+            copy_lines(rec, tmp, poll); copy_lines(tmp, rec, -1); remove(tmp); }
+        ps_poll_record_reopen();
     }
-    fprintf(stderr, "menu: rewound %d s to poll %ld\n", steps, poll);
+    fprintf(stderr, "menu: rewound %d step(s) to poll %ld\n", steps, poll);
     const char *why = ps_state_load_now(b, n);   /* returns only if refused */
     fprintf(stderr, "menu: rewind refused: %s\n", why);
 }
@@ -387,7 +394,7 @@ static void item_text(int i, char *out, size_t n) {
         snprintf(out, n, "LOAD STATE          < SLOT %d >%s", s_slot, p < 0 ? " EMPTY" : "");
     } else if (i == item_count() - 3) snprintf(out, n, "RESUME");
     else if (i == item_count() - 2) snprintf(out, n, "RESET");
-    else snprintf(out, n, "QUIT GAME");
+    else snprintf(out, n, getenv("PS_LAUNCHER") ? "BACK TO GAMES" : "QUIT GAME");   /* started from a shelf: back to it */
 }
 
 static void change(int i, int dir) {
@@ -423,7 +430,7 @@ static void change(int i, int dir) {
 #define execv _execv
 #endif
 static void ps_restart_resume(const char *resume);
-static void ps_restart(void) { unsetenv("GENRECOMP_MOVIE"); unsetenv("GENRECOMP_POKE"); ps_restart_resume(NULL); }
+static void ps_restart(void) { unsetenv("GENRECOMP_MOVIE"); unsetenv("GENRECOMP_POKE"); unsetenv("PS_MOVIE_FAST"); ps_restart_resume(NULL); }
 
 /* LEVEL SELECT: the title's level_select.json (games/TITLE, beside the build folder) types the game's
  * own level-select code for the player - the game restarts with the recipe's "code" presses played as
@@ -506,6 +513,7 @@ static void level_select(void) {
         ps_restart_resume(r);
     }
     setenv("GENRECOMP_MOVIE", path, 1);
+    setenv("PS_MOVIE_FAST", "1", 1);                   /* typed unseen at full speed: the game lands on its level select */
     ps_restart_resume(NULL);
 }
 static void ps_restart_resume(const char *resume) {
@@ -542,10 +550,18 @@ static void copy_lines(const char *src, const char *dst, long lines) {
 /* the snapshot taken for SAVE STATE: the slot's inputs are cut at its poll so a replay
  * (the fallback) reaches the same moment */
 static int s_state_slot;
+enum { TH_W = 160, TH_H = 112 };                     /* a slot's picture: the frame at half size */
+static uint32_t s_thumb[5][TH_W * TH_H]; static int s_thumb_ok[5];   /* per slot: 0 unread, 1 none, 2 loaded */
 static void state_taken(const uint8_t *b, size_t n, long poll) {
     const char *rec = getenv("PS_POLL_RECORD");
     char p[1100]; slot_path(s_state_slot, "state", p, sizeof p);
     write_file(p, b, n);
+    {   /* its picture, from the frame on screen */
+        const uint8_t *genrecomp_get_framebuffer(void); int genrecomp_present_width(void);
+        const uint32_t *f = (const uint32_t *)genrecomp_get_framebuffer(); int w = genrecomp_present_width(), k = s_state_slot;
+        for (int y = 0; y < TH_H; y++) for (int x = 0; x < TH_W; x++) s_thumb[k][y * TH_W + x] = f[(y * 2) * w + x * w / TH_W];
+        s_thumb_ok[k] = 2; slot_path(k, "thumb", p, sizeof p); write_file(p, (const uint8_t *)s_thumb[k], sizeof s_thumb[k]);
+    }
     if (rec && *rec) { void ps_poll_flush(void); ps_poll_flush(); slot_path(s_state_slot, "polls", p, sizeof p); copy_lines(rec, p, poll); }
     fprintf(stderr, "menu: slot %d state saved at poll %ld\n", s_state_slot, poll);
 }
@@ -604,47 +620,62 @@ static void load_slot(void) {
 static void pad_setup(uint8_t *frame, int width, uint32_t *buf) {
     char pn[40];
     if (!input_pad_name(pn, sizeof pn)) return;
-    static const char *names[7] = { "A", "B", "C", "START", "X", "Y", "Z" };
-    int m[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
-    for (int k = 0; k < 7; k++) {
-        bool released = false, done = false, prev_ret = true;
-        while (!done) {
-            SDL_Event ev;
-            while (SDL_PollEvent(&ev)) if (ev.type == SDL_QUIT) { save(); exit(0); }
-            const uint8_t *ks = SDL_GetKeyboardState(NULL);
-            if (ks[SDL_SCANCODE_ESCAPE]) { while (SDL_GetKeyboardState(NULL)[SDL_SCANCODE_ESCAPE]) { SDL_PumpEvents(); SDL_Delay(10); } return; }
-            bool ret = ks[SDL_SCANCODE_RETURN];
-            if (ret && !prev_ret) done = true;                 /* skip: keep the default */
-            prev_ret = ret;
+    for (int c = 0; pn[c]; c++) if (pn[c] >= 'a' && pn[c] <= 'z') pn[c] -= 32;
+    void input_get_mapping(int *), input_raw_name(int, char *, size_t);
+    /* one row per function, its button by the pad's own name; Return / A changes the selected one only */
+    static const struct { const char *name; int slot; } rows[] = { { "A", 0 }, { "B", 1 }, { "C", 2 }, { "START", 3 },
+        { "X", 4 }, { "Y", 5 }, { "Z", 6 }, { "REWIND", 8 }, { "FORWARD", 9 } };
+    /* (unset rows show their default by name; the pad's default layout: input.c k_default) */
+    enum { NROW = 9, RESET = 9, DONE = 10 };
+    int m[10]; input_get_mapping(m);
+    int sel = 0; bool prev[4] = { true, true, true, true }, capture = false, released = false;
+    for (;;) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) if (ev.type == SDL_QUIT) { save(); exit(0); }
+        const uint8_t *ks = SDL_GetKeyboardState(NULL);
+        if (capture) {                                      /* waiting for the new button */
             int r = input_raw_pressed();
-            if (r < 0) released = true;
+            if (ks[SDL_SCANCODE_ESCAPE]) capture = false;
+            else if (r < 0) released = true;
             else if (released) {
-                bool dup = false; for (int i = 0; i < k; i++) dup |= m[i] == r;
-                if (!dup) { m[k] = r; done = true; }
+                int slot = rows[sel].slot;
+                for (int i = 0; i < 10; i++) if (i != slot && m[i] == r) m[i] = m[slot];   /* already used: swapped */
+                m[slot] = r; capture = false; input_set_mapping(m);
+                while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }
+                prev[2] = true;
             }
-            const uint32_t *src = (const uint32_t *)frame;
-            for (int i = 0; i < width * GEN_RENDER_HEIGHT; i++) buf[i] = (src[i] >> 2) & 0x3F3F3F;
-            int x0 = width / 2 - 100, y0 = 60;
-            char t[80];
-            draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0 - 16, "CONTROLLER SETUP", 0xFFE070);
-            for (int c = 0; pn[c]; c++) if (pn[c] >= 'a' && pn[c] <= 'z') pn[c] -= 32;
-            draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0, pn, 0x9090A0);
-            snprintf(t, sizeof t, "PRESS THE BUTTON FOR  %s", names[k]);
-            draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0 + 24, t, 0xFFFFFF);
-            for (int i = 0; i < k; i++) {
-                if (m[i] < 0) snprintf(t, sizeof t, "%-6s DEFAULT", names[i]);
-                else if (m[i] < 100) snprintf(t, sizeof t, "%-6s BUTTON %d", names[i], m[i]);
-                else snprintf(t, sizeof t, "%-6s AXIS %d", names[i], m[i] - 100);
-                draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0 + 44 + i * 11, t, 0x90C090);
-            }
-            draw_text(buf, width, GEN_RENDER_HEIGHT, x0, GEN_RENDER_HEIGHT - 14, "RETURN: SKIP  ESC: CANCEL", 0x707080);
-            platform_show_frame(buf, width);
-            SDL_Delay(16);
+        } else {
+            uint16_t pad = recomp_input_read_pad(0); recomp_input_update();
+            bool k[4] = { ks[SDL_SCANCODE_UP] || (pad & 0x01), ks[SDL_SCANCODE_DOWN] || (pad & 0x02),
+                          ks[SDL_SCANCODE_RETURN] || (pad & 0x40) || (pad & 0x80), ks[SDL_SCANCODE_ESCAPE] || (pad & 0x10) };
+            bool up = k[0] && !prev[0], down = k[1] && !prev[1], ok = k[2] && !prev[2], back = k[3] && !prev[3];
+            memcpy(prev, k, sizeof prev);
+            if (up) sel = (sel + DONE) % (DONE + 1);
+            if (down) sel = (sel + 1) % (DONE + 1);
+            if (back || (ok && sel == DONE)) break;
+            if (ok && sel == RESET) { for (int i = 0; i < 10; i++) m[i] = -1; input_set_mapping(m); }
+            else if (ok) { capture = true; released = false; }
         }
+        const uint32_t *src = (const uint32_t *)frame;
+        for (int i = 0; i < width * GEN_RENDER_HEIGHT; i++) buf[i] = (src[i] >> 2) & 0x3F3F3F;
+        int x0 = width / 2 - 110, y0 = 34;
+        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0 - 22, "CONTROLLER", 0xFFE070);
+        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0 - 11, pn, 0x9090A0);
+        for (int r = 0; r <= DONE; r++) {
+            char t[64], b[32];
+            if (r < NROW) { input_raw_name(m[rows[r].slot] >= 0 ? m[rows[r].slot] : 1000 + rows[r].slot, b, sizeof b);
+                            snprintf(t, sizeof t, "%-9s %s", rows[r].name, capture && r == sel ? "PRESS A BUTTON..." : b); }
+            else snprintf(t, sizeof t, "%s", r == RESET ? "RESET TO DEFAULTS" : "DONE");
+            int y = y0 + 6 + r * 13 + (r >= NROW ? 6 : 0);
+            draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y, t, r == sel ? (capture ? 0xFFE070 : 0xFFFFFF) : 0x9090A0);
+            if (r == sel) draw_text(buf, width, GEN_RENDER_HEIGHT, x0 - 10, y, ">", 0xFFE070);
+        }
+        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, GEN_RENDER_HEIGHT - 14,
+                  capture ? "PRESS THE NEW BUTTON   ESC: KEEP" : "A/RETURN: CHANGE   B/ESC: BACK", 0x707080);
+        platform_show_frame(buf, width);
+        SDL_Delay(16);
     }
-    bool any = false; for (int i = 0; i < 7; i++) any |= m[i] >= 0;
-    if (any) input_set_mapping(m);
-    while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }   /* the last press is not "OK" */
+    while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }
 }
 
 /* The rewind timeline (Backspace / left shoulder): the game paused on the last 30 seconds of
@@ -676,8 +707,9 @@ static void draw_rewind(uint32_t *buf, const uint8_t *frame, int width, int sel,
     int by = GEN_RENDER_HEIGHT - 66;
     for (int i = by * width; i < width * GEN_RENDER_HEIGHT; i++) buf[i] = (buf[i] >> 2) & 0x3F3F3F;
     const int mw = 48, mh = 34, gap = 6;
+    int ps_state_rewind_every(void); int st = 60 / ps_state_rewind_every(); if (st < 1) st = 1;
     for (int s = -2; s <= 2; s++) {
-        int step = sel - s, x = width / 2 - mw / 2 + s * (mw + gap), y = by + 4;   /* older to the left */
+        int step = sel - s * st, x = width / 2 - mw / 2 + s * (mw + gap), y = by + 4;   /* older to the left */
         if (step < 0 || step > n) continue;
         int w2, h2; long a2; const uint32_t *m = step ? ps_state_rewind_thumb(step, &w2, &h2, &a2) : NULL;
         fill(buf, width, x - 1, y - 1, mw + 2, mh + 2, s == 0 ? 0xFFE070 : 0x404050);
@@ -691,7 +723,7 @@ static void draw_rewind(uint32_t *buf, const uint8_t *frame, int width, int sel,
     int bx = 20, bw = width - 40, bar = by + mh + 12;  /* the 30 s window, the present at the right */
     fill(buf, width, bx, bar, bw, 2, 0x505060);
     fill(buf, width, bx + bw - 1 - sel * (bw - 1) / (n > 0 ? n : 1) - 1, bar - 3, 3, 8, 0xFFE070);
-    draw_text(buf, width, GEN_RENDER_HEIGHT, bx, bar + 8, "</>: MOVE   A: PLAY FROM HERE   B: BACK", 0x9090A0);
+    draw_text(buf, width, GEN_RENDER_HEIGHT, bx, bar + 8, "HOLD REWIND / FORWARD   A: PLAY FROM HERE   B: BACK", 0x9090A0);
 }
 static void rewind_ui(const uint8_t *frame, int width) {
     int ps_state_rewind_count(void);
@@ -699,7 +731,7 @@ static void rewind_ui(const uint8_t *frame, int width) {
     int n = ps_state_rewind_count();
     if (!n) return;
     static uint32_t buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
-    int sel = 1, held = 0;                          /* steps back: 0 = now */
+    int sel = 0, held = 0;                          /* snapshots back: 0 = now (the buttons move from there) */
     bool prev[5] = { true, true, true, true, true };
     for (;;) {
         SDL_Event ev; bool quit = false;
@@ -708,14 +740,19 @@ static void rewind_ui(const uint8_t *frame, int width) {
         const uint8_t *ks = SDL_GetKeyboardState(NULL);
         uint16_t pad = recomp_input_read_pad(0);
         recomp_input_update();
+        extern bool input_hot_held(int);
         bool k[5] = { ks[SDL_SCANCODE_LEFT] || (pad & 0x04), ks[SDL_SCANCODE_RIGHT] || (pad & 0x08),
                       ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_Z] || (pad & 0x40) || (pad & 0x80),
-                      ks[SDL_SCANCODE_ESCAPE] || ks[SDL_SCANCODE_BACKSPACE] || ks[SDL_SCANCODE_X] || (pad & 0x10), false };
+                      ks[SDL_SCANCODE_ESCAPE] || ks[SDL_SCANCODE_X] || (pad & 0x10), false };
         bool left = k[0] && !prev[0], right = k[1] && !prev[1], ok = k[2] && !prev[2], back = k[3] && !prev[3];
         if (k[0] || k[1]) { if (++held > 18 && held % 4 == 0) { left |= k[0]; right |= k[1]; } } else held = 0;
         memcpy(prev, k, sizeof prev);
-        if (left && sel < n) sel++;
-        if (right && sel > 0) sel--;
+        int ps_state_rewind_every(void); int st = 60 / ps_state_rewind_every(); if (st < 1) st = 1;   /* ~1 s a press */
+        if (left) sel = sel + st > n ? n : sel + st;
+        if (right) sel = sel - st < 0 ? 0 : sel - st;
+        /* REWIND / FORWARD held (Backspace / ], or the pad's buttons): through the snapshots, one a frame */
+        if (ks[SDL_SCANCODE_BACKSPACE] || input_hot_held(0)) { if (sel < n) sel++; }
+        else if (ks[SDL_SCANCODE_RIGHTBRACKET] || input_hot_held(1)) { if (sel > 0) sel--; }
         if (back || (ok && sel == 0)) break;
         if (ok) {                                   /* play from there: returns only if refused */
             while (input_raw_pressed() >= 0) { SDL_PumpEvents(); SDL_Delay(10); }
@@ -735,6 +772,21 @@ void ps_menu_run(uint8_t *frame, int width) {
             if (level_select_ready()) { if (k > 0 && k <= s_nstages) s_stage_sel = k - 1; level_select(); } }
     }
     logic_tick();
+    if (getenv("PS_PAD_SETUP")) {                      /* the app's Controller button: this page alone, then quit */
+        static uint32_t pb[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
+        char pn[40];
+        if (!input_pad_name(pn, sizeof pn)) {
+            for (int f = 0; f < 150; f++) {               /* no pad: say so for a few seconds */
+                SDL_Event ev; while (SDL_PollEvent(&ev)) if (ev.type == SDL_QUIT) exit(0);
+                memset(pb, 0, sizeof pb);
+                draw_text(pb, width, GEN_RENDER_HEIGHT, width / 2 - 66, 100, "NO GAMEPAD CONNECTED", 0xFFE070);
+                draw_text(pb, width, GEN_RENDER_HEIGHT, width / 2 - 90, 116, "CONNECT ONE, THEN TRY AGAIN", 0x9090A0);
+                platform_show_frame(pb, width); SDL_Delay(16);
+            }
+            exit(0);
+        }
+        pad_setup(frame, width, pb); exit(0);
+    }
     if (s_rw_open) { s_rw_open = false; rewind_ui(frame, width); }
     {   /* PS_REWIND_SHOT=FRAME:FILE: the timeline drawn 3 s back at that frame, as a PNG (tests) */
         static long at = -2; static const char *path; extern long ps_frames;
@@ -747,9 +799,26 @@ void ps_menu_run(uint8_t *frame, int width) {
     }
     if (!s_open) return;
     static uint32_t buf[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
-    int sel = 0, n = item_count();
+    /* pages: the main one (frequent actions, then the sections), DISPLAY, SOUND & CONTROLS, CHEATS - each a list
+     * of the items above (item_text / change keep their meaning) or a link (negative ids) */
+    enum { P_DISPLAY = -10, P_SOUND = -11, P_CHEATS = -12, A_REWIND = -13 };
+    static const char *k_title[4] = { "SETTINGS", "SETTINGS > DISPLAY", "SETTINGS > SOUND & CONTROLS", "SETTINGS > CHEATS" };
+    int n = item_count(), page = 0, sel = 0, list[64], cnt = 0;
     bool prev[8] = { true, true, true, true, true, true, true, true };
     while (s_open) {
+        n = item_count(); cnt = 0;
+        if (page == 0) {
+            list[cnt++] = n - 3; list[cnt++] = n - 5; list[cnt++] = n - 4; list[cnt++] = A_REWIND;
+            if (level_select_ready()) list[cnt++] = n - 7;
+            list[cnt++] = P_DISPLAY; list[cnt++] = P_SOUND;
+            if (ps_cheat_count + s_ntoggles) list[cnt++] = P_CHEATS;
+            list[cnt++] = n - 2; list[cnt++] = n - 1;
+        } else if (page == 1) {
+            static const int d[] = { IT_ASPECT, IT_OBJ, IT_FULL, IT_REND, IT_WATER, IT_LAT };
+            for (size_t q = 0; q < sizeof d / sizeof d[0]; q++) list[cnt++] = d[q];
+        } else if (page == 2) { list[cnt++] = IT_VOL; list[cnt++] = n - 6; }
+        else for (int q = 0; q < ps_cheat_count + s_ntoggles && cnt < 64; q++) list[cnt++] = IT_FIXED + q;
+        if (sel >= cnt) sel = cnt - 1;
         SDL_Event ev;
         bool quit = false;
         bool k[8] = { false };
@@ -763,46 +832,69 @@ void ps_menu_run(uint8_t *frame, int width) {
         k[2] = ks[SDL_SCANCODE_LEFT] || (pad & 0x04);
         k[3] = ks[SDL_SCANCODE_RIGHT] || (pad & 0x08);
         k[4] = ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_Z] || (pad & 0x40);
-        /* resume from anywhere in the list: Start (still held as the game reads the pad, so a
-         * paused game unpauses in the same press) or C (the button that opened the menu) */
-        k[5] = ks[SDL_SCANCODE_ESCAPE] || ks[SDL_SCANCODE_F1] || ks[SDL_SCANCODE_TAB] || (pad & 0x80) || (pad & 0x20);
+        /* close from anywhere: F1 / Tab / Start (still held as the game reads the pad, so a paused game
+         * unpauses in the same press) or C (the button that opened the menu); back a page: Esc or B */
+        k[5] = ks[SDL_SCANCODE_F1] || ks[SDL_SCANCODE_TAB] || (pad & 0x80) || (pad & 0x20);
+        k[6] = ks[SDL_SCANCODE_ESCAPE] || ks[SDL_SCANCODE_X] || (pad & 0x10);
         bool up = k[0] && !prev[0], down = k[1] && !prev[1], left = k[2] && !prev[2],
-             right = k[3] && !prev[3], ok = k[4] && !prev[4], back = k[5] && !prev[5];
+             right = k[3] && !prev[3], ok = k[4] && !prev[4], close = k[5] && !prev[5], back = k[6] && !prev[6];
         memcpy(prev, k, sizeof prev);
         recomp_input_update();                       /* refresh pad state for the next pass */
         if (quit) { save(); exit(0); }
-        if (up) sel = (sel + n - 1) % n;
-        if (down) sel = (sel + 1) % n;
-        if (left) change(sel, -1);
-        if (right) change(sel, +1);
+        if (up) sel = (sel + cnt - 1) % cnt;
+        if (down) sel = (sel + 1) % cnt;
+        int id = list[sel];
+        if (id >= 0 && left) change(id, -1);
+        if (id >= 0 && right) change(id, +1);
         if (ok) {
-            if (sel == n - 1) { save(); exit(0); }
-            if (sel == n - 2) { save(); ps_restart(); }
-            if (sel == n - 6) { pad_setup(frame, width, buf); prev[4] = true; continue; }
-            if (level_select_ready() && sel == n - 7) { save(); level_select(); }
-            if (sel == n - 5) { save_slot(); continue; }
-            if (sel == n - 4) { load_slot(); continue; }
-            if (sel == n - 3) s_open = false; else change(sel, +1);
+            if (id == P_DISPLAY || id == P_SOUND || id == P_CHEATS) { page = id == P_DISPLAY ? 1 : id == P_SOUND ? 2 : 3; sel = 0; continue; }
+            if (id == A_REWIND) { s_open = false; ps_menu_rewind_request(); break; }
+            if (id == n - 1) { save(); exit(0); }
+            if (id == n - 2) { save(); ps_restart(); }
+            if (id == n - 6) { pad_setup(frame, width, buf); prev[4] = true; continue; }
+            if (level_select_ready() && id == n - 7) { save(); level_select(); }
+            if (id == n - 5) { save_slot(); continue; }
+            if (id == n - 4) { load_slot(); continue; }
+            if (id == n - 3) s_open = false; else change(id, +1);
         }
-        if (back) s_open = false;
+        if (close) s_open = false;
+        if (back) { if (page) { page = 0; sel = 0; continue; } s_open = false; }
 
-        /* dimmed frame + menu */
+        /* dimmed frame + the page */
         const uint32_t *src = (const uint32_t *)frame;
         for (int i = 0; i < width * GEN_RENDER_HEIGHT; i++) buf[i] = (src[i] >> 2) & 0x3F3F3F;
         int x0 = width / 2 - 100, y0 = 40;
-        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0 - 16, "PIXELSORCERY - SETTINGS", 0xFFE070);
-        /* the rows that fit above the key hint; the list scrolls with the selection */
-        int rows = (GEN_RENDER_HEIGHT - 20 - y0) / 11, first = 0;
-        if (n > rows) { first = sel - rows / 2; if (first < 0) first = 0; if (first > n - rows) first = n - rows; }
-        for (int r = 0; r < rows && first + r < n; r++) {
-            int i = first + r;
-            char t[64]; item_text(i, t, sizeof t);
-            draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0 + r * 11, t, i == sel ? 0xFFFFFF : 0x9090A0);
-            if (i == sel) draw_text(buf, width, GEN_RENDER_HEIGHT, x0 - 10, y0 + r * 11, ">", 0xFFE070);
+        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y0 - 16, k_title[page], 0xFFE070);
+        int rows = (GEN_RENDER_HEIGHT - 20 - y0) / 12, first = 0;
+        if (cnt > rows) { first = sel - rows / 2; if (first < 0) first = 0; if (first > cnt - rows) first = cnt - rows; }
+        for (int r = 0; r < rows && first + r < cnt; r++) {
+            int q = first + r, it = list[q];
+            char t[64];
+            if (it == P_DISPLAY) snprintf(t, sizeof t, "DISPLAY             >");
+            else if (it == P_SOUND) snprintf(t, sizeof t, "SOUND & CONTROLS    >");
+            else if (it == P_CHEATS) snprintf(t, sizeof t, "CHEATS              >");
+            else if (it == A_REWIND) snprintf(t, sizeof t, "REWIND");
+            else item_text(it, t, sizeof t);
+            int y = y0 + r * 12 + (page == 0 && (it == P_DISPLAY || it == n - 2) ? 4 : 0);   /* gaps before the sections and RESET */
+            draw_text(buf, width, GEN_RENDER_HEIGHT, x0, y, t, q == sel ? 0xFFFFFF : 0x9090A0);
+            if (q == sel) draw_text(buf, width, GEN_RENDER_HEIGHT, x0 - 10, y, ">", 0xFFE070);
         }
         if (first > 0) draw_text(buf, width, GEN_RENDER_HEIGHT, x0 + 190, y0, "^", 0xFFE070);
-        if (first + rows < n) draw_text(buf, width, GEN_RENDER_HEIGHT, x0 + 190, y0 + (rows - 1) * 11, "v", 0xFFE070);
-        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, GEN_RENDER_HEIGHT - 14, "ENTER/A: TOGGLE   START/C/F1: RESUME", 0x707080);
+        if (first + rows < cnt) draw_text(buf, width, GEN_RENDER_HEIGHT, x0 + 190, y0 + (rows - 1) * 12, "v", 0xFFE070);
+        if (page == 0 && (list[sel] == n - 5 || list[sel] == n - 4)) {   /* SAVE / LOAD: the slot's picture */
+            int k = s_slot;
+            if (!s_thumb_ok[k]) {
+                char tp[1100]; slot_path(k, "thumb", tp, sizeof tp);
+                FILE *f = fopen(tp, "rb"); s_thumb_ok[k] = f && fread(s_thumb[k], sizeof s_thumb[k], 1, f) == 1 ? 2 : 1; if (f) fclose(f);
+            }
+            int tx = width - TH_W / 2 - 12, ty = GEN_RENDER_HEIGHT - TH_H / 2 - 24;
+            for (int y = -1; y <= TH_H / 2; y++) for (int x = -1; x <= TH_W / 2; x++) buf[(ty + y) * width + tx + x] = 0x606070;
+            for (int y = 0; y < TH_H / 2; y++) for (int x = 0; x < TH_W / 2; x++)
+                buf[(ty + y) * width + tx + x] = s_thumb_ok[k] == 2 ? s_thumb[k][(y * 2) * TH_W + x * 2] : 0x101018;
+            if (s_thumb_ok[k] != 2) draw_text(buf, width, GEN_RENDER_HEIGHT, tx + 22, ty + 22, "EMPTY", 0x707080);
+        }
+        draw_text(buf, width, GEN_RENDER_HEIGHT, x0, GEN_RENDER_HEIGHT - 14,
+                  page ? "A: SELECT  </>: CHANGE  B/ESC: BACK" : "A: SELECT  </>: CHANGE  START: RESUME", 0x707080);
         platform_show_frame(buf, width);
         SDL_Delay(16);
     }
@@ -842,7 +934,19 @@ static bool (*s_paused)(void);
 void ps_menu_set_pause_hook(bool (*paused)(void)) { s_paused = paused; }
 /* headless runs never pause the menu in (tests: PS_PAUSE_HINT=1 shows the hint there too) */
 bool ps_menu_paused(void) { return s_paused && (!platform_is_headless() || getenv("PS_PAUSE_HINT")) && s_paused(); }
+/* on-screen notices: a short line top left for a second and a half ("<< REWIND", "x4", ...) */
+static char s_notice[40]; static int s_notice_left;
+void ps_menu_notice(const char *t) { snprintf(s_notice, sizeof s_notice, "%s", t); s_notice_left = 90; }
+static void draw_notice(uint8_t *frame, int width) {
+    if (s_notice_left <= 0) return;
+    s_notice_left--;
+    uint32_t *fb = (uint32_t *)frame; int x = 8, y = 8, w = 6 * (int)strlen(s_notice) + 8;
+    for (int yy = y - 3; yy < y + 10; yy++)
+        for (int xx = x - 4; xx < x - 4 + w; xx++) fb[yy * width + xx] = (fb[yy * width + xx] >> 2) & 0x3F3F3F;
+    draw_text(fb, width, GEN_RENDER_HEIGHT, x, y, s_notice, s_notice_left > 20 ? 0xFFE070 : 0x9C8A46);
+}
 void ps_menu_pause_hint(uint8_t *frame, int width) {
+    draw_notice(frame, width);
     if (!ps_menu_paused()) return;
     const char *t = "C: SETTINGS";
     int x = width - 6 * (int)strlen(t) - 8, y = GEN_RENDER_HEIGHT - 12;

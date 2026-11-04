@@ -498,11 +498,12 @@ static int SDLCALL play_thread(void *u) {
     snprintf(log, sizeof log, "%s/%s.log", sess, stamp);
     snprintf(rec, sizeof rec, "PS_POLL_RECORD=%s/%s.polls", sess, stamp);
     char res[1300]; snprintf(res, sizeof res, "PS_RESUME=%s", g->resume);
-    const char *env[] = { rec, "PS_RENDERER=native", "PS_Z80=recomp", *g->resume ? res : NULL, NULL };
+    const char *env[] = { rec, "PS_RENDERER=native", "PS_Z80=recomp", "PS_LAUNCHER=1", *g->resume ? res : NULL, NULL };
     const char *full[] = { "--fullscreen", NULL };
     settings_apply(g);
     run_game(g, SET.fullscreen ? full : NULL, env, log);
     s_playing = 0;
+    SDL_RaiseWindow(Win);                                /* the game gone: the shelf in front, keys to it */
     return 0;
 }
 
@@ -910,6 +911,9 @@ int main(int argc, char **argv) {
         find_rom(&G[i]);
     }
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+    /* fullscreen as a borderless window over the screen, not a macOS Space of its own: the launcher and the
+     * games it starts then cover each other in place, without the Space switch (no leaving fullscreen) */
+    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) { fprintf(stderr, "%s\n", SDL_GetError()); return 1; }
     Win = SDL_CreateWindow(s_name, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W * 2 + W * 2 / 3, H * 2 + H * 2 / 3,
                            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (s_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
