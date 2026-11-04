@@ -137,18 +137,27 @@ static char s_save_path[1024];
 static void (*s_save_cb)(const uint8_t *, size_t, long);   /* a requested snapshot (menu) */
 static long s_reload_at = -1;
 static char s_reload_path[1024];
-/* rewind: the last RW_SLOTS snapshots in memory, one every RW_EVERY frames, while a session is played
- * (PS_POLL_RECORD, set by play.sh and the app; PS_REWIND=1 forces it, PS_NO_REWIND=1 turns it off);
- * the menu steps back through them (ps_menu.c) */
-enum { RW_SLOTS = 30, RW_EVERY = 60, RW_TW = 160, RW_TH = 112 };
-static struct { uint8_t *b; size_t n; long poll, frame; uint32_t thumb[RW_TW * RW_TH]; } s_rw[RW_SLOTS];
-static int s_rw_head, s_rw_count, s_rw_on; static long s_rw_last = -1000000;
+/* rewind: the last 30 seconds of snapshots in memory while a session is played (PS_POLL_RECORD, set by
+ * play.sh and the app; PS_REWIND=1 forces it, PS_NO_REWIND=1 turns it off) - up to RW_MAX of them within
+ * RW_BUDGET bytes, so one every 6 frames for a cartridge (smooth rewind), wider for a Mega CD's 2.7 MB;
+ * the menu plays them backwards or steps through them (ps_menu.c) */
+enum { RW_MAX = 300, RW_TW = 160, RW_TH = 112, RW_WINDOW = 30 * 60 };
+#define RW_BUDGET (192u << 20)
+static struct { uint8_t *b; size_t n; long poll, frame; uint32_t thumb[RW_TW * RW_TH]; } s_rw[RW_MAX];
+static int s_rw_head, s_rw_count, s_rw_on, s_rw_cap, s_rw_every = 6; static long s_rw_last = -1000000;
+#define RW_SLOTS s_rw_cap
 static void rearm(void) { ps_state_armed = s_save_at >= 0 || s_save_cb || s_reload_at >= 0 || s_rw_on; }
 static void rewind_tick(long poll) {
-    if (!s_rw_on || ps_frames - s_rw_last < RW_EVERY) return;
+    if (!s_rw_on || ps_frames - s_rw_last < s_rw_every) return;
     s_rw_last = ps_frames;
+    size_t n; uint8_t *b = capture(&n);
+    if (!s_rw_cap) {                         /* the ring's size from the first snapshot's */
+        size_t k = RW_BUDGET / (n + sizeof s_rw[0].thumb);
+        s_rw_cap = k > RW_MAX ? RW_MAX : k < 10 ? 10 : (int)k;
+        s_rw_every = (RW_WINDOW + s_rw_cap - 1) / s_rw_cap; if (s_rw_every < 6) s_rw_every = 6;
+    }
     free(s_rw[s_rw_head].b);
-    s_rw[s_rw_head].b = capture(&s_rw[s_rw_head].n); s_rw[s_rw_head].poll = poll; s_rw[s_rw_head].frame = ps_frames;
+    s_rw[s_rw_head].b = b; s_rw[s_rw_head].n = n; s_rw[s_rw_head].poll = poll; s_rw[s_rw_head].frame = ps_frames;
     {   /* its picture for the timeline: the frame on screen, half size */
         const uint8_t *genrecomp_get_framebuffer(void); int genrecomp_present_width(void);
         const uint32_t *f = (const uint32_t *)genrecomp_get_framebuffer(); int w = genrecomp_present_width();
@@ -161,6 +170,7 @@ static void rewind_tick(long poll) {
 /* the timeline (ps_menu.c): how many snapshots are held, and the picture (RW_TW x RW_TH) and age in
  * frames of the one STEPS back (1: the newest) */
 int ps_state_rewind_count(void) { return s_rw_count; }
+int ps_state_rewind_every(void) { return s_rw_every; }   /* frames between two snapshots */
 const uint32_t *ps_state_rewind_thumb(int steps, int *w, int *h, long *age) {
     if (steps < 1 || steps > s_rw_count) return NULL;
     int i = (s_rw_head + RW_SLOTS - steps) % RW_SLOTS;
@@ -308,5 +318,6 @@ const char *ps_state_load_now(uint8_t *b, size_t n) { (void)n; free(b); return "
 uint8_t *ps_state_read_file(const char *path, size_t *n) { (void)path; *n = 0; return NULL; }
 uint8_t *ps_state_rewind_take(int steps, size_t *n, long *poll) { (void)steps; *n = 0; *poll = 0; return NULL; }
 int ps_state_rewind_count(void) { return 0; }
+int ps_state_rewind_every(void) { return 60; }
 const uint32_t *ps_state_rewind_thumb(int steps, int *w, int *h, long *age) { (void)steps; *w = *h = 0; *age = 0; return NULL; }
 #endif

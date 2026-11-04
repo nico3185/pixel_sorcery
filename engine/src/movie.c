@@ -113,8 +113,15 @@ long movie_length(void) {
     return s_movie_len;
 }
 
+static long s_movie_at;            /* the frame last read */
+/* PS_MOVIE_FAST=1 (the menu's LEVEL SELECT): the movie runs at full speed, unseen, until it ends */
+int movie_fast(void) {
+    static int on = -1; if (on < 0) on = getenv("PS_MOVIE_FAST") != NULL;
+    return on && s_movie_len > 0 && s_movie_at - s_offset < s_movie_len;
+}
 uint16_t movie_buttons(long frame, int port) {
     if (s_movie_len < 0) movie_load();
+    s_movie_at = frame;
     long i = frame - s_offset;
     if (port < 0 || port > 1 || s_movie_len <= 0 || i < 0 || i >= s_movie_len) return 0;
     return s_movie[port][i];

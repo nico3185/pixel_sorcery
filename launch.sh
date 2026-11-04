@@ -22,7 +22,7 @@ for shelf in $shelves; do
   [[ -f $cfg ]] || { print -u2 "no shelf '$shelf' (launchers: ${${(f)"$(cd $here/launchers && ls *.txt)"}//.txt/})"; exit 2; }
   name=$(awk '$1 == "name" { $1 = ""; sub(/^ /, ""); print; exit }' $cfg)
   app="$here/launchers/build/$name.app"
-  if (( rebuild )) || [[ ! -d $app || $cfg -nt $app ]]; then
+  if (( rebuild )) || [[ ! -f $app/Contents/Info.plist || $cfg -nt $app ]]; then   # missing, or left half-built
     print "building $name.app (a few minutes the first time)"
     $here/engine/tools/make_launcher.sh $cfg
   fi
