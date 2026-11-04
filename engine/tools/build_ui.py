@@ -401,6 +401,19 @@ def engine():
                 subprocess.Popen([os.path.join(ROOT, 'play.sh'), c[1]], cwd=ROOT, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 note(f'playing {c[1]}')
+            elif c[0] == 'shelf' and len(c) == 2 and re.fullmatch(r'[a-z0-9_-]+', c[1]) and \
+                    os.path.exists(os.path.join(ROOT, 'launchers', c[1] + '.txt')):
+                # a launcher shelf (launchers/NAME.txt): built the first time, then opened
+                log = open(os.path.join(ROOT, 'launchers', 'shelf.log'), 'w')
+                subprocess.Popen([os.path.join(ROOT, 'launch.sh'), c[1]], cwd=ROOT, stdin=subprocess.DEVNULL,
+                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                note(f'opening the {c[1]} shelf (built the first time: a few minutes)')
+            elif c[0] == 'pad' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
+                # the controller page alone (a built game opened on CONTROLLER SETUP, closed when done)
+                subprocess.Popen([os.path.join(ROOT, 'play.sh'), c[1]], cwd=ROOT, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                                 env=dict(os.environ, PS_PAD_SETUP='1', PS_POLL_RECORD='/dev/null'))
+                note('controller setup')
             elif c[0] == 'stop':
                 stop.set(); [j.kill() for j in jobs.values()]; note('stopped')
         except queue.Empty:

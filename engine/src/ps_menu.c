@@ -394,7 +394,7 @@ static void item_text(int i, char *out, size_t n) {
         snprintf(out, n, "LOAD STATE          < SLOT %d >%s", s_slot, p < 0 ? " EMPTY" : "");
     } else if (i == item_count() - 3) snprintf(out, n, "RESUME");
     else if (i == item_count() - 2) snprintf(out, n, "RESET");
-    else snprintf(out, n, "QUIT GAME");
+    else snprintf(out, n, getenv("PS_LAUNCHER") ? "BACK TO GAMES" : "QUIT GAME");   /* started from a shelf: back to it */
 }
 
 static void change(int i, int dir) {
@@ -772,6 +772,21 @@ void ps_menu_run(uint8_t *frame, int width) {
             if (level_select_ready()) { if (k > 0 && k <= s_nstages) s_stage_sel = k - 1; level_select(); } }
     }
     logic_tick();
+    if (getenv("PS_PAD_SETUP")) {                      /* the app's Controller button: this page alone, then quit */
+        static uint32_t pb[GEN_RENDER_MAX_WIDTH * GEN_RENDER_HEIGHT];
+        char pn[40];
+        if (!input_pad_name(pn, sizeof pn)) {
+            for (int f = 0; f < 150; f++) {               /* no pad: say so for a few seconds */
+                SDL_Event ev; while (SDL_PollEvent(&ev)) if (ev.type == SDL_QUIT) exit(0);
+                memset(pb, 0, sizeof pb);
+                draw_text(pb, width, GEN_RENDER_HEIGHT, width / 2 - 66, 100, "NO GAMEPAD CONNECTED", 0xFFE070);
+                draw_text(pb, width, GEN_RENDER_HEIGHT, width / 2 - 90, 116, "CONNECT ONE, THEN TRY AGAIN", 0x9090A0);
+                platform_show_frame(pb, width); SDL_Delay(16);
+            }
+            exit(0);
+        }
+        pad_setup(frame, width, pb); exit(0);
+    }
     if (s_rw_open) { s_rw_open = false; rewind_ui(frame, width); }
     {   /* PS_REWIND_SHOT=FRAME:FILE: the timeline drawn 3 s back at that frame, as a PNG (tests) */
         static long at = -2; static const char *path; extern long ps_frames;

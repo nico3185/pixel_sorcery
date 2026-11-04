@@ -243,6 +243,9 @@ bool platform_init(const char *window_title, int scale) {
     /* Gamepads by button position (Xbox layout), not by label: on Nintendo pads the
      * labels are swapped, which scrambled A/B/C for the Genesis layout */
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
+    /* fullscreen as a borderless window over the screen, not a macOS Space of its own: the launcher and the
+     * games it starts then cover each other in place, without the Space switch (no leaving fullscreen) */
+    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
         fprintf(stderr, "platform: SDL_Init failed: %s\n", SDL_GetError());
         return false;
