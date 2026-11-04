@@ -1,0 +1,5 @@
+{
+ "_doc": "SH3K: the title menu offers LEVEL SELECT as its third entry once $FFFFE0/$FFFFE2 = $0101 (what the level-select code sets; the code's checker is never reached here): the settings menu sets them on the title (game mode $FFF600 = $04), then moves the title menu down twice and presses Start - game mode $28, the game's own level select (Down moves, Start loads). The session keeps the poke (SESSION.poke) and replays with it.",
+ "poke": "FFF600=0400:FFFFE0=0101;FFF600=0400:FFFFE2=0101",
+ "code": [[500, "DOWN", 3], [530, "DOWN", 3], [600, "START", 4]]
+}

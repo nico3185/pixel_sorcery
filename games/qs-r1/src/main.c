@@ -51,6 +51,9 @@ int main(int argc, char *argv[]) {
     ps_wide_set_game(&wide);
     ps_menu_set_pause_hook(qs_paused);
     ps_menu_set_title("qs-r1");
+    /* the published Game Genie A4TA-ATCY (6 levels on the map instead of 3: turn it off when starting a game or
+     * changing level), at REV01's address of the same map table (REV00 $A054) */
+    ps_menu_add_toggle("MAP: ALL 6 LEVELS", 0x00A11E, 0x0806, true);
 
     g_m68k.a[7] = bus_read32(0);
     g_m68k.pc = bus_read32(4);
