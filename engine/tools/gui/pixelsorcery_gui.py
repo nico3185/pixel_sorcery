@@ -56,9 +56,10 @@ class App:
         try: self.pref = json.load(open(PREFS))
         except (OSError, ValueError): self.pref = {}
         self.sel = set(self.pref.get('selected', []))
-        root.title('PixelSorcery'); root.geometry('960x680'); root.minsize(900, 600); root.configure(bg=BG)
+        root.title('PixelSorcery'); root.geometry('980x740'); root.minsize(900, 680); root.configure(bg=BG)
         st = ttk.Style()
-        for w in ('TFrame', 'TLabel', 'TCheckbutton'): st.configure(w, background=BG)
+        for w in ('TFrame', 'TLabel', 'TCheckbutton', 'TRadiobutton', 'TLabelframe', 'TLabelframe.Label'): st.configure(w, background=BG)
+        st.configure('Bold.TCheckbutton', font=BOLD)
         st.configure('TLabel', font=BODY); st.configure('Treeview', rowheight=24, font=BODY)
         st.configure('Treeview.Heading', font=BOLD)
         self.body = ttk.Frame(root, padding=16); self.body.pack(fill='both', expand=True)
@@ -96,22 +97,48 @@ class App:
         ttk.Entry(top, textvariable=self.folder, font=BODY).pack(side='left', fill='x', expand=True, padx=6)
         ttk.Button(top, text='Choose…', command=self.choose).pack(side='left')
         ttk.Button(top, text='Rescan', command=self.rescan).pack(side='left', padx=(6, 0))
-        cols = ('pick', 'game', 'rom', 'status', 'built')
-        self.tree = ttk.Treeview(p, columns=cols, show='headings', selectmode='browse')
-        for c, w, t in (('pick', 50, 'Build'), ('game', 300, 'Game'), ('rom', 170, 'Your dump'),
-                        ('status', 230, 'Status'), ('built', 90, 'Built')):
-            self.tree.heading(c, text=t); self.tree.column(c, width=w, anchor='w', stretch=c in ('game', 'status'))
-        self.tree.pack(fill='both', expand=True, pady=10)
-        self.tree.bind('<Button-1>', self.click)
-        bar = ttk.Frame(p); bar.pack(fill='x')
+        # settings, as the Mac app: processes (titles at the same time), cores, Build / Build + self-check
+        self.cpus, self.native_only = os.cpu_count() or 4, False
+        self.procs = tk.IntVar(value=self.pref.get('processes', 2)); self.cores = tk.IntVar(value=self.pref.get('cores', 0) or self.cpus)
         self.check = tk.BooleanVar(value=self.pref.get('check', False))
-        self.b_build = tk.Button(bar, text='Build selected', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN,
-                                 activeforeground='white', relief='flat', padx=16, pady=4, cursor='hand2', command=self.start)
-        self.b_build.pack(side='left')
-        ttk.Button(bar, text='Select all ready', command=self.select_ready).pack(side='left', padx=8)
-        self.c_check = ttk.Checkbutton(bar, text='+ self-check against the original', variable=self.check)
-        self.c_check.pack(side='left', padx=6)
-        ttk.Button(bar, text='Stop', command=lambda: self.send('stop')).pack(side='left')
+        sets = self.sets = ttk.Frame(p); sets.pack(fill='x', pady=(10, 0))
+        ttk.Label(sets, text='Processes').pack(side='left')
+        self.s_procs = ttk.Spinbox(sets, from_=1, to=self.cpus, width=3, textvariable=self.procs, command=self.hint)
+        self.s_procs.pack(side='left', padx=(4, 24))
+        ttk.Label(sets, text='Cores').pack(side='left')
+        self.s_cores = ttk.Spinbox(sets, from_=1, to=self.cpus, width=3, textvariable=self.cores, command=self.hint)
+        self.s_cores.pack(side='left', padx=4)
+        self.l_of = ttk.Label(sets, text=f'of {self.cpus}'); self.l_of.pack(side='left', padx=(0, 24))
+        self.modes = ttk.Frame(sets); self.modes.pack(side='left')
+        for text, v in (('Build', False), ('Build + self-check', True)):
+            ttk.Radiobutton(self.modes, text=text, value=v, variable=self.check, command=self.mode).pack(side='left', padx=(0, 10))
+        self.l_hint = ttk.Label(p, font=CAPTION, foreground=GREY); self.l_hint.pack(anchor='w', pady=(2, 8))
+        self.all = tk.BooleanVar()
+        self.c_all = ttk.Checkbutton(p, variable=self.all, command=self.select_all, style='Bold.TCheckbutton')
+        self.c_all.pack(anchor='w')
+        cols = ('pick', 'code', 'game', 'rom', 'progress', 'time')
+        self.tree = ttk.Treeview(p, columns=cols, show='headings', selectmode='browse', height=9)
+        for c, w, t in (('pick', 34, ''), ('code', 70, 'Code'), ('game', 250, 'Game'), ('rom', 190, 'ROM'),
+                        ('progress', 220, 'Progress'), ('time', 60, 'Time')):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w, anchor='w', stretch=c in ('game', 'progress'))
+        for tag, colour in (('warn', '#b35900'), ('bad', GREY)): self.tree.tag_configure(tag, foreground=colour)
+        self.tree.pack(fill='both', expand=True, pady=(4, 6))
+        self.tree.bind('<Button-1>', self.click); self.tree.bind('<<TreeviewSelect>>', lambda e: self.picked())
+        # the selected title: Play / Build & play, Rebuild, and its log
+        self.logbox = ttk.LabelFrame(p, text='Log (select a title)', padding=6); self.logbox.pack(fill='x')
+        row = ttk.Frame(self.logbox); row.pack(fill='x', pady=(0, 4))
+        self.b_play = ttk.Button(row, text='Play', command=lambda: self.chosen_row() and self.play(self.chosen_row()))
+        self.b_rebuild = ttk.Button(row, text='Rebuild', command=self.rebuild)
+        self.log = tk.Text(self.logbox, height=6, font=('Consolas', 9) if os.name == 'nt' else ('Menlo', 10),
+                           relief='flat', wrap='none', state='disabled', bg='white')
+        self.log.pack(fill='x')
+        bar = ttk.Frame(p); bar.pack(fill='x', pady=(8, 0))
+        self.b_build = tk.Button(bar, text='Start', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN,
+                                 activeforeground='white', relief='flat', padx=18, pady=4, cursor='hand2', command=self.start_stop)
+        self.b_build.pack(side='right')
+        self.root.bind('<Return>', lambda e: self.page == 'build' and not self.running and self.start())
+        self.root.bind('<Escape>', lambda e: self.running and self.send('stop'))
+        self.hint()
 
     def go(self, page):
         if page == self.page: return
@@ -172,32 +199,44 @@ class App:
         self.root.after(250, self.poll)
 
     def show(self, frame):
-        notes, was = [], self.running
+        notes, was, scanning = [], self.running, False
         for line in frame:
             f = line.split('|')
             if f[0] == 'S':
-                self.running = f[2] == '1'
+                self.running, scanning = f[2] == '1', f[3] == '1'
                 if not self.folder.get(): self.folder.set(f[1])
-                if f[5] == '1': self.c_check.state(['disabled'])
+                if f[4].isdigit() and int(f[4]) != self.cpus:
+                    self.cpus = int(f[4]); self.s_procs.configure(to=self.cpus); self.s_cores.configure(to=self.cpus)
+                    self.l_of.configure(text=f'of {self.cpus}')
+                self.native_only = f[5] == '1'
+                if self.native_only: self.check.set(False); self.modes.pack_forget()   # no emulator core: no self-check
             elif f[0] == 'T' and len(f) >= 12:
                 t, code, name, rst, rdet, stage, n, m, sec, res, built = f[1:12]
-                self.rows[t] = dict(code=code, name=name, rom=rst, built=built != '0')
-                if stage and stage != 'done': st = (f'{stage} {n}/{m}' if m != '0' else stage) + f'  ({sec} s)'
-                elif res: st = res
-                else: st = {'ready': 'ready to build', 'link': 'ready to build', 'make': 'ready (made from your dumps)',
-                            'missing': 'no dump found'}.get(rst, rst)
-                pick = '☑' if t in self.sel else ('☐' if rst in READY else '')
-                vals = (pick, f'{name}  [{code}]', rdet or ('-' if rst == 'missing' else rst), st, 'yes' if built != '0' else '')
-                if self.tree.exists(t): self.tree.item(t, values=vals)
-                else: self.tree.insert('', 'end', iid=t, values=vals)
+                self.rows[t] = dict(code=code, name=name, rom=rst, detail=rdet, built=built != '0')
+                rom, tag = {'ready': ('● ROM ok', 'ok'), 'link': ('● found: ' + rdet, 'ok'), 'make': ('● made from ' + rdet, 'ok'),
+                            'other dump': ('● other dump (not verified)', 'warn')}.get(rst, ('○ no ROM', 'bad'))
+                if stage == 'done' or (res and not stage): prog = ('✓ ' if res in ('OK', 'SELF-CHECK OK') else '✗ ') + res
+                elif stage == 'waiting': prog = 'waiting'
+                elif stage and m not in ('', '0'): prog = f'{stage} {int(n) * 100 // max(1, int(m))}%'
+                else: prog = stage
+                s = int(sec) if sec.isdigit() else 0
+                vals = ('☑' if t in self.sel else '☐' if rst in READY else '', code, name, rom, prog,
+                        f'{s // 60}:{s % 60:02d}' if s else '')
+                if self.tree.exists(t): self.tree.item(t, values=vals, tags=(tag,))
+                else: self.tree.insert('', 'end', iid=t, values=vals, tags=(tag,))
             elif f[0] == 'N': notes.append(f[1])
-        ready = sum(1 for r in self.rows.values() if r['rom'] in READY)
-        built = sum(1 for r in self.rows.values() if r['built'])
-        head = 'Building…' if self.running else \
-            f'{built} game{"" if built == 1 else "s"} built, {ready} found in your folder'
+        avail = {t for t, r in self.rows.items() if r['rom'] in READY}
+        if avail and (not self.pref.get('selected_init') or not self.sel <= avail):   # after a scan: everything found
+            self.sel = set(avail); self.pref['selected_init'] = True; self.save(); self.repick()
+        ready, built = len(avail), sum(1 for r in self.rows.values() if r['built'])
+        head = 'Building…' if self.running else ('scanning…' if scanning else
+            f'{built} game{"" if built == 1 else "s"} built, {ready} found in your folder')
         self.status.set(head + ('   —   ' + notes[-1] if notes else ''))
-        self.b_build.configure(state='disabled' if self.running else 'normal')
-        self.show_cards(); self.update_back()
+        self.b_build.configure(text='Stop' if self.running else 'Start')
+        for w in (self.s_procs, self.s_cores): w.state(['disabled'] if self.running else ['!disabled'])
+        self.c_all.configure(text=f'All found in the ROM folder ({ready} of {len(self.rows)} titles, {len(self.sel)} chosen)')
+        self.all.set(bool(avail) and avail <= self.sel)
+        self.hint(); self.picked(); self.show_cards(); self.update_back()
         if self.page is None and self.rows: self.go('games' if built else 'build')
         elif was and not self.running and built: self.go('games')        # a build ended: your games
 
@@ -205,10 +244,58 @@ class App:
     def click(self, e):
         t = self.tree.identify_row(e.y)
         if t and self.tree.identify_column(e.x) == '#1' and self.rows.get(t, {}).get('rom') in READY:
-            self.sel ^= {t}; self.save()
+            self.sel ^= {t}; self.save(); self.repick()
 
-    def select_ready(self):
-        self.sel = {t for t, r in self.rows.items() if r['rom'] in READY}; self.save()
+    def select_all(self):
+        self.sel = {t for t, r in self.rows.items() if r['rom'] in READY} if self.all.get() else set()
+        self.save(); self.repick()
+
+    def repick(self):   # the tick column after the choice changed
+        for t, r in self.rows.items():
+            if self.tree.exists(t): self.tree.set(t, 'pick', '☑' if t in self.sel else '☐' if r['rom'] in READY else '')
+
+    def num(self, var, default):
+        try: return max(1, min(self.cpus, int(var.get())))
+        except (tk.TclError, ValueError): return default
+
+    def hint(self):   # the Mac app's caption: cores per process and the suggested processes
+        cores, procs = self.num(self.cores, self.cpus), self.num(self.procs, 2)
+        per = max(1, cores // max(1, min(procs, max(1, len(self.sel)))))
+        what = 'self-check (mostly one core per title)' if self.check.get() else 'a build (one generating while one compiles)'
+        self.l_hint.configure(text=f'{per} cores per process · suggested {self.suggested()} processes for {what}')
+        self.save()
+
+    def suggested(self): return max(1, self.num(self.cores, self.cpus) // 2) if self.check.get() else 2
+
+    def mode(self): self.procs.set(self.suggested()); self.hint()
+
+    def chosen_row(self):
+        s = self.tree.selection(); return s[0] if s else None
+
+    def picked(self):   # the selected title: its Play / Build & play, Rebuild and log (the last 40 lines)
+        t = self.chosen_row(); r = self.rows.get(t)
+        self.logbox.configure(text=r['name'] if r else 'Log (select a title)')
+        for b in (self.b_play, self.b_rebuild): b.pack_forget()
+        text = ''
+        if r:
+            self.b_play.configure(text='Play' if r['built'] else 'Build & play',
+                                  state='normal' if r['rom'] in READY and not self.running else 'disabled')
+            self.b_play.pack(side='left')
+            if r['built']: self.b_rebuild.configure(state='disabled' if self.running else 'normal'); self.b_rebuild.pack(side='left', padx=6)
+            try:
+                with open(os.path.join(ROOT, 'games', t, 'build_all.log'), 'rb') as f:
+                    f.seek(0, 2); f.seek(max(0, f.tell() - 6000))
+                    text = '\n'.join(f.read().decode('utf-8', 'replace').splitlines()[-40:])
+            except OSError: text = '(no log yet)'
+        if text != self.log.get('1.0', 'end-1c'):
+            self.log.configure(state='normal'); self.log.delete('1.0', 'end'); self.log.insert('1.0', text)
+            self.log.see('end'); self.log.configure(state='disabled')
+
+    def rebuild(self):
+        t = self.chosen_row()
+        if t: self.send(f'start {self.num(self.cores, self.cpus)} 1 {int(self.check.get())} {t}')
+
+    def start_stop(self): self.send('stop') if self.running else self.start()
 
     def choose(self):
         d = filedialog.askdirectory(title='The folder with your game dumps', initialdir=self.folder.get() or ROOT)
@@ -219,8 +306,9 @@ class App:
 
     def start(self):
         sel = [t for t in self.rows if t in self.sel and self.rows[t]['rom'] in READY]
-        if not sel: messagebox.showinfo('PixelSorcery', 'Tick the games to build (the Build column) first.'); return
-        self.save(); self.send(f'start {os.cpu_count() or 4} {min(2, len(sel))} {int(self.check.get())} ' + ' '.join(sel))
+        if not sel: messagebox.showinfo('PixelSorcery', 'Tick the games to build first.'); return
+        self.save()
+        self.send(f'start {self.num(self.cores, self.cpus)} {self.num(self.procs, 2)} {int(self.check.get())} ' + ' '.join(sel))
 
     def play(self, t):
         self.send('play ' + t); self.status.set(f'Starting {self.rows[t]["name"]}…')
@@ -246,7 +334,8 @@ class App:
         ttk.Button(bar, text='Cancel', command=w.destroy).pack(side='right', padx=8)
 
     def save(self):
-        self.pref.update(folder=self.folder.get(), selected=sorted(self.sel), check=self.check.get())
+        self.pref.update(folder=self.folder.get(), selected=sorted(self.sel), check=self.check.get(),
+                         processes=self.num(self.procs, 2), cores=self.num(self.cores, self.cpus))
         try: json.dump(self.pref, open(PREFS, 'w'))
         except OSError: pass
 
