@@ -22,7 +22,12 @@ for g in $pay/games/*(/); do
   grep -q genrecomp_native $g/CMakeLists.txt 2>/dev/null || { print "  left out: ${g:t} (needs the emulator core)"; rm -rf $g; }
 done
 print -r -- $version > $pay/VERSION
-gcc -O2 -s -mwindows -o $pay/PixelSorcery.exe $root/engine/tools/windows/pixelsorcery.c   # the entry point (no console)
+# the PixelSorcery logo as the exe's icon (shortcuts, taskbar), made as the Mac's .icns is (make_icon.ps1)
+powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w $root/engine/tools/windows/make_icon.ps1)" \
+  "$(cygpath -w $root/img/sorpix.png)" "$(cygpath -w $tmp/PixelSorcery.ico)" >/dev/null
+print -r -- '1 ICON "PixelSorcery.ico"' > $tmp/icon.rc
+(cd $tmp && windres icon.rc -O coff -o icon.o)
+gcc -O2 -s -mwindows -o $pay/PixelSorcery.exe $root/engine/tools/windows/pixelsorcery.c $tmp/icon.o   # the entry point (no console)
 rm -f $out/$name.zip; (cd $tmp && zip -qr $out/$name.zip $name)
 (cd $out && sha256sum $name.zip > $name.zip.sha256)
 # the single-file download: PixelSorcery.exe + the zip + its size (8 bytes LE) + PSPAYLD1 (pixelsorcery.c)

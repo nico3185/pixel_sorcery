@@ -46,23 +46,30 @@ static void write_play(void) {
  * addresses, appended to PS_RAMDUMP_AT's dump (oldest first) - the path into a crash */
 #include "debug/cpuhook.h"
 static uint32_t s_pcring[512]; static unsigned s_pcpos;
+static int s_spmin_on; static uint32_t s_spmin = 0xFFFFFF;
 static void pc_hook(hook_type_t t, int w, unsigned int a, unsigned int v) {
     (void)w; (void)v;
     /* stops once a game running from program/word RAM ($020000-$23FFFF) reaches the BIOS
-     * ROM below $020000 or its error slots ($FFFD18-$FFFDFF): a jump the relocation missed */
-    static int frozen, game;
+     * ROM below $020000 or its error slots ($FFFD18-$FFFD1F): a jump the relocation missed */
+    static int frozen, game; static unsigned prev;
+    if (t == HOOK_M68K_E && s_spmin_on) {             /* PS_SPMIN: the lowest stack pointer in work RAM */
+        uint32_t sp = m68k_get_reg(M68K_REG_SP) & 0xFFFFFF;
+        if (sp >= 0xFF0000 && sp < s_spmin) { s_spmin = sp; fprintf(stderr, "ref: stack down to %06X at PC %06X\n", sp, a & 0xFFFFFF); }
+    }
     if (t != HOOK_M68K_E || frozen) return;
     s_pcring[s_pcpos++ & 511] = a;
     a &= 0xFFFFFF;
+    prev = a;
     if (a >= 0x020000 && a < 0x240000) game = 1;
-    else if (game && (a < 0x020000 || (a >= 0xFFFD18 && a < 0xFFFE00))) frozen = 1;
+    else if (game && (a < 0x020000 || (a >= 0xFFFD18 && a < 0xFFFD20))) frozen = 1;   /* $FFFD20+: an image switch stub (swap.s) */
 }
 #endif
 
 int main(int argc, char *argv[]) {
     argc = platform_parse_args(argc, argv);
 #ifdef HOOK_CPU
-    if (getenv("PS_PCRING")) set_cpu_hook(pc_hook);
+    if (getenv("PS_PCRING") || getenv("PS_SPMIN")) set_cpu_hook(pc_hook);
+    s_spmin_on = getenv("PS_SPMIN") != NULL;
 #endif
     if (argc < 2) {
         fprintf(stderr, "usage: genrecomp_ref [--headless] [--record out.mp4] "
@@ -182,6 +189,9 @@ int main(int argc, char *argv[]) {
         platform_present_frame(present);
         platform_frame_sync();
     }
+#ifdef HOOK_CPU
+    if (s_spmin_on) printf("ref: lowest stack pointer %06X\n", s_spmin);
+#endif
     write_play();
     if (!platform_is_headless()) ps_megacd_brm(false, true);
     genrecomp_shutdown();
