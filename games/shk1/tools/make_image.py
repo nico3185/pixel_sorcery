@@ -279,6 +279,10 @@ def main():
         lut = bytes((sl[k2[rm + i] >> 4] << 4) | sl[k2[rm + i] & 15] for i in range(256))
         img[base:base + 32 * maxtile] = bytes(lut[c] for c in k2[art:art + 32 * maxtile])
     remap_d = lambda data: bytes((slot_d[b >> 4] << 4) | slot_d[b & 15] for b in data)
+    # his faces (lives icon, signpost, 1-up monitor) on his own colours - slots 2-5 as K_ART2: right with
+    # the palette swap (the console default) and the native palette expansion (the renderer covers
+    # their tiles); with KNUCKLES 16 COLOURS they show SH1's slots there
+    remap_k = lambda data: bytes((slot[b >> 4] << 4) | slot[b & 15] for b in data)
 
     # PALTAB (K_ColSync): SH1's slots 2-5 of each palette Knuckles appears in -> his colours
     # (water versions shifted the way SH1 shifts Sonic's); count-1, then 4 + 4 words per entry
@@ -307,7 +311,7 @@ def main():
     sys.path.insert(0, HERE); import nemesis       # its sibling (python -I leaves the script dir out)
     hud = CFG['hud']
     tiles, _ = nemesis.decode(k2, H(hud['lives_shk2']))
-    tiles = remap_d(tiles)
+    tiles = remap_k(tiles)
     packed = nemesis.encode(tiles)
     at = (L['dplc'] + dend + 1) & ~1
     if len(packed) > 0x1000 - 2 or nemesis.decode(packed)[0] != tiles:
@@ -317,7 +321,7 @@ def main():
     # signpost: SH1's art with SHK2's Knuckles face over Sonic's
     sign, _ = nemesis.decode(s1, H(hud['sign_s1_art']))
     face, _ = nemesis.decode(k2, H(hud['sign_shk2_face']))
-    face = remap_d(face)
+    face = remap_k(face)
     ft = H(hud['sign_face_tile'])
     sign = sign[:32 * ft] + face + sign[32 * ft + len(face):]
     packed = nemesis.encode(sign)
@@ -435,6 +439,10 @@ def main():
         img[addr:addr + len(data)] = data
 
     # --- header: ROM end, checksum (SH1 sums words from $200 to the end)
+    # Knuckles' colours (KCOL_ROM, k1.s): the image itself - on a console - shows the palette swap, his
+    # own colours (owner: the nearest-colour default looked wrong on the Mega Sg); the native build
+    # switches to 2, extended (games/shk1/src/main.c), the settings menu to 0 or 1
+    img[0x95FFE:0x96000] = struct.pack('>H', 1)
     img[0x1A4:0x1A8] = struct.pack('>I', len(img) - 1)
     ck = sum(struct.unpack(f'>{(len(img) - 0x200) // 2}H', img[0x200:])) & 0xFFFF
     img[0x18E:0x190] = struct.pack('>H', ck)

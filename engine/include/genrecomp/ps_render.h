@@ -30,6 +30,15 @@ void ps_render_frame(uint32_t *dst, int pitch);
  * that is what the hardware does and some games rely on it for effects. */
 void ps_render_set_sprite_limits(bool on);
 
+/* Sprite colours past the palette (native only, owner: "palette expansion" for the Mac/PC builds): sprite
+ * pixels from tiles [tile_lo, tile_hi) drawn with palette line 0 take, for colour slot pairs[i][0],
+ * pairs[i][2] where the line's colour there is pairs[i][1] (CRAM words; another value - a fade - scales the
+ * slot's first pair the same way). gate() says when it applies (NULL: always); off while comparing with GPGX.
+ * SHK1: his own colours, nothing else sharing Sonic's slots changes. */
+void ps_render_set_sprite_colours(int tile_lo, int tile_hi, const uint16_t (*pairs)[3], int n, bool (*gate)(void));
+/* more tiles with the same colours, while gate() (up to 4; e.g. a face pasted into shared VRAM) */
+void ps_render_add_sprite_tiles(int tile_lo, int tile_hi, bool (*gate)(void));
+
 /* Pattern fetch: 8 pixel colour indices (0-15) of one row of `tile`,
  * honouring flips. Single entry point for tile data (HD replacement hook). */
 void ps_render_tile_row(uint32_t tile, int row, bool hflip, bool vflip, uint8_t out[8]);

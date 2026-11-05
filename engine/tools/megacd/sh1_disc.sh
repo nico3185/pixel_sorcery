@@ -29,7 +29,14 @@ helper() {  # NAME ZONE ZONE2 MODES
 # into a loop on the disc
 python3 -c "
 for t, n in ((0x071A9C, 19), (0x078B44, 49), (0x071990, 15)):
-    print('\n'.join('%06X' % (t + 4 * i) for i in range(n)))" | cat - $work/ptrs.txt | sort -u > $t/ptrs.txt
+    print('\n'.join('%06X' % (t + 4 * i) for i in range(n)))" | cat - $work/ptrs.txt | sort -u |
+  python3 -c "
+import sys; rom = open('$rom', 'rb').read()   # LevelSizeArray (\$5F1C, 28 entries of 12 bytes): limits read as longs (left:right = \$00001800)
+for l in sys.stdin:   # look like ROM addresses to the tracer - never pointers
+    a = int(l, 16); v = int.from_bytes(rom[a:a + 4], 'big')
+    if 0x5F1C <= a < 0x5F1C + 12 * 28: continue
+    if a >= 0x20000 and v < 0x10000: continue   # art and collision maps (\$2222, \$EEEE ...): data, not low-ROM pointers
+    sys.stdout.write(l)" > $t/ptrs.txt
 # code ties and the addresses code names (tables come whole with them, offset tables to their last entry):
 # a probe relocation over every capture, then code_refs.py
 exall=(); for f in $work/ev/*/*.bin(N); do exall+=(--exec $f); done
@@ -83,12 +90,12 @@ zmap() { $py $here/zonepack.py 0x80000 --rom $rom --use "$work/ev/*:$(printf %02
 helper front 0 6 0xFF                              # the card: every mode; Green Hill and the ending
 ex=(); for f in $work/ev/*/*.bin(N); do ex+=(--exec $f); done
 ( cd $g && $py $here/relocate.py $rom recomp.json $out.front --ptrs $t/ptrs.txt $ex --all-code \
-    --map 000000-03DCF2=200000,060000-07C000=020000,03DCF2-041800=03C000 $common --blob 23F000=$t/hfront.bin | head -1 )
+    --map 000000-03DCF2=200000,060000-07C000=020000,03DCF2-041800=03C000 $common --blob 23F000=$t/hfront.bin > $t/relocfront.txt; head -1 $t/relocfront.txt )
 for z in 1 2 3 4 5; do
   helper z$z $z $z 0x0C
   ex=(); for f in $work/ev/*/0$z??.bin(N); do ex+=(--exec $f); done
   map=$(zmap $z)
   ( cd $g && $py $here/relocate.py $rom recomp.json $out.zone$z --ptrs $t/ptrs.txt $ex --all-code \
-      --map $map $common --blob 23F000=$t/hz$z.bin | head -1 )
+      --map $map $common --blob 23F000=$t/hz$z.bin > $t/reloc$z.txt; head -1 $t/reloc$z.txt )
 done
 print "build_disc.py --game 1:$out.front --image 13:$out.zone1 --image 14:$out.zone2 --image 15:$out.zone3 --image 16:$out.zone4 --image 17:$out.zone5"

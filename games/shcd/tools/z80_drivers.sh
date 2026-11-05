@@ -9,11 +9,11 @@ g=${0:A:h:h}; cue=${1:?usage: z80_drivers.sh DISC.cue}; [[ $OSTYPE == (msys|cygw
 cd $g || exit 1
 py=${g:h:h}/engine/.venv/bin/python; [[ -x $py ]] || py=python3
 [[ -f build/build.ninja ]] || cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null || exit 1
-ninja -C build shcd_native >/dev/null || exit 1
+ninja -C build ${PS_JOBS:+-j $PS_JOBS} shcd_native >/dev/null || exit 1   # the Cores setting (build_ui.py), not all cores + 2
 cap=build/z80cap.$$; mkdir -p $cap
 $py tools/stage_movie.py 0 3000 $cap/movie.txt
 GENRECOMP_MOVIE=$cap/movie.txt PS_Z80_CAPTURE=$cap/img%d.bin \
   build/shcd_native --headless --frames 3000 $cue 2>&1 | grep 'z80 capture'
 $py tools/z80_drivers.py $cap src/recomp || exit 1
-ninja -C build shcd_native >/dev/null || exit 1
+ninja -C build ${PS_JOBS:+-j $PS_JOBS} shcd_native >/dev/null || exit 1   # the Cores setting (build_ui.py), not all cores + 2
 print "z80 drivers: src/recomp/z80_*.c, shcd_native rebuilt (captures in $cap)"
