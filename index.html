@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PixelSorcery</title>
-<meta name="description" content="PixelSorcery turns Sega Mega Drive / Genesis games into native programs: a static recompiler (68000 and Z80 to C) with its own video and sound, verified against the original at every controller poll. Mac app available. No ROMs included.">
+<meta name="description" content="PixelSorcery turns Sega Mega Drive / Genesis games into native programs: a static recompiler (68000 and Z80 to C) with its own video and sound, verified against the original at every controller poll. Apps for Mac, Windows and Linux. No ROMs included.">
 <meta property="og:title" content="PixelSorcery">
 <meta property="og:description" content="Mega Drive / Genesis games statically recompiled to native C, verified against the original. No ROMs included.">
 <meta property="og:image" content="https://nico3185.github.io/pixel_sorcery/logo.png">
@@ -55,11 +55,13 @@
       to C, and run on their own video, sound and input code, with no emulator in the loop.</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/nico3185/pixel_sorcery/releases/latest">Download for Mac</a>
+      <a class="btn primary" href="https://github.com/nico3185/pixel_sorcery/releases/tag/v0.4.1">Download for Windows</a>
       <a class="btn primary" href="https://github.com/nico3185/pixel_sorcery/releases/latest">Download for Linux (.deb)</a>
       <a class="btn" href="https://github.com/nico3185/pixel_sorcery">Source on GitHub</a>
     </div>
     <p class="small">Mac: macOS 14+ on Apple silicon, unsigned (System Settings → Privacy &amp; Security → Open Anyway) ·
-      Linux: Debian / Ubuntu, <code>sudo apt install ./pixelsorcery_0.1.0_all.deb</code>, then <code>pixelsorcery</code> · no ROMs included</p>
+      Windows: 10/11 64-bit, run <code>PixelSorcery-0.4.1-windows.exe</code> (the first run installs its compiler, about 600 MB) ·
+      Linux: Debian / Ubuntu, <code>sudo apt install ./pixelsorcery_&lt;version&gt;_all.deb</code>, then <code>pixelsorcery</code> · no ROMs included</p>
   </header>
 
   <h2>How it works</h2>
@@ -69,6 +71,14 @@
     <li><b>Build.</b> That C is compiled with the native runtime into a program for your computer.</li>
     <li><b>Play.</b> Widescreen, instant save states, controller mapping and a settings menu come with it.</li>
   </ol>
+
+  <h2>The app</h2>
+  <p>The same three screens on every computer: <b>Build games…</b> finds your dumps and compiles the ones you
+    tick; <b>Your games</b> has a card per built game with <b>Play</b>, and <b>Collections</b> opens a shelf to go
+    from game to game in fullscreen; <b>Controller…</b> maps your gamepad. <b>Share last session…</b> sends
+    nothing until you have read and accepted what would be shared.</p>
+  <p><img src="windows-app.png" width="960" height="711" alt="The PixelSorcery window on Windows: Your games, with Castle of Illusion and its Play button"
+    style="width:100%;height:auto;border-radius:10px;border:1px solid var(--line)"></p>
 
   <h2>Checked against the original</h2>
   <div class="grid">
@@ -87,7 +97,7 @@
     run yet still works: it falls back to the built-in 68000 interpreter, so lower coverage costs speed,
     not correctness.</p>
   <table>
-    <thead><tr><th>Game</th><th>Reachable code verified</th><th>All code</th><th>Mac / Linux app</th></tr></thead>
+    <thead><tr><th>Game</th><th>Reachable code verified</th><th>All code</th><th>In the app</th></tr></thead>
     <tbody>
       <tr><td>Castle of Illusion</td><td><span class="bar" style="--p:87.42%"></span>87.4%</td><td>51.2%</td><td>yes</td></tr>
       <tr><td>QuackShot (REV00)</td><td><span class="bar" style="--p:87.75%"></span>87.8%</td><td>54.2%</td><td>yes</td></tr>
@@ -101,7 +111,7 @@
       <tr><td>Sonic &amp; Knuckles</td><td><span class="bar" style="--p:67.68%"></span>67.7%</td><td>35.7%</td><td>yes</td></tr>
       <tr><td>Sonic the Hedgehog 3</td><td><span class="bar" style="--p:62.96%"></span>63.0%</td><td>32.4%</td><td>yes</td></tr>
       <tr><td>Knuckles in Sonic 1 (our own)</td><td><span class="bar" style="--p:53.40%"></span>53.4%</td><td>40.7%</td><td>yes</td></tr>
-      <tr><td>Sonic CD (Mega CD)</td><td colspan="2">runs compiled, on the emulator core</td><td>not yet</td></tr>
+      <tr><td>Sonic CD (Mega CD)</td><td colspan="2">runs native (the Mega CD too); coverage not measured yet</td><td>yes (needs your BIOS)</td></tr>
     </tbody>
   </table>
 
