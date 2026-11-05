@@ -33,6 +33,14 @@ the game with Start and press **C** (a "C: SETTINGS" hint shows while paused). A
 ratio, widescreen enemies, low latency, volume, fullscreen, level select (Game Genie
 RGST-A6XN), infinite lives/power/items (Action Replay). Saved per game.
 
+**Share a session** (0.5, never automatic): the app's "Share last session..." shows the consent text
+(`engine/tools/share/consent.txt`: what is sent, where, how the consent is recorded and withdrawn); only
+"I agree" packs the session (`engine/tools/share/share_session.py`: inputs, version and settings, a log
+without user name, paths or gamepad identifiers), records the consent on your machine, opens the
+"Share a play session" issue form (tick its consent box, attach the zip). The project keeps a session
+only with that box ticked (`sessions_fetch.py`, consents recorded in `shared/consents.db`), replays it
+nightly and answers on the issue; closing the issue or commenting "withdraw" deletes it.
+
 **Resume** a recorded session: `./play.sh coi --resume [SESSION.polls] MINUTE` replays it
 to that minute at full speed (exact, the port is deterministic), then you play on.
 

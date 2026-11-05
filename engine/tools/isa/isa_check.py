@@ -58,6 +58,7 @@ def suite_files():
 def load(op):
     p = os.path.join(CACHE, op + '.json.gz')
     if not os.path.exists(p):
+        os.makedirs(CACHE, exist_ok=True)
         urllib.request.urlretrieve(SUITE + op + '.json.gz', p + '.part')
         os.replace(p + '.part', p)
     return json.load(gzip.open(p))
@@ -168,6 +169,8 @@ def run_group(op, per_op, seed, verbose, interp=False):
         cc = ['cc', '-O0', '-w', '-DISA_INTERP', '-DISA_DATA_ONLY', '-I', os.path.join(ENG, 'include'),
               '-I', os.path.join(ENG, 'src'), '-I', HERE, src, os.path.join(HERE, 'isa_srt.c' if SUB else 'isa_rt.c'),
               os.path.join(ENG, 'src', 's68k_interp.c' if SUB else 'm68k_interp.c'), cycles_c(), '-o', exe]
+        if sys.platform == 'win32' and not SUB:   # MinGW: per-title data defaults are archive members (src/defaults)
+            cc[-2:-2] = [os.path.join(ENG, 'src', 'defaults', 'm68k_hooks.c')]
         untr, stat['untranslated'] = [], 0      # the interpreter decodes for itself
     res = {'op': op, 'tests': n, **stat, 'untranslated_forms': untr}
     if n == 0:

@@ -4,7 +4,7 @@
 # array, sub CPU, PCM, graphics ASIC): main RAM at every controller poll (PS_CHECKPOINTS, ckcmp.py). One
 # line per entry in build/native_starts/: polls compared, how many differ, the first one. PS_JOBS entries
 # at once (default 4). PS_TRACER=1 compares with the full GPGX tracer instead (main-CPU timing too).
-g=${0:A:h:h}; cue=${1:?usage: native_starts.sh DISC.cue [FIRST LAST] [FRAMES]}; cue=${cue:A}
+g=${0:A:h:h}; cue=${1:?usage: native_starts.sh DISC.cue [FIRST LAST] [FRAMES]}; [[ $OSTYPE == (msys|cygwin)* ]] && cue=$(cygpath -u $cue); cue=${cue:A}   # MSYS2: C:/ to /c/ first
 first=${2:-0}; last=${3:-73}; frames=${4:-4000}
 out=$g/build/native_starts; mkdir -p $out
 tr=$g/build-trace/genrecomp_build/genrecomp_trace

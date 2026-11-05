@@ -20,6 +20,6 @@ Write-Host 'Updating MSYS2 and installing the toolchain...'
 # the build scripts call engine/.venv/bin/python: MinGW's Python (capstone, curses)
 $venv = Join-Path $root 'engine\.venv\bin'
 New-Item -ItemType Directory -Force $venv | Out-Null
-Set-Content -Force -Encoding ascii -NoNewline -Path (Join-Path $venv 'python') -Value "#!/bin/sh`nexec /mingw64/bin/python `"`$@`"`n"
+Set-Content -Force -Encoding ascii -NoNewline -Path (Join-Path $venv 'python') -Value "#!/bin/sh`nexport PYTHONUTF8=1`nexec /mingw64/bin/python `"`$@`"`n"
 & "$msys\usr\bin\bash.exe" -lc "gcc --version | head -1; python -c 'import capstone, curses; print(\""python ok\"")'"
 Write-Host "Done. Start PixelSorcery.cmd in $root"

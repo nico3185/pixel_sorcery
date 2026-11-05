@@ -2,7 +2,8 @@
 # nightly.sh [--commit] [TITLE...] — the no-LLM robustness CI: every recording of every title (default:
 # all titles with a sidebyside.json) replayed against the original, compiled and mixed
 # (robust.sh: PS_INTERP=random:30, 2 seeds; entry points added on the way), titles in parallel
-# through heavy.sh, then kpi.py (coverage KPIs, a row per title in docs/kpi/history.csv).
+# through heavy.sh, then kpi.py (coverage KPIs, a row per title in docs/kpi/history.csv), then the players' shared
+# sessions with a recorded consent (share/sessions_fetch.py --replay --comment).
 # Reports: docs/kpi/nightly.md (one robust.sh table per title + the KPI table).
 # --commit: commit docs/kpi (numbers only), never seeds - new seeds need a recomp.sh self-check.
 # Schedule it with launchd or cron, e.g. 0 2 * * * cd ~/dev/recompilation/PixelSorcery && engine/tools/nightly.sh
@@ -24,6 +25,10 @@ report=$root/docs/kpi/nightly.md; mkdir -p ${report:h}
   for t in $titles; do $root/engine/.venv/bin/python -I $tools/roundtrip.py $t --e2e 2>&1 | grep -E "^[a-z]|e2e:"; done
   print "\`\`\`\n\n## Coverage KPI (RT: round-trip share)\n\n\`\`\`"
   $root/engine/.venv/bin/python -I $tools/kpi.py 2>&1 | tail -20
+  print "\`\`\`"
+  # shared sessions (0.5): only those with a recorded, explicit consent, replayed and answered on their issue
+  print "\n## Shared sessions (engine/tools/share/sessions_fetch.py: consented only)\n\n\`\`\`"
+  $root/engine/.venv/bin/python $tools/share/sessions_fetch.py --replay --comment 2>&1 | tail -30
   print "\`\`\`" } > $report
 print "report: $report"
 if (( commit )); then

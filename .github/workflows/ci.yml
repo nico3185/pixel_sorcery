@@ -1,6 +1,8 @@
 # ROM-free checks on every push and pull request (roadmap 0.1.2): the engine builds with no warning
 # on macOS, Linux and Windows, and the self-checks that need no game pass. Games are never built
 # here: their C is generated from the player's own ROM.
+# Runs on the public repo only (Actions are free there; every export is checked). The private repo would
+# pay for runner minutes (macOS 10x, Windows 2x): there, engine/tools/ci_local.sh runs the same checks.
 name: ci
 on:
   push:
@@ -11,6 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-14, ubuntu-24.04]
+    if: ${{ !github.event.repository.private }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +33,7 @@ jobs:
           ctest --test-dir build --output-on-failure
           .venv/bin/python engine/tools/recompiler/test_analyze.py
   windows:
+    if: ${{ !github.event.repository.private }}
     runs-on: windows-2022
     defaults:
       run:

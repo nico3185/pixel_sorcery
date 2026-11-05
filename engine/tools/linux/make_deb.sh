@@ -28,7 +28,8 @@ done
 print -r -- $version > $share/VERSION
 cat > $pkg/usr/bin/pixelsorcery <<'EOF'
 #!/bin/sh
-# pixelsorcery            the build screen: finds your game dumps, compiles the native ports
+# pixelsorcery            the window (as the Mac app): build your games, play them, shelves, controller, share
+# pixelsorcery build      the text build screen: finds your game dumps, compiles the native ports
 # pixelsorcery play CODE  play a built title (codes: pixelsorcery play)
 # pixelsorcery roms DIR   find the games in DIR and link them in, without the screen
 set -e
@@ -47,6 +48,8 @@ cd "$ws"
 case "${1:-}" in
   play) shift; exec ./play.sh "$@" ;;
   roms) exec engine/.venv/bin/python engine/tools/build_ui.py --prepare "${2:?usage: pixelsorcery roms DIR}" ;;
+  build) shift; exec engine/.venv/bin/python engine/tools/build_ui.py "$@" ;;
+  "") exec engine/.venv/bin/python engine/tools/gui/pixelsorcery_gui.py ;;
   *) exec engine/.venv/bin/python engine/tools/build_ui.py "$@" ;;
 esac
 EOF
@@ -67,7 +70,7 @@ Package: pixelsorcery
 Version: ${version//[^0-9A-Za-z.+~]/.}
 Architecture: all
 Maintainer: Nicolas Renard <nico3185@users.noreply.github.com>
-Depends: zsh, rsync, python3, python3-venv, python3-capstone, cmake, ninja-build, gcc, libc6-dev, pkg-config, libsdl2-dev, zlib1g-dev
+Depends: zsh, rsync, python3, python3-venv, python3-tk, python3-capstone, cmake, ninja-build, gcc, libc6-dev, pkg-config, libsdl2-dev, zlib1g-dev
 Section: games
 Priority: optional
 Homepage: https://nico3185.github.io/pixel_sorcery/
