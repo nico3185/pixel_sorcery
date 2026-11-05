@@ -128,6 +128,38 @@ void ps_render_set_sprite_limits(bool on) { s_sprite_limits = on; }
 /* ------------------------------------------------------------------ */
 
 static const PsVdp *s_vdp_override;     /* palette source for one colour table (real water) */
+/* ps_render_set_sprite_colours: the tile range, the pairs; per line pixel the CRAM word to show (bit 15
+ * set) and, in bits 16+, the slot it stands for */
+static int s_xc_lo, s_xc_hi, s_xc_n; static uint16_t s_xc_pairs[64][3]; static bool (*s_xc_gate)(void);
+static uint32_t s_xc[ORG + 512 + PS_WIDE_MAX + 64];   /* LINE_MAX */
+void ps_render_set_sprite_colours(int tile_lo, int tile_hi, const uint16_t (*pairs)[3], int n, bool (*gate)(void)) {
+    s_xc_lo = tile_lo; s_xc_hi = tile_hi; s_xc_n = n > 64 ? 64 : n; s_xc_gate = gate;
+    memcpy(s_xc_pairs, pairs, sizeof s_xc_pairs[0] * (size_t)s_xc_n);
+}
+static int s_xr_n, s_xr[4][2]; static bool (*s_xr_gate[4])(void), s_xr_on[4];
+void ps_render_add_sprite_tiles(int tile_lo, int tile_hi, bool (*gate)(void)) {
+    if (s_xr_n < 4) { s_xr[s_xr_n][0] = tile_lo; s_xr[s_xr_n][1] = tile_hi; s_xr_gate[s_xr_n++] = gate; }
+}
+static bool xc_tile(uint32_t t) {
+    if (t >= (uint32_t)s_xc_lo && t < (uint32_t)s_xc_hi) return true;
+    for (int i = 0; i < s_xr_n; i++) if (s_xr_on[i] && t >= (uint32_t)s_xr[i][0] && t < (uint32_t)s_xr[i][1]) return true;
+    return false;
+}
+static uint16_t xc_map(int slot, uint16_t cur) {    /* what slot `slot` shows while the line has `cur` there */
+    int first = -1;
+    for (int i = 0; i < s_xc_n; i++) if (s_xc_pairs[i][0] == slot) {
+        if (s_xc_pairs[i][1] == cur) return s_xc_pairs[i][2];
+        if (first < 0) first = i;
+    }
+    if (first < 0) return cur;
+    uint16_t from = s_xc_pairs[first][1], to = s_xc_pairs[first][2], out = 0;
+    for (int sh = 1; sh < 12; sh += 4) {           /* a fade: each gun scaled as the line's is */
+        int f = (from >> sh) & 7, t = (to >> sh) & 7, c = (cur >> sh) & 7;
+        int v = f ? t * c / f : (c ? t : 0); if (v > 7) v = 7;
+        out |= (uint16_t)(v << sh);
+    }
+    return out;
+}
 static uint16_t s_pal0[64];             /* the frame's palette at line 0 */
 static uint8_t s_wmask[256][1024];      /* modern water: 1 water, 2 sprite over it */
 static uint32_t s_wbehind[256][1024];   /* the sharp scene behind the water */
@@ -425,6 +457,8 @@ static void draw_sprites(uint8_t *lb, int line, const uint8_t *lut) {
     Obj objs[80];
     int count = collect_sprites(line, objs);
     int pixelcount = 0, masked = 0;
+    bool xc_on = s_xc_n && !comparing() && (!s_xc_gate || s_xc_gate());
+    if (xc_on) for (int i = 0; i < s_xr_n; i++) s_xr_on[i] = !s_xr_gate[i] || s_xr_gate[i]();
     /* widescreen: on window lines (a status bar) the side areas show the bar only - objects
      * placed past the 4:3 edges stop at it, as the 4:3 picture never shows them there */
     int wl = (d->reg[18] & 0x1F) << 3, bar = s_extra && ((d->reg[18] >> 7) & 1) == (line >= wl);
@@ -460,6 +494,13 @@ static void draw_sprites(uint8_t *lb, int line, const uint8_t *lut) {
                         int sx = x + c * 8 + p;                  /* flags as on the hardware's line */
                         if (gpgx_drawn && sx >= -32 && sx < width + 32 && col_hit(&dst[p], sx, width)) g_ps_render_flags |= 0x20;
                         dst[p] = lut[(dst[p] << 8) | px[p] | atex];
+                        if (xc_on && !(atex & 0x30) && xc_tile(tile) && (dst[p] & 0x3F) == px[p] && !s_xc[ORG + sx]) {
+                            const PsVdp *cv = s_vdp_override ? s_vdp_override : &g_ps_vdp;
+                            for (int q = 0; q < s_xc_n; q++) if (s_xc_pairs[q][0] == px[p]) {
+                                uint16_t c9 = cv->cram[px[p]];          /* bbbgggrrr -> a CRAM word */
+                                uint16_t cw = (uint16_t)(((c9 & 7) << 1) | (((c9 >> 3) & 7) << 5) | (((c9 >> 6) & 7) << 9));
+                                s_xc[ORG + sx] = 0x8000u | xc_map(px[p], cw) | (uint32_t)px[p] << 16; break; }
+                        }
                     }
             }
         }
@@ -592,6 +633,7 @@ static void render_line(int line, uint32_t *out) {
     int cols = width >> 4;
     memset(lb, 0, sizeof(lb));
     memset(la, 0, sizeof(la));
+    if (s_xc_n) memset(s_xc, 0, sizeof s_xc);
 
     memset(s_sd_mark, 0, sizeof s_sd_mark);
     s_sd_buf = NULL;                       /* screen-door marks: plane A tiles (drawn over B) */
@@ -749,6 +791,12 @@ static void render_line(int line, uint32_t *out) {
         if (k > 2) k = 2;
         int idx = c & 0x3F;
         out[x + E] = pal[k][(idx & 0x0F) ? idx : 0];
+        uint32_t xc = s_xc_n ? s_xc[ORG + x] : 0;
+        if (xc && idx == (int)(xc >> 16)) {        /* a sprite colour past the palette, still on top */
+            int r = (xc >> 1) & 7, g = (xc >> 5) & 7, b = (xc >> 9) & 7;
+            if (k == 2) { r += 7; g += 7; b += 7; } else if (k == 1) { r <<= 1; g <<= 1; b <<= 1; }
+            out[x + E] = 0xFF000000u | ((uint32_t)(r * 0x11) << 16) | ((uint32_t)(g * 0x11) << 8) | (uint32_t)(b * 0x11);
+        }
     }
     /* Modern water (PS_WATER), pass 1: record where the game draws a waterfall as a
      * "screen door" (plane A tiles marked by draw_entry) and the sharp colour behind it;

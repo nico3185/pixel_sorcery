@@ -46,12 +46,22 @@ static void write_play(void) {
  * addresses, appended to PS_RAMDUMP_AT's dump (oldest first) - the path into a crash */
 #include "debug/cpuhook.h"
 static uint32_t s_pcring[512]; static unsigned s_pcpos;
-static int s_spmin_on; static uint32_t s_spmin = 0xFFFFFF;
+static int s_spmin_on; static uint32_t s_spmin = 0xFFFFFF; static int s_badread;
 static void pc_hook(hook_type_t t, int w, unsigned int a, unsigned int v) {
     (void)w; (void)v;
     /* stops once a game running from program/word RAM ($020000-$23FFFF) reaches the BIOS
      * ROM below $020000 or its error slots ($FFFD18-$FFFD1F): a jump the relocation missed */
-    static int frozen, game; static unsigned prev;
+    static int frozen, game; static unsigned prev, lastpc;
+    if (t == HOOK_M68K_E) lastpc = a & 0xFFFFFF;
+    /* PS_BADREAD: a disc game's reads where none of its data is (BIOS ROM $000200-$01FFFF, $040000-$1FFFFF)
+     * while its own code runs: a pointer the relocation left at its cartridge address (first 64, distinct) */
+    if (t == HOOK_M68K_R && s_badread && ((lastpc >= 0x020000 && lastpc < 0x040000) || (lastpc >= 0x200200 && lastpc < 0x240000))) {   /* not the menu ($200000+) */
+        unsigned x = a & 0xFFFFFF; static unsigned seen[64]; static int ns;
+        if ((x >= 0x200 && x < 0x020000) || (x >= 0x040000 && x < 0x200000)) {
+            int k; for (k = 0; k < ns && seen[k] != (lastpc << 8 ^ x); k++) ;
+            if (k == ns && ns < 64) { seen[ns++] = lastpc << 8 ^ x; fprintf(stderr, "ref: bad read %06X at PC %06X\n", x, lastpc); }
+        }
+    }
     if (t == HOOK_M68K_E && s_spmin_on) {             /* PS_SPMIN: the lowest stack pointer in work RAM */
         uint32_t sp = m68k_get_reg(M68K_REG_SP) & 0xFFFFFF;
         if (sp >= 0xFF0000 && sp < s_spmin) { s_spmin = sp; fprintf(stderr, "ref: stack down to %06X at PC %06X\n", sp, a & 0xFFFFFF); }
@@ -65,10 +75,50 @@ static void pc_hook(hook_type_t t, int w, unsigned int a, unsigned int v) {
 }
 #endif
 
+/* PS_SLOTCENSUS=FILE: which palette-line-0 colour slots each VRAM tile draws with - sprites (all their
+ * tiles) and plane cells whose palette is 0, sprite tiles in PS_CENSUS_SKIP=LO-HI left out (a character's
+ * own art) - per zone (the byte at PS_CENSUS_ZONE, work RAM address, default SH1's $FE10), every frame.
+ * PS_CENSUS_MODE=ADDR=VALUE counts only frames whose game mode byte (bit 7 aside) is VALUE.
+ * FILE: "kind zone tile slot count" lines at exit (kind sprite / plane). */
+static FILE *s_census; static unsigned s_skip_lo = 1, s_skip_hi = 0, s_zone_addr = 0xFE10, s_mode_addr, s_mode_val;
+static unsigned s_cnt[2][8][0x800][16];
+#define VB(a) READ_BYTE(vram, (a) & 0xFFFF)          /* VRAM byte as the VDP sees it */
+static void census_write(void) {
+    if (!s_census) return;
+    for (int k = 0; k < 2; k++) for (int z = 0; z < 8; z++) for (int t = 0; t < 0x800; t++) for (int c = 1; c < 16; c++)
+        if (s_cnt[k][z][t][c]) fprintf(s_census, "%s %d %03X %d %u\n", k ? "plane" : "sprite", z, t, c, s_cnt[k][z][t][c]);
+    fclose(s_census); s_census = NULL;
+}
+static void census_tile(int k, int z, unsigned t) {
+    for (int i = 0; i < 32; i++) { uint8_t b = VB((t & 0x7FF) * 32 + (unsigned)i); if (b >> 4) s_cnt[k][z][t & 0x7FF][b >> 4]++; if (b & 15) s_cnt[k][z][t & 0x7FF][b & 15]++; }
+}
+static void census_frame(void) {
+    if (s_mode_addr && (READ_BYTE(work_ram, s_mode_addr) & 0x7F) != s_mode_val) return;   /* PS_CENSUS_MODE: in a level only */
+    int z = READ_BYTE(work_ram, s_zone_addr) & 7;
+    unsigned sat = ((unsigned)reg[5] & 0x7E) << 9, link = 0;
+    for (int n = 0; n < 80; n++) {
+        unsigned e = sat + link * 8;
+        unsigned size = VB(e + 2), next = VB(e + 3) & 0x7F, attr = (unsigned)VB(e + 4) << 8 | VB(e + 5);
+        unsigned tile = attr & 0x7FF;
+        if (!((attr >> 13) & 3) && !(tile >= s_skip_lo && tile < s_skip_hi)) {
+            int w = ((size >> 2) & 3) + 1, h = (size & 3) + 1;
+            for (int i = 0; i < w * h; i++) census_tile(0, z, tile + (unsigned)i);
+        }
+        if (!next) break; link = next;
+    }
+    unsigned pw = 32 << (reg[16] & 3), ph = 32 << ((reg[16] >> 4) & 3); if (pw > 128) pw = 128; if (ph > 128) ph = 128;
+    unsigned base[2] = { ((unsigned)reg[2] & 0x38) << 10, ((unsigned)reg[4] & 7) << 13 };
+    for (int b = 0; b < 2; b++) for (unsigned i = 0; i < pw * ph; i++) {
+        unsigned a = base[b] + i * 2, en = (unsigned)VB(a) << 8 | VB(a + 1);
+        if (!((en >> 13) & 3) && (en & 0x7FF)) census_tile(1, z, en & 0x7FF);
+    }
+}
+
 int main(int argc, char *argv[]) {
     argc = platform_parse_args(argc, argv);
 #ifdef HOOK_CPU
-    if (getenv("PS_PCRING") || getenv("PS_SPMIN")) set_cpu_hook(pc_hook);
+    if (getenv("PS_PCRING") || getenv("PS_SPMIN") || getenv("PS_BADREAD")) set_cpu_hook(pc_hook);
+    s_badread = getenv("PS_BADREAD") != NULL;
     s_spmin_on = getenv("PS_SPMIN") != NULL;
 #endif
     if (argc < 2) {
@@ -77,6 +127,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     if (!genrecomp_init("genrecomp reference", 3)) return 1;
+    { const char *e = getenv("PS_SLOTCENSUS"); if (e && *e) { s_census = fopen(e, "w"); atexit(census_write); }
+      if ((e = getenv("PS_CENSUS_SKIP"))) sscanf(e, "%x-%x", &s_skip_lo, &s_skip_hi);
+      if ((e = getenv("PS_CENSUS_ZONE"))) s_zone_addr = (unsigned)strtol(e, NULL, 16) & 0xFFFF;
+      if ((e = getenv("PS_CENSUS_MODE"))) sscanf(e, "%x=%x", &s_mode_addr, &s_mode_val); }   /* ADDR=VALUE, e.g. F600=0C */
 
     /* Not genrecomp_load_rom: that stubs Z80 bus control for recompiled
      * code, and the reference must run the untouched hardware. */
@@ -186,6 +240,7 @@ int main(int argc, char *argv[]) {
                          fclose(f); }
             }
         }
+        if (s_census) census_frame();
         platform_present_frame(present);
         platform_frame_sync();
     }

@@ -320,6 +320,11 @@ void genrecomp_render_line(int line) {
         { void ps_render_water_frame(uint32_t *, int, int); ps_render_water_frame((uint32_t *)s_line_buf, s_line_w, s_line_h); }
         s_present_w = s_line_w;
         memcpy(s_present_buf, s_line_buf, (size_t)s_line_w * GEN_RENDER_HEIGHT * 4);
+        {   /* PS_FRAME_DUMP=FRAME:FILE.png: the native frame as presented (checks without a window) */
+            static long at = -2; static const char *file; extern long ps_frames;
+            if (at == -2) { const char *e = getenv("PS_FRAME_DUMP"); at = e && strchr(e, ':') ? atol(e) : -1; file = at >= 0 ? strchr(e, ':') + 1 : NULL; }
+            if (at >= 0 && ps_frames == at) ps_png_write(file, s_line_buf, s_line_w, s_line_h);
+        }
     }
 #else
     (void)line;

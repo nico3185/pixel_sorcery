@@ -13,7 +13,8 @@
 	.equ	K_ART,		0xC0000		| Knuckles' art on SH1's own colours (default)
 	.equ	K_ART2,		0xE0000		| ... on his colours (option KNUCKLES COLOURS)
 	.equ	K_PALTAB,	0x95800		| SH1's slots 2-5 -> his (make_image.py)
-	.equ	KCOL_ROM,	0x95FFE		| ROM word: 0, or 1 while the menu's ROM toggle is on
+	.equ	KCOL_ROM,	0x95FFE		| ROM word, Knuckles' colours: 1 palette swap (the image's default: his
+					| colours in slots 2-5), 0 SH1's palette, nearest colours (KNUCKLES 16 COLOURS)
 	.equ	KCOL_ART,	0xFFD5		| art set last loaded (0 / $FF)
 	.equ	DMALIST,	0xC800		| (word address) SH1's art buffer, unused now
 
@@ -290,9 +291,9 @@ K_ColSync:				| KNUCKLES COLOURS option: art set and palette slots 2-5
 	lea	16(%a1),%a1
 	dbf	%d1,4b
 	rts
-5:	movea.l	%a1,%a3			| on: SH1's 4 colours there -> his; off: his -> SH1's
-	tst.b	KCOL_ART.w
-	beq.s	6f
+5:	movea.l	%a1,%a3			| swap: SH1's 4 colours there -> his; else: his -> SH1's
+	cmpi.w	#1,KCOL_ROM
+	bne.s	6f
 	cmpm.l	(%a3)+,(%a2)+
 	bne.s	7f
 	cmpm.l	(%a3)+,(%a2)+

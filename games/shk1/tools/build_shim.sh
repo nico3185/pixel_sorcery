@@ -20,4 +20,4 @@ print "S0${line}$(printf %02X $(( 255 - (sum & 255) )))" > k1.srec
 grep -v '^S0' $t/k1.srec >> k1.srec
 m68k-elf-nm $t/k1.elf | grep ' [TtAa] K_' > k1.sym
 print "k1.srec: $(grep -c '^S3' k1.srec) records, $(wc -l < k1.sym | tr -d ' ') symbols"
-python3 ${0:A:h}/sync_seeds.py
+python3 $g/tools/sync_seeds.py
