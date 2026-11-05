@@ -5,14 +5,16 @@
 # pay for runner minutes (macOS 10x, Windows 2x): there, engine/tools/ci_local.sh runs the same checks.
 name: ci
 on:
-  push:
+  push:                 # main and the release tags; a branch is checked once, by its pull request
+    branches: [main]
+    tags: ['v*']
   pull_request:
 jobs:
   unix:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-24.04]
+        os: [macos-15, ubuntu-24.04]   # macos-14: GitHub stopped allocating it ("not supported")
     if: ${{ !github.event.repository.private }}
     runs-on: ${{ matrix.os }}
     steps:
