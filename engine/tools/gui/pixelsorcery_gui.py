@@ -57,6 +57,10 @@ class App:
         except (OSError, ValueError): self.pref = {}
         self.sel = set(self.pref.get('selected', []))
         root.title('PixelSorcery'); root.geometry('980x740'); root.minsize(900, 680); root.configure(bg=BG)
+        try:   # the PixelSorcery logo in the title bar and taskbar (Tk's feather otherwise), 1254 px -> 66
+            self.logo = tk.PhotoImage(file=os.path.join(ROOT, 'img', 'sorpix.png')).subsample(19)
+            root.iconphoto(True, self.logo)
+        except tk.TclError: pass
         st = ttk.Style()
         for w in ('TFrame', 'TLabel', 'TCheckbutton', 'TRadiobutton', 'TLabelframe', 'TLabelframe.Label'): st.configure(w, background=BG)
         st.configure('Bold.TCheckbutton', font=BOLD)

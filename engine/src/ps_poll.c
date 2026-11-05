@@ -29,7 +29,10 @@
 #include "genrecomp/ps_vdp.h"
 #endif
 
-static FILE *s_rec, *s_ck;
+static FILE *s_rec, *s_ck, *s_watch;
+/* PS_WATCH=FILE:ADDR[+LEN],...: those main RAM bytes (68000 addresses $FF0000+ADDR, hex) at every controller
+ * poll, one line "poll frame hex hex ..." - zone, act, positions read numerically by the checks */
+static int s_nwatch, s_watch_a[32], s_watch_n[32];
 static uint16_t (*s_play)[2];
 static uint16_t s_cur[2];          /* replay: pad value held until the next poll */
 static long s_play_n, s_poll, s_dump_at = -1, s_stop = -1;
@@ -93,6 +96,14 @@ static void on_poll(void)
         input.pad[0] = s_cur[0]; input.pad[PS_PAD_INDEX(1)] = s_cur[1];
     }
     if (s_rec) fprintf(s_rec, "%04X %04X\n", input.pad[0], input.pad[PS_PAD_INDEX(1)]);
+    if (s_watch) {
+        fprintf(s_watch, "%ld %ld", n, ps_frames);
+        for (int w = 0; w < s_nwatch; w++) {
+            fputc(' ', s_watch);
+            for (int i = 0; i < s_watch_n[w]; i++) fprintf(s_watch, "%02X", READ_BYTE(work_ram, (s_watch_a[w] + i) & 0xFFFF));
+        }
+        fputc('\n', s_watch);
+    }
     if (s_ck) {
         memcpy(s_tmp, work_ram, sizeof s_tmp);
         for (int m = 0; m < s_nmask; m++) memset(s_tmp + s_mask[m][0], 0, s_mask[m][1] - s_mask[m][0]);
@@ -163,7 +174,7 @@ void ps_poll_flush(void) { if (s_rec) fflush(s_rec); }
 /* a restored snapshot (menu LOAD STATE): the recording is rewritten to the slot's inputs */
 void ps_poll_record_close(void) { if (s_rec) { fclose(s_rec); s_rec = NULL; } }
 void ps_poll_record_reopen(void) { const char *e = getenv("PS_POLL_RECORD"); if (e && *e) s_rec = fopen(e, "a"); }
-static void flush_all(void) { if (s_rec) fclose(s_rec); if (s_ck) fclose(s_ck); if (s_alog) fclose(s_alog); }
+static void flush_all(void) { if (s_rec) fclose(s_rec); if (s_ck) fclose(s_ck); if (s_watch) fclose(s_watch); if (s_alog) fclose(s_alog); }
 
 PS_INITIALIZER(ps_poll_init)
 {
@@ -178,6 +189,18 @@ PS_INITIALIZER(ps_poll_init)
     }
     if ((e = getenv("PS_POLL_RECORD")) && *e) s_rec = fopen(e, "w");
     if ((e = getenv("PS_CHECKPOINTS")) && *e) s_ck = fopen(e, "w");
+    if ((e = getenv("PS_WATCH")) && *e) {
+        const char *c = strrchr(e, ':');
+        if (c && c[1] && !(c - e == 1 && c[1] == '\\')) {   /* FILE:list (a Windows drive letter is not the list) */
+            char path[512]; snprintf(path, sizeof path, "%.*s", (int)(c - e), e);
+            for (const char *p = c + 1; *p && s_nwatch < 32; ) {
+                char *q; long a = strtol(p, &q, 16), len = (*q == '+') ? strtol(q + 1, &q, 10) : 1;
+                s_watch_a[s_nwatch] = (int)(a & 0xFFFF); s_watch_n[s_nwatch] = len > 0 && len <= 64 ? (int)len : 1; s_nwatch++;
+                p = (*q == ',') ? q + 1 : q; if (*q != ',') break;
+            }
+            s_watch = fopen(path, "w");
+        }
+    }
     if ((e = getenv("PS_CHECKPOINT_DUMP")) && *e) {
         s_dump_at = atol(e);
         const char *c = strchr(e, ':');
@@ -198,7 +221,7 @@ PS_INITIALIZER(ps_poll_init)
             p = (*q == ',') ? q + 1 : q; if (!*q) break;
         }
     }
-    if (s_play || s_rec || s_ck || s_dump_at >= 0 || s_stop >= 0 || s_state_every || s_alog) {
+    if (s_play || s_rec || s_ck || s_watch || s_dump_at >= 0 || s_stop >= 0 || s_state_every || s_alog) {
         io_pad_write_hook = pad_write_hook;
         atexit(flush_all);
     }

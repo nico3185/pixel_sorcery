@@ -108,7 +108,11 @@ def main():
                 insns[a] = (i.mnemonic, i.op_str, i.size, bytes(i.bytes)); break
         # and the rest of every function that ran (paths a run did not take: the trap showed a
         # JSR at $00A1D0 that ran later), unless the analyzer's decode overlaps bytes read as data
-        isdata = lambda a, sz: any(readdata[x >> 3] >> (x & 7) & 1 for x in range(a, a + sz))
+        # --data LO-HI: data whatever the analyzer decoded there (a pointer table it read as code:
+        # SH1's sound tables - their unread entries would be left unrelocated as 'operands')
+        forced = [tuple(int(v, 16) for v in args[i + 1].split('-')) for i, x in enumerate(args) if x == '--data']
+        isdata = lambda a, sz: (any(lo <= a < hi for lo, hi in forced)
+                                or any(readdata[x >> 3] >> (x & 7) & 1 for x in range(a, a + sz)))
         for f in an.functions.values():
             ia = f.get('insn_addrs') or []
             if '--all-code' in args or any(x in executed for x in ia):   # --all-code: every function

@@ -70,7 +70,7 @@ def titles():
     """[(folder, code, name)] in shelf order, from titles.zsh (the names play.sh shows)"""
     if not shutil.which('zsh'):                 # Windows: the same list read by Python
         return titles_py()
-    out = subprocess.run(['zsh', '-c', f'ROOT={ROOT!r}; source {TOOLS}/titles.zsh; ps_tsv'], capture_output=True, text=True).stdout
+    out = subprocess.run(['zsh', '-c', f'ROOT={ROOT!r}; source {TOOLS}/titles.zsh; ps_tsv'], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
     return [tuple(l.split('\t')) for l in out.splitlines() if l.count('\t') == 2
             and (not NATIVE_ONLY or native_port(l.split('\t')[0]))]
 
@@ -288,11 +288,11 @@ def prepare(plan, log):
         if st != 'make' or not e.get('lockon'): continue
         cmd = [PY, os.path.join(TOOLS, 'lockon.py')] + [os.path.join(ROMS, CAT[x]['file']) for x in e['lockon']] + \
               [os.path.join(ROMS, e['file'])] + (['--shk2', os.path.join(ROMS, CAT[e['patch']]['file'])] if e.get('patch') else [])
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         log(f'made {e["file"]} (lockon.py): {"ok" if r.returncode == 0 else "FAILED " + r.stderr[-200:]}')
         if r.returncode: bad.append(k)
     if plan.get('shk1', ('',))[0] in ('make', 'ready'):
-        r = subprocess.run(shc([os.path.join(ROOT, 'games', 'shk1', 'tools', 'ensure_rom.sh'), ROMS]), capture_output=True, text=True)
+        r = subprocess.run(shc([os.path.join(ROOT, 'games', 'shk1', 'tools', 'ensure_rom.sh'), ROMS]), capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if r.returncode: bad.append('shk1'); log('SHK1 image FAILED: ' + r.stderr[-200:])
     return bad
 
@@ -310,7 +310,7 @@ class Job:
         with open(self.log, 'w') as lf:
             def go(cmd, cwd=None):
                 if stop.is_set(): return 1
-                self.proc = subprocess.Popen(shc(cmd), cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                self.proc = subprocess.Popen(shc(cmd), cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                              text=True, bufsize=1, start_new_session=True)
                 for line in self.proc.stdout:
                     lf.write(line); lf.flush(); self.feed(line.rstrip('\n'))
@@ -325,7 +325,7 @@ class Job:
                 self.result = 'SELF-CHECK OK' if ok else ('stopped' if stop.is_set() else 'FAILED')
             else:
                 stale = not os.path.exists(disc_gen) and subprocess.run([PY, '-c', f"import sys; sys.argv=['x']; sys.path.insert(0, {TOOLS!r}); import sidebyside; "
-                                        f"sys.exit(0 if sidebyside.generated_stale({g!r}) else 1)"], capture_output=True).returncode == 0
+                                        f"sys.exit(0 if sidebyside.generated_stale({g!r}) else 1)"], capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
                 rc = 0
                 if os.path.exists(disc_gen):
                     self.stage = 'generating C'
@@ -355,7 +355,7 @@ class Job:
         if self.proc and self.proc.poll() is None:
             try:
                 if os.name == 'nt':                                   # no process groups: the tree
-                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.proc.pid)], capture_output=True)
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.proc.pid)], capture_output=True, stdin=subprocess.DEVNULL)
                 else: os.killpg(self.proc.pid, signal.SIGTERM)
             except OSError: pass
 
@@ -439,7 +439,7 @@ def engine():
                 # project's server (engine/tools/share: share_session.py --send, worker/); withdraw: delete the last
                 # share of the game there; shared: its state and replay result
                 flag = {'share': ['--agree', '--send'], 'withdraw': ['--withdraw'], 'shared': ['--status']}[c[0]]
-                r = subprocess.run([PY, os.path.join(TOOLS, 'share', 'share_session.py'), c[1], *flag], capture_output=True, text=True)
+                r = subprocess.run([PY, os.path.join(TOOLS, 'share', 'share_session.py'), c[1], *flag], capture_output=True, text=True, stdin=subprocess.DEVNULL)
                 got = dict(l.split('=', 1) for l in r.stdout.splitlines() if '=' in l)
                 if r.returncode or 'ERROR' in got or 'STATUS' not in got:
                     note(f'{c[0]} {c[1]}: ' + (got.get('ERROR') or (r.stderr.strip().splitlines() or ['failed'])[-1]))

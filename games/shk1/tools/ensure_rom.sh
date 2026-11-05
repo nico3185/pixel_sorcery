@@ -3,7 +3,8 @@
 # player's SH1 (REV00) and SHK2 dumps there, when it is missing or older than
 # our code (k1.srec), the mapping (s2_to_s1.json) or the builder. Used by play.sh and launch.sh.
 set -eu
-g=${0:A:h:h}; roms=${1:A}
+r=$1; [[ $OSTYPE == (msys|cygwin)* ]] && r=$(cygpath -u $r)   # MSYS2: C:/... to /c/... before :A
+g=${0:A:h:h}; roms=${r:A}
 [[ -f $roms/sh1.bin && -f $roms/shk_sh2.bin ]] || exit 0     # dumps not there: nothing to do
 out=$roms/shk1.bin
 [[ -f $out && ! $g/k1.srec -nt $out && ! $g/s2_to_s1.json -nt $out && ! $g/tools/make_image.py -nt $out ]] && exit 0

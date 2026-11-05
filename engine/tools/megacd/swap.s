@@ -8,6 +8,9 @@
 |   bank 1 selected; the new image's descriptor at $200500 (VBlank, HBlank, entry, stack) goes
 |   into the BIOS's jump slots; the Z80 resumes and the entry runs (the game's main loop: its
 |   RAM - game mode, zone - says where it is).
+	.ifndef	DESC
+	.set	DESC, 0x200500                  | the image's descriptor (SH1: --defsym DESC=0x23FF00)
+	.endif
 	.text
 	.globl	_start
 _start:
@@ -33,7 +36,7 @@ _start:
 	beq.s	6b
 	move.b	#0x40, 3(%a2)                   | program RAM bank 1 at $020000
 	move.w	#0xFD0C, 6(%a2)                 | HBlank vector register: the BIOS's HBlank slot
-	lea	0x200500, %a0                   | descriptor: VBlank, HBlank, entry, stack
+	lea	DESC, %a0                       | descriptor: VBlank, HBlank, entry, stack
 	lea	0xFFFD06, %a1
 	move.w	#0x4EF9, (%a1)+
 	move.l	(%a0)+, (%a1)+
