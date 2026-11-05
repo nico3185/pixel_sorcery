@@ -1,6 +1,7 @@
 """cloud.py - the shared sessions' records on Cloudflare (owner, 0.5): the consent table mirrored in D1 (SQLite,
 the same table as shared/consents.db) and each kept session's zip in R2 (sessions/ISSUE.zip, deleted on withdrawal).
-Off unless configured: CF_ACCOUNT_ID, CF_D1_DATABASE (the D1 database id), CF_R2_BUCKET and the API token in
+Off unless configured: CF_ACCOUNT_ID, CF_D1_DATABASE (the D1 database id), CF_R2_BUCKET (environment or
+~/.config/pixelsorcery/cloudflare.env) and the API token in
 CF_API_TOKEN or the login keychain (security add-generic-password -s pixelsorcery-cloudflare -a cf -w TOKEN), a token
 limited to that D1 database and R2 bucket. The local database stays the first record; a Cloudflare error is reported,
 never fatal."""
@@ -15,7 +16,15 @@ def _token():
         t = r.stdout.strip() if r.returncode == 0 else ''
     return t
 
-ACCOUNT, D1, BUCKET = (os.environ.get(k, '') for k in ('CF_ACCOUNT_ID', 'CF_D1_DATABASE', 'CF_R2_BUCKET'))
+def _conf():   # the environment, else ~/.config/pixelsorcery/cloudflare.env (ids only; the token is in the keychain)
+    c = {}
+    try:
+        for l in open(os.path.expanduser('~/.config/pixelsorcery/cloudflare.env')):
+            if '=' in l: k, v = l.strip().split('=', 1); c[k] = v
+    except OSError: pass
+    return [os.environ.get(k) or c.get(k, '') for k in ('CF_ACCOUNT_ID', 'CF_D1_DATABASE', 'CF_R2_BUCKET')]
+
+ACCOUNT, D1, BUCKET = _conf()
 TOKEN = _token() if ACCOUNT else ''
 ON = bool(ACCOUNT and D1 and BUCKET and TOKEN)
 
@@ -35,4 +44,5 @@ def sql(query, params=()):
                                                 json.dumps({'sql': query, 'params': list(params)}).encode())))
 
 def put(key, data):    return _safe('r2 put', _call, 'PUT', f'/r2/buckets/{BUCKET}/objects/{key}', data, 'application/zip')
+def get(key):          return _safe('r2 get', _call, 'GET', f'/r2/buckets/{BUCKET}/objects/{key}')
 def delete(key):       return _safe('r2 delete', _call, 'DELETE', f'/r2/buckets/{BUCKET}/objects/{key}')

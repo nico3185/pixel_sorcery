@@ -8,7 +8,8 @@ SESSION defaults to the title's latest session (games/TITLE/sessions)."""
 import datetime, getpass, glob, hashlib, json, os, re, sys, urllib.parse, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
-CONSENT = os.path.join(HERE, 'consent.txt'); CONSENT_VERSION = 1
+CONSENT = os.path.join(HERE, 'consent.txt'); CONSENT_VERSION = 2
+ENDPOINT = os.path.join(HERE, 'endpoint.txt')   # the project's session API (worker/), written by worker/deploy.py
 REPO = 'nico3185/pixel_sorcery'
 
 def scrub(text):
@@ -41,6 +42,8 @@ def main():
     title = a.pop(0); agree = '--agree' in a; note = ''; out = os.path.join(ROOT, 'build', 'share')
     if '--note' in a: note = a[a.index('--note') + 1]
     if '--out' in a: out = a[a.index('--out') + 1]
+    rec = os.path.join(out, 'consents.json')              # the player's own record of every consent given
+    if '--withdraw' in a or '--status' in a: return manage(title, rec, '--withdraw' in a)
     sess = next((x for x in a if x.endswith('.polls')), None)
     if not sess:
         c = sorted(glob.glob(os.path.join(ROOT, 'games', title, 'sessions', '*.polls')), key=os.path.getmtime)
@@ -56,7 +59,7 @@ def main():
     if os.path.exists(base + '.log'): files['session.log'] = scrub(open(base + '.log', errors='replace').read()).encode()
     if os.path.exists(base + '.poke'): files['session.poke'] = open(base + '.poke', 'rb').read()
     when = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    consent_sha = hashlib.sha256(open(CONSENT, 'rb').read()).hexdigest()
+    consent_sha = hashlib.sha256(open(CONSENT, 'rb').read().replace(b'\r\n', b'\n')).hexdigest()   # a Windows clone: CRLF
     share = {'title': title, 'rom_sha1': rom_sha1(title), 'consent_version': CONSENT_VERSION, 'consent_sha256': consent_sha,
              'consented': when, 'note': note, 'files': {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}}
     files['share.json'] = json.dumps(share, indent=1).encode()
@@ -67,15 +70,37 @@ def main():
         for k, v in files.items():
             zi = zipfile.ZipInfo(k, date_time=(2000, 1, 1, 0, 0, 0)); zi.compress_type = zipfile.ZIP_DEFLATED
             z.writestr(zi, v)                              # no play time in the zip's dates either
-    rec = os.path.join(out, 'consents.json')              # the player's own record of every consent given
     log = json.load(open(rec)) if os.path.exists(rec) else []
-    log.append(dict(share, zip=os.path.basename(zp), zip_sha256=hashlib.sha256(open(zp, 'rb').read()).hexdigest()))
-    json.dump(log, open(rec, 'w'), indent=1)
+    entry = dict(share, zip=os.path.basename(zp), zip_sha256=hashlib.sha256(open(zp, 'rb').read()).hexdigest())
+    if '--send' in a:                                     # straight to the project's server: no GitHub account needed
+        try:
+            r = api('POST', '/sessions', open(zp, 'rb').read())
+            entry.update(id=r['id'], key=r['key']); print(f'TITLE={title}\nZIP={zp}\nID={r["id"]}\nSTATUS={r["status"]}')
+        except Exception as e: print(f'ERROR={e}')
+    log.append(entry); json.dump(log, open(rec, 'w'), indent=1)
+    if 'id' in entry: return
     # the issue form (.github/ISSUE_TEMPLATE/session.yml): the game and note filled in; its consent box cannot be
     # ticked from a link, so the player ticks it on the issue - the explicit consent the fetch tool requires
     url = f'https://github.com/{REPO}/issues/new?' + urllib.parse.urlencode(
         {'template': 'session.yml', 'title': f'Session: {title}', 'game': title, 'note': note})
     print(f'TITLE={title}\nZIP={zp}\nURL={url}')
+
+def api(method, path, body=None, key=''):
+    import urllib.error, urllib.request
+    url = open(ENDPOINT).read().strip() + path
+    h = {'content-type': 'application/zip', 'user-agent': 'PixelSorcery'} | ({'authorization': 'Bearer ' + key} if key else {})
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=body, method=method, headers=h), timeout=60) as r: return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        d = json.loads(e.read() or b'{}'); raise RuntimeError(d.get('error', e.code) + (f' (retry in {d["retry_after"]} s)' if 'retry_after' in d else ''))
+
+def manage(title, rec, withdraw):   # the last share of TITLE sent to the server: its state, or withdraw it
+    log = json.load(open(rec)) if os.path.exists(rec) else []
+    e = next((x for x in reversed(log) if x['title'] == title and x.get('id') and x.get('status') != 'withdrawn'), None)
+    if not e: sys.exit('no share of ' + title + ' to ' + ('withdraw' if withdraw else 'look up'))
+    r = api('DELETE' if withdraw else 'GET', '/sessions/' + e['id'], key=e['key'])
+    if withdraw: e['status'] = 'withdrawn'; json.dump(log, open(rec, 'w'), indent=1)
+    print(f'TITLE={title}\nID={e["id"]}\nSTATUS={r["status"]}' + (f'\nRESULT={r["result"]}' if r.get('result') else ''))
 
 if __name__ == '__main__':
     main()

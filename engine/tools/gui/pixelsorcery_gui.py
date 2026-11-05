@@ -167,8 +167,11 @@ class App:
             tk.Label(c, text=r['code'].upper(), font=CAPTION, fg=GREY, bg=CARD, anchor='w').pack(fill='x', pady=(2, 12))
             tk.Button(c, text='Play', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN, activeforeground='white',
                       relief='flat', padx=20, pady=5, cursor='hand2', command=lambda t=t: self.play(t)).pack(anchor='w')
-            tk.Label(c, text='Share last session…', font=CAPTION, fg=ACCENT, bg=CARD, cursor='hand2').pack(anchor='w', pady=(8, 0))
-            c.winfo_children()[-1].bind('<Button-1>', lambda e, t=t: self.share(t))
+            links = tk.Frame(c, bg=CARD); links.pack(anchor='w', pady=(8, 0))
+            for text, act in (('Share last session…', lambda e, t=t: self.share(t)), ('Status', lambda e, t=t: self.send('shared ' + t)),
+                              ('Withdraw', lambda e, t=t: self.send('withdraw ' + t))):
+                tk.Label(links, text=text, font=CAPTION, fg=ACCENT, bg=CARD, cursor='hand2').pack(side='left', padx=(0, 10))
+                links.winfo_children()[-1].bind('<Button-1>', act)
             self.tiles.append(c)
         self.update_back(); self.layout_cards()
 
@@ -327,8 +330,8 @@ class App:
         box = tk.Text(w, wrap='word', width=78, height=20, font=BODY, relief='flat', padx=10, pady=10)
         box.insert('1.0', text); box.configure(state='disabled'); box.pack(fill='both', expand=True, padx=16)
         bar = ttk.Frame(w, padding=16); bar.pack(fill='x')
-        def agree(): w.destroy(); self.send('share ' + t); self.status.set('Packing the session (your browser opens the form)…')
-        tk.Button(bar, text='I agree - pack the session', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN,
+        def agree(): w.destroy(); self.send('share ' + t); self.status.set('Sending the session…')
+        tk.Button(bar, text='I agree - send the session', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN,
                   activeforeground='white', relief='flat', padx=14, pady=4, command=agree,
                   state='normal' if 'missing' not in text[:40] else 'disabled').pack(side='right')
         ttk.Button(bar, text='Cancel', command=w.destroy).pack(side='right', padx=8)

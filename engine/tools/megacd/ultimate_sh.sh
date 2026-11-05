@@ -5,7 +5,7 @@
 # Inputs, all yours (nothing of them goes into the repository):
 #   DISC.cue     your Mega CD disc of the series (Europe) - its data track is the disc's base
 #                (files, security block) and its audio tracks are the disc's audio tracks
-#   MENU.png     the game-select picture (4x2 cards; MENU_UNFRAME=x0,y0,x1,y1 removes a
+#   MENU.png     the game-select picture, or MENU.bin already converted by menu_art.py (4x2 cards; MENU_UNFRAME=x0,y0,x1,y1 removes a
 #                highlight baked into the picture, default 92,176,432,504)
 #   ROM          sh1 (REV00), default ../roms/sh1.bin
 #   ROM2         sh2 (REV01), default ../roms/sh2.bin (card 2: its first level for now)
@@ -62,7 +62,8 @@ print "3/5 relocation"
     --patch D700=4EB90023E000 --blob 23E000=$work/s1_bs.bin | head -1 )
 
 print "4/5 menu art"
-$py $here/menu_art.py $pic $work/menu_art.bin --unframe ${MENU_UNFRAME:-92,176,432,504}
+if [[ $pic == *.bin ]]; then cp $pic $work/menu_art.bin    # an already converted menu (menu_art.py's output)
+else $py $here/menu_art.py $pic $work/menu_art.bin --unframe ${MENU_UNFRAME:-92,176,432,504}; fi
 
 print "5/5 SH2 (games/sh2: ../roms/sh2.bin, REV01) and the disc"
 s2=(); if [[ -f ${ROM2:-$root/../roms/sh2.bin} ]]; then

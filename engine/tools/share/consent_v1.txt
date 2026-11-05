@@ -1,0 +1,19 @@
+PixelSorcery - sharing a play session (consent text, version 1)
+
+You choose to share one recorded play session with the PixelSorcery project, so problems can be
+reproduced and fixed from real play, and so the session can be replayed in the project's automatic checks.
+
+What is sent (you can open every file before posting):
+  - session.polls: the buttons pressed, one line per controller read; no pictures, no sound, no game data;
+  - session.meta:  the PixelSorcery version, the game's codename and your menu settings;
+  - session.log:   the program's messages, with your home folder and user name removed and the
+                   gamepad's name and identifier left out;
+  - session.poke:  only when the session began with the menu's level select (its RAM start);
+  - share.json:    the game's codename, the SHA-1 of the ROM file you used (identical for everyone who
+                   has the same dump: it does not identify you), the date of this consent and this text's version.
+
+Where it goes: a public issue on github.com/nico3185/pixel_sorcery, under your GitHub account (public).
+Nothing is sent automatically: you post the issue and attach the file yourself.
+Your consent is recorded: on your computer (with this share) and by the project (issue, account, date,
+this text's version and the files' checksums). A session without a recorded consent is never replayed or kept.
+Withdrawing: close the issue or comment "withdraw" - the session is deleted and the record marked withdrawn.
