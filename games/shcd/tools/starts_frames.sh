@@ -2,7 +2,7 @@
 # starts_frames.sh DISC.cue [FIRST LAST]: native_starts.sh's entries (run it first: the movies and the
 # reference's input per poll) drawn on both builds; frames 3000, 3500 and 3990 compared pixel by pixel.
 # One line per entry: the differing pixels at each frame. PS_JOBS entries at once (default 4).
-g=${0:A:h:h}; cue=${1:?usage: starts_frames.sh DISC.cue [FIRST LAST]}; cue=${cue:A}
+g=${0:A:h:h}; cue=${1:?usage: starts_frames.sh DISC.cue [FIRST LAST]}; [[ $OSTYPE == (msys|cygwin)* ]] && cue=$(cygpath -u $cue); cue=${cue:A}   # MSYS2: C:/ to /c/ first
 first=${2:-0}; last=${3:-73}; out=$g/build/native_starts
 one() {
   local k=$1 m=$out/stage$1

@@ -56,6 +56,9 @@ execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_
 if(NOT PS_GIT_VERSION AND DEFINED ENV{PS_VERSION})   # no git (the app's tree): the app's version
     set(PS_GIT_VERSION "$ENV{PS_VERSION}")
 endif()
+if(NOT PS_GIT_VERSION AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../VERSION)   # a download's tree (zip)
+    file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/../VERSION PS_GIT_VERSION LIMIT_COUNT 1)
+endif()
 set_source_files_properties(src/ps_menu.c PROPERTIES COMPILE_DEFINITIONS "PS_VERSION=\"${PS_GIT_VERSION}\"")
 target_link_libraries(genrecomp_native PUBLIC SDL2::SDL2 ZLIB::ZLIB)
 # MinGW: the per-title data defaults (Z80 driver, cycle table, hooks, cheats) are archive members

@@ -138,6 +138,7 @@ struct ContentView: View {
     @State var selection: String?
     @State var log = ""
     @State var screen: Int? = nil                  // 1 library, 0 build; nil: the library once a game is built
+    @State var sharing: Title? = nil               // the game whose last session the consent sheet is about
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var available: [Title] { engine.titles.filter(\.usable) }
@@ -180,8 +181,13 @@ struct ContentView: View {
                             Text(t.name).font(.headline).lineLimit(2)
                             Text(t.code.uppercased()).font(.caption).foregroundStyle(.secondary)
                             Spacer(minLength: 0)
-                            Button("Play") { engine.send("play " + t.id) }
-                                .buttonStyle(.borderedProminent).controlSize(.large)
+                            HStack {
+                                Button("Play") { engine.send("play " + t.id) }
+                                    .buttonStyle(.borderedProminent).controlSize(.large)
+                                Spacer()
+                                Button("Share last session…") { sharing = t }.controlSize(.small)
+                                    .help("Send your last play session of this game to the project - only after you agree")
+                            }
                         }
                         .padding(12).frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
                         .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.12)))
@@ -189,6 +195,21 @@ struct ContentView: View {
                 }
             }
             ForEach(engine.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+        }
+        .sheet(item: $sharing) { t in               // explicit consent first: the whole text, Cancel or I agree
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Share your last session of \(t.name)?").font(.title3).bold()
+                ScrollView {
+                    Text((try? String(contentsOfFile: engine.repo + "/engine/tools/share/consent.txt", encoding: .utf8)) ?? "")
+                        .font(.system(size: 12, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }.frame(minHeight: 320)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { sharing = nil }.keyboardShortcut(.cancelAction)
+                    Button("I agree — pack the session") { engine.send("share " + t.id); sharing = nil }
+                }
+            }.padding(20).frame(width: 720)
         }
     }
 

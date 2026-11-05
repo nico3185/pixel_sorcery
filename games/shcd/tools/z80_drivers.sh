@@ -5,7 +5,7 @@
 # (PS_Z80_CAPTURE); z80_drivers.py recompiles each driver (the BIOS's, the game's) into
 # src/recomp/z80_*.c (git-ignored: from the player's BIOS and disc), then shcd_native is rebuilt
 # with them. No emulator core involved (the Mac/Linux apps run it).
-g=${0:A:h:h}; cue=${1:?usage: z80_drivers.sh DISC.cue}; cue=${cue:A}
+g=${0:A:h:h}; cue=${1:?usage: z80_drivers.sh DISC.cue}; [[ $OSTYPE == (msys|cygwin)* ]] && cue=$(cygpath -u $cue); cue=${cue:A}   # MSYS2: C:/ to /c/ first
 cd $g || exit 1
 py=${g:h:h}/engine/.venv/bin/python; [[ -x $py ]] || py=python3
 [[ -f build/build.ninja ]] || cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null || exit 1

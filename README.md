@@ -101,6 +101,26 @@ part of what a player runs.
 drawn, instant save states, a settings menu with controller mapping, cheats, modern water,
 recorded sessions, collection launchers.
 
+## Download and play
+
+Get the app from the [releases](https://github.com/nico3185/pixel_sorcery/releases): **Mac** `PixelSorcery-<version>.dmg`
+(Apple silicon, macOS 14+; not signed: the first time, System Settings > Privacy & Security > "Open Anyway"),
+**Windows** the installer `.exe`, **Linux** `pixelsorcery_<version>_all.deb`. Each file has its `.sha256` beside it.
+
+1. **Install and open it.** The first run sets up its tools (the Mac app offers Apple's Command Line Tools).
+2. **Build games.** Point it at the folder holding your own dumps (for SHCD: the disc's `.cue` and your Mega CD
+   BIOS); it recognises them by checksum, then compiles the games you tick for your machine.
+3. **Your games.** A card per built game with **Play**; **Collections** opens a shelf (all the SH games, the DC
+   games) where you go from game to game in fullscreen (the menu's BACK TO GAMES); **Controller...** maps your pad.
+
+In a game: the settings menu (F1, Tab, the pad's Back, or C while paused) has save states with pictures, level
+select (the game's own, reached for you), DISPLAY, SOUND & CONTROLS and CHEATS pages. **Rewind mode**: REWIND or
+FORWARD (Backspace / `]`, or the pad's triggers) pauses on the last 30 seconds; hold them to move, A plays from there.
+
+**Share a session** (optional, never automatic): "Share last session..." shows exactly what would be sent (your
+button presses, version and settings, a log without your user name or paths) and asks for your consent; then you
+post it yourself as an issue here, and it is replayed against the original. Close the issue to withdraw it.
+
 ## Quick start (macOS)
 
 ```sh
@@ -129,15 +149,37 @@ Download `pixelsorcery_<version>_all.deb` from the
 architecture), then:
 
 ```sh
-sudo apt install ./pixelsorcery_0.1.0_all.deb   # the ./ makes apt read the file; it also installs
+sudo apt install ./pixelsorcery_<version>_all.deb   # the ./ makes apt read the file; it also installs
                                                # the compiler, cmake, ninja, SDL2, Python, capstone
 pixelsorcery                # the build screen: finds your dumps, compiles the native ports
 pixelsorcery roms ~/roms    # or link the games in a folder without the screen
 pixelsorcery play sh2       # play a built title (pixelsorcery play lists them)
 ```
 
-Everything it makes stays in `~/.local/share/pixelsorcery`. Native ports only: the emulator core
-is not in the package, so there is no self-check and no Mega CD title.
+Everything it makes stays in `~/.local/share/pixelsorcery`. Native ports only (SHCD included: the native Mega CD);
+the emulator core is not in the package, so there is no self-check against the original.
+
+## Quick start (Windows)
+
+Download `PixelSorcery-<version>-windows.exe` from the
+[releases](https://github.com/nico3185/pixel_sorcery/releases) (Windows 10/11, 64-bit) and run it.
+
+![The PixelSorcery window on Windows](img/windows-app.png)
+
+- **First run:** it unpacks itself into `%LOCALAPPDATA%\PixelSorcery`, installs the compiler
+  toolchain once (MSYS2 with MinGW64: gcc, cmake, ninja, SDL2, Python; about 600 MB from MSYS2's
+  servers, in its own window) and adds PixelSorcery to the Start menu.
+- **Build games…:** choose the folder holding your own dumps (any file names: they are recognised by
+  checksum; zips too). Tick the games and press **Build selected**: each game's code is recompiled
+  to C and compiled for your PC (a few minutes per game the first time).
+- **Your games:** a card per built game: **Play**. **Controller…** maps your gamepad (A B C START
+  X Y Z, rewind, fast forward). **Collections** opens a cartridge shelf of your built games.
+- **Share last session…** (on a card): only after you read and accept the consent text, it packs
+  your last session of that game to report a problem.
+
+Mega CD titles need your console's BIOS (`scd_us.bin`, `scd_eu.bin` or `scd_jp.bin`) in
+`%APPDATA%\PixelSorcery\bios`. The same window runs on macOS and Linux from a clone:
+`python3 engine/tools/gui/pixelsorcery_gui.py`.
 
 **TUTORIAL.md** explains every tool: decompiling (static analysis + traced coverage),
 recompiling, verifying side by side, the Mega CD disc builder and relocator.

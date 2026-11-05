@@ -8,12 +8,12 @@
 # (z80_drivers.sh) when src/recomp has none. PS_JOBS: programs generated at once (default: the cores).
 set -e; setopt pipefail
 g=${0:A:h:h}; root=${g:h:h}; py=$root/engine/.venv/bin/python
-cue=${1:?usage: generate.sh DISC.cue}; cue=${cue:A}; [[ -f $cue ]] || { print -u2 "no disc '$cue'"; exit 2; }
+cue=${1:?usage: generate.sh DISC.cue}; [[ $OSTYPE == (msys|cygwin)* ]] && cue=$(cygpath -u $cue); cue=${cue:A}   # MSYS2: C:/ to /c/ first; [[ -f $cue ]] || { print -u2 "no disc '$cue'"; exit 2; }
 track=${cue:h}/$(sed -n 's/^FILE "\(.*\)".*/\1/p' $cue | head -1)
-r=$($py -I -c "import sys; d=open(sys.argv[1],'rb').read(0x210); print({'J':'jp','E':'eu'}.get(chr(d[0x10+0x1F0]),'us'))" $track)
+r=$($py -I -c "import sys; d=open(sys.argv[1],'rb').read(0x210); print({'J':'jp','E':'eu'}.get(chr(d[0x10+0x1F0]),'us'))" $track); r=${r%$''}   # Windows python: CRLF
 case $OSTYPE in                                      # the BIOS folder (build_ui.py bios_dir, genrecomp.c)
   darwin*) bdir="$HOME/Library/Application Support/PixelSorcery/bios" ;;
-  msys*|cygwin*) bdir="$APPDATA/PixelSorcery/bios" ;;
+  msys*|cygwin*) bdir="${APPDATA:-$(cygpath -u -F 26)}/PixelSorcery/bios" ;;   # 26: the AppData folder
   *) bdir="${XDG_DATA_HOME:-$HOME/.local/share}/pixelsorcery/bios" ;;
 esac
 bios=${PS_SCD_BIOS:-$bdir}/scd_$r.bin

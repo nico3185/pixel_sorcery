@@ -65,3 +65,5 @@ games/*/disc/
 
 # funclut.py: the SQLite lookup table, rebuilt from docs/lut/functions.jsonl
 docs/lut/functions.db
+shared/
+.venv-ci/

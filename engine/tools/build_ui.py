@@ -173,6 +173,24 @@ def bios_region(path):
     if b'BOOT ROM' not in h[0x120:0x150] or h[0x180:0x183] != b'BR ': return None
     return {'J': 'jp', 'E': 'eu', 'U': 'us'}.get(chr(h[0x1F0]))
 
+def shc(cmd):
+    """a command list; on Windows a .sh script runs through zsh (MSYS2), it cannot be executed itself"""
+    if os.name == "nt" and str(cmd[0]).endswith(".sh"):     # zsh's ${0:A} mangles C:/...: give it /c/...
+        p = str(cmd[0]).replace("\\", "/")
+        if len(p) > 2 and p[1] == ":": p = "/" + p[0].lower() + p[2:]
+        return ["zsh", p] + list(cmd[1:])
+    return list(cmd)
+
+
+def link_file(src, dst):
+    """dst -> src: a symlink; on Windows (symlinks need admin or Developer Mode) a hard link,
+    else a copy (another drive)"""
+    try: os.symlink(src, dst)
+    except OSError:
+        try: os.link(src, dst)
+        except OSError: shutil.copyfile(src, dst)
+
+
 BIOS_FOUND = {}                                                # region -> (the player's BIOS dump, verified) (scan)
 BIOS_SHA1 = json.load(open(os.path.join(TOOLS, 'roms.json')))['_scd_bios']
 def install_bios(log):
@@ -257,13 +275,13 @@ def prepare(plan, log):
                 src = os.path.dirname(os.path.abspath(d)); os.makedirs(os.path.dirname(dst), exist_ok=True)
                 for f in os.listdir(src):
                     if not os.path.lexists(os.path.join(os.path.dirname(dst), f)):
-                        os.symlink(os.path.join(src, f), os.path.join(os.path.dirname(dst), f))
-                if not os.path.lexists(dst): os.symlink(os.path.abspath(d), dst)
+                        link_file(os.path.join(src, f), os.path.join(os.path.dirname(dst), f))
+                if not os.path.lexists(dst): link_file(os.path.abspath(d), dst)
                 log(f'linked {CAT[k]["file"]} -> {src}')
             elif '::' in d:                                      # inside an archive: extracted
                 open(dst, 'wb').write(read_rom(d)); log(f'extracted {CAT[k]["file"]} from {d}')
             else:
-                os.symlink(d, dst); log(f'linked {CAT[k]["file"]} -> {d}')
+                link_file(d, dst); log(f'linked {CAT[k]["file"]} -> {d}')
     for k, (st, d) in plan.items():                            # lock-on images, then our own
         e = CAT[k]
         if st != 'make' or not e.get('lockon'): continue
@@ -273,7 +291,7 @@ def prepare(plan, log):
         log(f'made {e["file"]} (lockon.py): {"ok" if r.returncode == 0 else "FAILED " + r.stderr[-200:]}')
         if r.returncode: bad.append(k)
     if plan.get('shk1', ('',))[0] in ('make', 'ready'):
-        r = subprocess.run([os.path.join(ROOT, 'games', 'shk1', 'tools', 'ensure_rom.sh'), ROMS], capture_output=True, text=True)
+        r = subprocess.run(shc([os.path.join(ROOT, 'games', 'shk1', 'tools', 'ensure_rom.sh'), ROMS]), capture_output=True, text=True)
         if r.returncode: bad.append('shk1'); log('SHK1 image FAILED: ' + r.stderr[-200:])
     return bad
 
@@ -291,7 +309,7 @@ class Job:
         with open(self.log, 'w') as lf:
             def go(cmd, cwd=None):
                 if stop.is_set(): return 1
-                self.proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                self.proc = subprocess.Popen(shc(cmd), cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                              text=True, bufsize=1, start_new_session=True)
                 for line in self.proc.stdout:
                     lf.write(line); lf.flush(); self.feed(line.rstrip('\n'))
@@ -334,7 +352,10 @@ class Job:
 
     def kill(self):
         if self.proc and self.proc.poll() is None:
-            try: os.killpg(self.proc.pid, signal.SIGTERM)
+            try:
+                if os.name == 'nt':                                   # no process groups: the tree
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.proc.pid)], capture_output=True)
+                else: os.killpg(self.proc.pid, signal.SIGTERM)
             except OSError: pass
 
 
@@ -344,7 +365,8 @@ def built(t):
     g = os.path.join(ROOT, 'games', t)
     try: exe = json.load(open(os.path.join(g, 'sidebyside.json'))).get('exe', 'build/' + t)
     except (OSError, ValueError): exe = 'build/' + t
-    try: return int(os.path.getmtime(os.path.join(g, exe)))
+    exe = os.path.join(g, exe) + ('.exe' if os.name == 'nt' else '')   # Windows: the .exe
+    try: return int(os.path.getmtime(exe))
     except OSError: return 0
 
 
@@ -398,21 +420,35 @@ def engine():
                 threading.Thread(target=start, args=(int(c[1]), int(c[2]), c[3] == '1' and not NATIVE_ONLY, c[4:]), daemon=True).start()
             elif c[0] == 'play' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
                 log = open(os.path.join(ROOT, 'games', c[1], 'play.log'), 'w')
-                subprocess.Popen([os.path.join(ROOT, 'play.sh'), c[1]], cwd=ROOT, stdin=subprocess.DEVNULL,
+                subprocess.Popen(shc([os.path.join(ROOT, 'play.sh'), c[1]]), cwd=ROOT, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 note(f'playing {c[1]}')
             elif c[0] == 'shelf' and len(c) == 2 and re.fullmatch(r'[a-z0-9_-]+', c[1]) and \
                     os.path.exists(os.path.join(ROOT, 'launchers', c[1] + '.txt')):
                 # a launcher shelf (launchers/NAME.txt): built the first time, then opened
                 log = open(os.path.join(ROOT, 'launchers', 'shelf.log'), 'w')
-                subprocess.Popen([os.path.join(ROOT, 'launch.sh'), c[1]], cwd=ROOT, stdin=subprocess.DEVNULL,
+                sh = (os.path.join(ROOT, 'engine', 'tools', 'windows', 'make_shelf.sh') if os.name == 'nt'
+                      else os.path.join(ROOT, 'engine', 'tools', 'linux', 'make_shelf.sh') if sys.platform.startswith('linux')
+                      else os.path.join(ROOT, 'launch.sh'))       # Windows/Linux: ps_launcher + the games' programs
+                subprocess.Popen(shc([sh, c[1]]), cwd=ROOT, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 note(f'opening the {c[1]} shelf (built the first time: a few minutes)')
+            elif c[0] == 'share' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
+                # the app showed the consent text and the player agreed: pack the session, open the issue form,
+                # show the zip (engine/tools/share/share_session.py)
+                r = subprocess.run([PY, os.path.join(TOOLS, 'share', 'share_session.py'), c[1], '--agree'], capture_output=True, text=True)
+                got = dict(l.split('=', 1) for l in r.stdout.splitlines() if '=' in l)
+                if r.returncode or 'ZIP' not in got: note(f'share {c[1]}: ' + (r.stderr.strip().splitlines() or ['failed'])[-1])
+                else:
+                    import webbrowser; webbrowser.open(got['URL'])
+                    if sys.platform == 'darwin': subprocess.run(['open', '-R', got['ZIP']])
+                    elif os.name == 'nt': subprocess.run(['explorer', '/select,', got['ZIP'].replace('/', '\\')])
+                    note(f'{c[1]}: drag {os.path.basename(got["ZIP"])} onto the issue, tick the consent box, post')
             elif c[0] == 'pad' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
                 # the controller page alone (a built game opened on CONTROLLER SETUP, closed when done)
-                subprocess.Popen([os.path.join(ROOT, 'play.sh'), c[1]], cwd=ROOT, stdin=subprocess.DEVNULL,
+                subprocess.Popen(shc([os.path.join(ROOT, 'play.sh'), c[1]]), cwd=ROOT, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
-                                 env=dict(os.environ, PS_PAD_SETUP='1', PS_POLL_RECORD='/dev/null'))
+                                 env=dict(os.environ, PS_PAD_SETUP='1', PS_POLL_RECORD=os.devnull))   # NUL on Windows
                 note('controller setup')
             elif c[0] == 'stop':
                 stop.set(); [j.kill() for j in jobs.values()]; note('stopped')

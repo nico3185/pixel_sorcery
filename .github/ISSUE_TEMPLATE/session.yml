@@ -1,0 +1,36 @@
+name: Share a play session
+description: Send one recorded session (made by the app's "Share last session") so a problem can be reproduced and replayed.
+title: "Session: "
+labels: ["session"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Drag the session's zip (made by PixelSorcery, e.g. `coi-1.zip`) into the box at the bottom.
+        It holds only your button presses per controller read, the version and settings, a log without your user
+        name or paths, and the ROM's checksum. Read the full consent text (version 1) in the app before packing,
+        or in `engine/tools/share/consent.txt`.
+  - type: input
+    id: game
+    attributes:
+      label: Game (codename)
+    validations:
+      required: true
+  - type: textarea
+    id: note
+    attributes:
+      label: What happened (optional)
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Consent
+      options:
+        - label: I agree to share this session under the PixelSorcery consent text, version 1, and to have this consent recorded. I can withdraw it by closing this issue or commenting "withdraw".
+          required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: Session file
+      description: Drag the zip here.
+    validations:
+      required: true

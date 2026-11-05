@@ -82,11 +82,17 @@ cp $res/PixelSorcery.icns $stage/.VolumeIcon.icns
 dmg=$out/PixelSorcery-$version.dmg; rm -f $dmg
 tmp=${stage:h}/rw.dmg
 hdiutil create -quiet -volname PixelSorcery -srcfolder $stage -ov -format UDRW $tmp
-att=$(diskutil image attach --mountOptions nobrowse $tmp | grep -m1 '/Volumes/')   # /dev/diskN<TAB>hint<TAB>/Volumes/...
-dev=${att%%[[:space:]]*}; mnt=/Volumes/${att#*/Volumes/}
-SetFile -a C "$mnt"                                  # the volume shows .VolumeIcon.icns
-diskutil eject $dev > /dev/null
-hdiutil convert -quiet $tmp -format UDZO -o $dmg
+# the volume icon needs the image mounted; a mount that does not come back within a minute (the disk subsystem
+# stuck, e.g. on a faulty USB device) only costs the icon, not the release
+if att=$(timeout 60 diskutil image attach --mountOptions nobrowse $tmp | grep -m1 '/Volumes/'); then   # /dev/diskN<TAB>hint<TAB>/Volumes/...
+  dev=${att%%[[:space:]]*}; mnt=/Volumes/${att#*/Volumes/}
+  SetFile -a C "$mnt"                                # the volume shows .VolumeIcon.icns
+  diskutil eject $dev > /dev/null
+  hdiutil convert -quiet $tmp -format UDZO -o $dmg
+else                                                 # straight from the folder (the half-attached image is left alone)
+  print "  (volume icon skipped: the image could not be mounted)"
+  hdiutil create -quiet -volname PixelSorcery -srcfolder $stage -ov -format UDZO $dmg
+fi
 rm -rf ${stage:h}
 if [[ -n ${PS_SIGN_ID:-} ]]; then
   codesign -s "$PS_SIGN_ID" --timestamp $dmg
