@@ -21,7 +21,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 TOOLS = os.path.join(ROOT, 'engine', 'tools')
 ROMS = os.path.normpath(os.environ.get('PS_ROMS_DIR') or os.path.join(ROOT, '..', 'roms'))   # PS_ROMS_DIR: tests
 PY = os.path.join(ROOT, 'engine', '.venv', 'bin', 'python')
-if not os.path.exists(PY): PY = sys.executable          # Windows download: its bundled Python runs this
+if os.name == 'nt' or not os.path.exists(PY):           # Windows: bin/python is a sh wrapper CreateProcess
+    PY = sys.executable                                  # cannot start; the engine's own Python (MinGW) is the same
 CAT = {k: v for k, v in json.load(open(os.path.join(TOOLS, 'roms.json'))).items() if not k.startswith('_')}
 PREFS = os.path.expanduser('~/Library/Application Support/PixelSorcery/build_ui.json')
 EXTS = ('.bin', '.md', '.gen', '.68k', '.sgd')
@@ -433,17 +434,17 @@ def engine():
                 subprocess.Popen(shc([sh, c[1]]), cwd=ROOT, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 note(f'opening the {c[1]} shelf (built the first time: a few minutes)')
-            elif c[0] == 'share' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
-                # the app showed the consent text and the player agreed: pack the session, open the issue form,
-                # show the zip (engine/tools/share/share_session.py)
-                r = subprocess.run([PY, os.path.join(TOOLS, 'share', 'share_session.py'), c[1], '--agree'], capture_output=True, text=True)
+            elif c[0] in ('share', 'withdraw', 'shared') and len(c) == 2 and c[1] in [t for t, _, _ in T]:
+                # share: the app showed the consent text and the player agreed - pack the session and send it to the
+                # project's server (engine/tools/share: share_session.py --send, worker/); withdraw: delete the last
+                # share of the game there; shared: its state and replay result
+                flag = {'share': ['--agree', '--send'], 'withdraw': ['--withdraw'], 'shared': ['--status']}[c[0]]
+                r = subprocess.run([PY, os.path.join(TOOLS, 'share', 'share_session.py'), c[1], *flag], capture_output=True, text=True)
                 got = dict(l.split('=', 1) for l in r.stdout.splitlines() if '=' in l)
-                if r.returncode or 'ZIP' not in got: note(f'share {c[1]}: ' + (r.stderr.strip().splitlines() or ['failed'])[-1])
-                else:
-                    import webbrowser; webbrowser.open(got['URL'])
-                    if sys.platform == 'darwin': subprocess.run(['open', '-R', got['ZIP']])
-                    elif os.name == 'nt': subprocess.run(['explorer', '/select,', got['ZIP'].replace('/', '\\')])
-                    note(f'{c[1]}: drag {os.path.basename(got["ZIP"])} onto the issue, tick the consent box, post')
+                if r.returncode or 'ERROR' in got or 'STATUS' not in got:
+                    note(f'{c[0]} {c[1]}: ' + (got.get('ERROR') or (r.stderr.strip().splitlines() or ['failed'])[-1]))
+                else: note(f'{c[1]}: ' + {'share': 'session sent - thank you (Withdraw removes it)', 'withdraw': 'share withdrawn and deleted',
+                                          'shared': 'share ' + got['STATUS'] + (': ' + got['RESULT'] if got.get('RESULT') else '')}[c[0]])
             elif c[0] == 'pad' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
                 # the controller page alone (a built game opened on CONTROLLER SETUP, closed when done)
                 subprocess.Popen(shc([os.path.join(ROOT, 'play.sh'), c[1]]), cwd=ROOT, stdin=subprocess.DEVNULL,

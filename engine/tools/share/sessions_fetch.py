@@ -15,7 +15,8 @@ import cloud      # the Cloudflare mirror (D1 + R2), off unless configured
 
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 REPO = 'nico3185/pixel_sorcery'; SHARED = os.path.join(ROOT, 'shared')
-CONSENTS = {1: hashlib.sha256(open(os.path.join(HERE, 'consent.txt'), 'rb').read()).hexdigest()}   # version -> text hash
+CONSENTS = {v: hashlib.sha256(open(os.path.join(HERE, f), 'rb').read()).hexdigest()   # version -> text hash
+            for v, f in ((1, 'consent_v1.txt'), (2, 'consent.txt'))}
 ALLOWED = {'session.polls', 'session.meta', 'session.log', 'session.poke', 'share.json'}
 
 def db():
@@ -81,6 +82,36 @@ def main():
             if res != before[1]: record(c, n, who, 'kept', res, share)      # the last replay result, in reason
             if comment and res != before[1]: gh('issue', 'comment', str(n), '-R', REPO, '--body', f'Replayed against the original: {res}')
     for row in c.execute('select status, count(*) from consents group by status'): print(*row)
+    if cloud.ON: api_sessions(replay)
+
+def check(data):
+    """the same checks as for an issue's zip: (share, zip) or (reason, None)"""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data)); names = set(z.namelist()); share = json.loads(z.read('share.json'))
+    except Exception as e: return f'not a session zip ({e})', None
+    why = ('other files: ' + ', '.join(sorted(names - ALLOWED)) if names - ALLOWED else
+           'consent text unknown' if CONSENTS.get(share.get('consent_version')) != share.get('consent_sha256') else
+           'file checksums differ' if any(hashlib.sha256(z.read(k)).hexdigest() != v for k, v in share.get('files', {}).items()) else '')
+    return (why, None) if why else (share, z)
+
+def api_sessions(replay):
+    """sessions sent to the project's server (worker/worker.js): the D1 table uploads, the zips in R2 api/ID.zip.
+    received -> checked again, replayed, kept with the result (the app reads it) or refused; withdrawn -> local copy gone"""
+    rows = (cloud.sql("select id, title, status from uploads where status in ('received', 'withdrawn')") or {}).get('result', [{}])[0].get('results', [])
+    for r in rows:
+        folder = os.path.join(SHARED, 'api', r['id'])
+        if r['status'] == 'withdrawn': shutil.rmtree(folder, ignore_errors=True); continue
+        data = cloud.get(f'api/{r["id"]}.zip')
+        share, z = check(data) if data else ('zip missing', None)
+        if z is None:
+            cloud.sql("update uploads set status = 'refused', result = ?1, updated_at = current_timestamp where id = ?2", (share, r['id'])); continue
+        os.makedirs(folder, exist_ok=True); z.extractall(folder); res = ''
+        if replay:
+            p = subprocess.run([os.path.join(ROOT, 'engine', 'tools', 'check.sh'), share['title'], os.path.join(folder, 'session.polls')],
+                               capture_output=True, text=True)
+            res = (p.stdout.strip().splitlines() or ['(no output)'])[-1]
+        cloud.sql("update uploads set status = 'kept', result = ?1, updated_at = current_timestamp where id = ?2", (res, r['id']))
+        print(f'api {r["id"][:8]} {share["title"]}: {res or "kept"}')
 
 if __name__ == '__main__':
     main()

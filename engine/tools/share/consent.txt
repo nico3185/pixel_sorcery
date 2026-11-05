@@ -1,4 +1,4 @@
-PixelSorcery - sharing a play session (consent text, version 1)
+PixelSorcery - sharing a play session (consent text, version 2)
 
 You choose to share one recorded play session with the PixelSorcery project, so problems can be
 reproduced and fixed from real play, and so the session can be replayed in the project's automatic checks.
@@ -12,8 +12,12 @@ What is sent (you can open every file before posting):
   - share.json:    the game's codename, the SHA-1 of the ROM file you used (identical for everyone who
                    has the same dump: it does not identify you), the date of this consent and this text's version.
 
-Where it goes: a public issue on github.com/nico3185/pixel_sorcery, under your GitHub account (public).
-Nothing is sent automatically: you post the issue and attach the file yourself.
-Your consent is recorded: on your computer (with this share) and by the project (issue, account, date,
-this text's version and the files' checksums). A session without a recorded consent is never replayed or kept.
-Withdrawing: close the issue or comment "withdraw" - the session is deleted and the record marked withdrawn.
+Where it goes: the PixelSorcery project's server (a Cloudflare Worker run by the project), stored in the
+project's private storage (Cloudflare R2, its records in Cloudflare D1). The app sends it only after you agree here.
+No account is needed and none is recorded; your IP address is not stored. To limit abuse, a one-way fingerprint of
+your address (keyed by a secret that changes every day, it cannot be turned back into the address) is kept while you
+wait between two shares, and deleted at most a day after.
+Your consent is recorded: on your computer (with this share) and by the project (an anonymous id, the date, this
+text's version and the files' checksums). A session without a recorded consent is never replayed or kept.
+The app keeps a private withdrawal key for each share. Withdrawing: "Withdraw" in the app - the session is deleted
+and the record marked withdrawn. Shares posted as GitHub issues (version 1): close the issue or comment "withdraw".

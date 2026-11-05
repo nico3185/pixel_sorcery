@@ -1528,13 +1528,13 @@ class CodeGenerator:
         written = 0
         for name, text in self.outputs.items():
             path = os.path.join(self.output_dir, name)
-            try:
-                with open(path) as f:
+            try:   # UTF-8 everywhere: a file left in Windows' cp1252 reads as changed and is rewritten
+                with open(path, encoding='utf-8', errors='replace') as f:
                     if f.read() == text:
                         continue
             except OSError:
                 pass
-            with open(path, 'w') as f:
+            with open(path, 'w', encoding='utf-8') as f:
                 f.write(text)
             written += 1
         for f in os.listdir(self.output_dir):

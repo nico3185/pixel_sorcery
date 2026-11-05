@@ -185,7 +185,11 @@ struct ContentView: View {
                                 Button("Play") { engine.send("play " + t.id) }
                                     .buttonStyle(.borderedProminent).controlSize(.large)
                                 Spacer()
-                                Button("Share last session…") { sharing = t }.controlSize(.small)
+                                Menu("Share") {
+                                    Button("Share last session…") { sharing = t }
+                                    Button("Status of my last share") { engine.send("shared " + t.id) }
+                                    Button("Withdraw my last share") { engine.send("withdraw " + t.id) }
+                                }.menuStyle(.borderlessButton).fixedSize().controlSize(.small)
                                     .help("Send your last play session of this game to the project - only after you agree")
                             }
                         }
@@ -207,7 +211,7 @@ struct ContentView: View {
                 HStack {
                     Spacer()
                     Button("Cancel") { sharing = nil }.keyboardShortcut(.cancelAction)
-                    Button("I agree — pack the session") { engine.send("share " + t.id); sharing = nil }
+                    Button("I agree — send the session") { engine.send("share " + t.id); sharing = nil }
                 }
             }.padding(20).frame(width: 720)
         }
