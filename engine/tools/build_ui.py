@@ -334,6 +334,9 @@ class Job:
                     self.stage = 'generating C'
                     rc = go([PY, os.path.join(TOOLS, 'recompiler', 'generate.py'), rom, '-o', os.path.join(g, 'src', 'recomp'),
                              '-c', os.path.join(g, 'recomp.json')])
+                if rc == 0 and not os.path.exists(disc_gen) and os.path.exists(os.path.join(g, 'audio', 'driver.json')):
+                    self.stage = 'Z80 driver'                      # the sound driver (recomp.sh makes it too)
+                    rc = go([os.path.join(TOOLS, 'z80_driver.sh'), rom, g])
                 if rc == 0:
                     self.stage = 'configuring'
                     rc = go(['cmake', '-S', g, '-B', os.path.join(g, 'build'), '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release'])
