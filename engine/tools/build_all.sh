@@ -133,6 +133,13 @@ else
     (( ++running >= jobs )) && { wait; running=0; }
   done
   wait
+  # the Z80 sound drivers, one title at a time (a captured one builds the port first): recomp.sh makes
+  # them on --check; without them a Z80-driven game is silent (engine/tools/z80_driver.sh)
+  for t in $titles; do
+    [[ -n ${rom[$t]} && -f $here/games/$t/audio/driver.json ]] || continue
+    PS_JOBS=$jobs $here/engine/tools/z80_driver.sh ${rom[$t]} $here/games/$t >> $here/games/$t/build_all.log 2>&1 \
+      || print "   $t: Z80 driver FAILED (games/$t/build_all.log)"
+  done
   # 2. compile each with all N cores: a bar from ninja's [done/total], errors as they come
   bar() {   # bar TITLE LOG: ninja's output in, one updating line out
     local line n m w=30 f e=""
