@@ -7,7 +7,8 @@
 |   +4  the Level routine's entry (its first instruction patched to jmp here): the zones this image
 |       holds (ZONE, ZONE2) load as before; another zone switches to that zone's image
 | A switch copies the stub (swap.s, its descriptor at DESC) below the stack and runs it with d7 = $80 +
-| group (zone 0 and the ending: group 1, the card; zones 1-5: groups 13-17). Nothing in work RAM has
+| group (zone 0 and the ending: group 1, the card; zones 1-5: groups 13-17, Final Zone - zone 5 act 2 -
+| group 18). Nothing in work RAM has
 | to survive but the game's own state: the new image starts at the main loop, which reads the mode.
 	.text
 	.globl	_start
@@ -31,12 +32,26 @@ tofront:
 level:
 	move.b	0xFFFFFE10, %d0                 | zone
 	cmpi.b	#ZONE, %d0
-	beq.s	1f
+	beq.s	3f
 	cmpi.b	#ZONE2, %d0
-	beq.s	1f
-	andi.w	#7, %d0
+	bne.s	4f
+3:	.ifdef	ACTMIN                          | this image holds some acts of the zone only
+	cmpi.b	#ACTMIN, 0xFFFFFE11
+	blo.s	4f
+	.endif
+	.ifdef	ACTMAX
+	cmpi.b	#ACTMAX, 0xFFFFFE11
+	bhi.s	4f
+	.endif
+	bra.s	1f
+4:	andi.w	#7, %d0
 	lea	groups(%pc), %a0
 	move.b	(%a0, %d0.w), %d7
+	cmpi.b	#5, %d0                         | Scrap Brain's act 3 (Final Zone): its own image
+	bne.s	switch
+	cmpi.b	#2, 0xFFFFFE11
+	bne.s	switch
+	moveq	#-0x80 + 18, %d7
 	bra.s	switch
 1:	bset	#7, 0xFFFFF600                  | Level's own first instruction
 	jmp	0x2037A8                        | then the rest of Level (ROM $37A8)

@@ -10,8 +10,9 @@
 #   built first, run 600 frames headless, rebuilt by the caller with the driver.
 # Nothing to do without audio/driver.json, or when z80_driver.c is newer than driver.json.
 set -eu; setopt pipefail
-eng=${0:A:h}/..; r=$1; g=$2
-[[ $OSTYPE == (msys|cygwin)* ]] && { r=$(cygpath -u $r); g=$(cygpath -u $g); }   # MSYS2: C:/... to /c/... before :A
+self=$0; r=$1; g=$2
+[[ $OSTYPE == (msys|cygwin)* ]] && { self=$(cygpath -u $self); r=$(cygpath -u $r); g=$(cygpath -u $g); }   # MSYS2: C:/... to /c/... before :A
+eng=${self:A:h}/..
 rom=${r:A}; game=${g:A}
 cd $game
 [[ -f audio/driver.json ]] || exit 0
