@@ -81,7 +81,7 @@ tracer=build-trace/genrecomp_build/genrecomp_trace
 [[ -x $tracer ]] || { cmake -S . -B build-trace -G Ninja -DCMAKE_BUILD_TYPE=Release -DGENRECOMP_TRACE=ON >/dev/null; ninja -C build-trace genrecomp_trace >/dev/null; }
 PS_POLL_RECORD=build/selfcheck.polls $tracer $args --trace-out /dev/null $rom >/dev/null 2>&1 || true
 if [[ -f sidebyside.json && -s build/selfcheck.polls ]]; then
-  sbs=$($py $eng/tools/sidebyside.py $rom . build/selfcheck.polls --max-iter 1 2>&1 | tail -1)
+  sbs=$($py $eng/tools/sidebyside.py $rom . build/selfcheck.polls --max-iter 1 2>&1 | tail -1) || true   # a divergence exits non-zero: say so below instead of stopping silently (pipefail)
   print "native port: $sbs"
   [[ $sbs == MATCH* ]] || { print -u2 "SELF-CHECK FAILED: native port diverges from the original"; exit 1; }
 fi

@@ -133,6 +133,10 @@ def main():
     if cfg.get('wide_objects_logic', obj_hooks) and any(e[0] and e[3] for e in ev):
         print('session played with widescreen enemies on a wide picture: game logic differs from the original by design; not comparable')
         sys.exit(2)
+    # sidebyside.json "env": settings the comparison needs on both sides (SHK1: PS_KCOL=1, the
+    # image's own colour mode - the native default, extended colours, leaves SH1's palette RAM untouched
+    # where the original writes his 4 colours)
+    base.update(cfg.get('env', {}))
     oc_cfg = cfg.get('oracle', {})
     if any(e[1] for e in ev) and oc_cfg.get('cheats'):
         base['PS_ORACLE_PATCH'] = ','.join(oc_cfg['cheats'])
