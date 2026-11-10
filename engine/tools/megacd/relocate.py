@@ -180,6 +180,10 @@ def main():
         vals = [int(v, 16) for v in ABS_L.findall(ops)]
         if mn.endswith('.l') or mn.split('.')[0] in ('lea', 'pea', 'jsr', 'jmp'):
             imms = [int(v, 16) for v in IMM.findall(ops) if 0x200 <= int(v, 16) < n]
+            if mn.split('.')[0] in ('addi', 'subi', 'addq', 'subq', 'andi', 'ori', 'eori', 'add', 'sub', 'and', 'or', 'eor',
+                                    'mulu', 'muls', 'divu', 'divs'):
+                imms = []                         # arithmetic: a step, a mask, never an address (SH1's Final
+                                                  # Zone boss: addi.l #$20000,$C(a0) moves it down 2 pixels)
             if executed and strict:               # small round constants are counts/sizes ($800 =
                 imms = [v for v in imms if v & 0xFF or v >= 0x10000 or mn.split('.')[0] in ('lea', 'pea', 'movea')]   # 2 KB block)
             if executed and strict:               # an immediate is an address only with evidence:

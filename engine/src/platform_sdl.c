@@ -65,9 +65,11 @@ static uint64_t s_frame_start = 0;
 static bool s_initialized = false;
 static int s_volume = 100;             /* settings menu volume (percent) */
 
-/* Low-latency pacing (PS_FRAME_DELAY=auto|off|<ms>): after vsync, sleep for most of the
- * frame, then poll input, run the frame and present just in time for the next vsync. The
- * delay adapts to the measured frame cost. PS_LATENCY_LOG=1 reports poll->present time. */
+/* Low-latency pacing (PS_FRAME_DELAY=auto|off|<ms>; the menu's LOW LATENCY is auto/off): sleep
+ * for most of the frame, then poll input, run the frame and present just in time. auto adapts
+ * the delay to the measured frame cost on the timer path only; when the display paces the
+ * frames (s_locked) only a fixed <ms> sleeps, see frame_sync. PS_LATENCY_LOG=1 reports
+ * poll->present time and the audio queue. */
 static int    s_delay_mode = -1;     /* -1 auto, 0 off, >0 fixed ms */
 static double s_sync_ms;              /* time spent pacing since the last present (PS_SLOW_LOG) */
 static double s_cost_ms = 4.0;       /* smoothed poll->present-call cost (max-biased) */
@@ -127,7 +129,10 @@ static int  s_repeat = 1;              /* refreshes per game frame, 0: not a mul
 static bool s_locked;                  /* the display paces the frames */
 static double s_present_max;           /* longest present call over the current window (ms) */
 static double s_lat_sum; static long s_lat_n;
+static int  s_catchup; static long s_caught;   /* frames to run without showing them after a missed refresh */
+static long s_aq_dry;                  /* times the audio queue ran dry (PS_LATENCY_LOG) */
 static double s_aq_sum; static long s_aq_n; static uint32_t s_aq_min = 0xFFFFFFFF;
+static double s_dbg_sync, s_dbg_pm, s_dbg_cost;   /* PS_SLOW_LOG: where a hitch's time went */
 static double ms_since(uint64_t t) { return (double)(SDL_GetPerformanceCounter() - t) * 1000.0 / (double)SDL_GetPerformanceFrequency(); }
 
 /* Headless/record options (see platform_parse_args). Headless exists so a
@@ -374,7 +379,7 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
             uint64_t now = SDL_GetPerformanceCounter();
             double ms = last ? (double)(now - last) * 1000.0 / (double)SDL_GetPerformanceFrequency() - s_sync_ms : 0;
             if (ms > 8.0 && s_headless) fprintf(stderr, "slow: frame %ld %.1f ms\n", s_frame_no, ms);
-            last = now; s_sync_ms = 0;
+            last = now; s_dbg_sync = s_sync_ms; s_sync_ms = 0;
         }
     }
     s_frame_no++;
@@ -414,6 +419,14 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
     { extern int ps_poll_fast_forward(void);       /* resuming: show 1 frame in 30 */
       extern int g_ps_boot_hidden; if ((ps_poll_fast_forward() && (g_ps_boot_hidden || s_frame_no % 30))) return; }
 
+    /* A present missed its refresh (see below): this frame is not shown, the loop runs the next
+     * one right away and that one is on screen at the refresh this one would have had. The game
+     * keeps real time (no slowdown) and the audio queue gets back the 17 ms the miss took. */
+    if (s_locked && s_catchup > 0) {
+        s_catchup--; s_caught++;
+        if (getenv("PS_SLOW_LOG")) fprintf(stderr, "catch-up: frame %ld not shown (%ld so far)\n", s_frame_no, s_caught);
+        return;
+    }
     SDL_Rect src = { 0, 0, width, GEN_RENDER_HEIGHT };
     if (width != s_shown_w) {                         /* 4:3 <-> widescreen */
         SDL_RenderSetLogicalSize(s_renderer, width, GEN_RENDER_HEIGHT);
@@ -439,30 +452,46 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
         uint64_t t0 = SDL_GetPerformanceCounter();
         for (int r = 0; r < (s_locked && s_repeat > 1 ? s_repeat : 1); r++) SDL_RenderPresent(s_renderer);
         double pm = ms_since(t0);
+        s_dbg_pm = pm; s_dbg_cost = cost;
         if (pm > s_present_max) s_present_max = pm;
         static uint64_t win_t0;
         if (!win_t0) win_t0 = t0;
-        if (++n % 60 == 0) {
+        static int win_n;                      /* presents in this window: 8 for the first (a second on the timer
+                                                * with vsync also waiting doubled frames at every start), then 60 */
+        if (++win_n == (n < 8 ? 8 : 60) && (n += win_n)) {
             /* timer -> locked: a present waited for the display (> 4 ms, at least once a
              * second); locked -> timer: frames came faster than the display (the present
              * stopped blocking), averaged over the second */
-            double avg = ms_since(win_t0) / 60.0, period = 1000.0 / 60.0 * (s_repeat ? s_repeat : 1);
+            double avg = ms_since(win_t0) / win_n, period = 1000.0 / 60.0 * (s_repeat ? s_repeat : 1);
             win_t0 = SDL_GetPerformanceCounter();
             bool lock = s_vsync && s_repeat && (s_locked ? avg > 0.8 * period : s_present_max > 4.0);
             if (lock != s_locked && getenv("PS_SLOW_LOG"))
                 fprintf(stderr, "pacing: %s (present waits up to %.1f ms, %d refresh(es) per frame)\n",
                         lock ? "locked to the display" : "timer at 59.92 Hz", s_present_max, s_repeat);
             s_locked = lock;
-            s_present_max = 0;
+            s_present_max = 0; win_n = 0;
         }
     }
     {   /* PS_SLOW_LOG: a gap of more than 25 ms between two presents is a missed refresh */
         static uint64_t prev; static long gaps, frames;
         uint64_t now = SDL_GetPerformanceCounter();
+        if (prev && s_locked) {
+            /* Time lost against the display, in ms: each present should come one game frame after
+             * the last. A present that only returned late is followed by a short gap and cancels
+             * out; a lost refresh leaves a whole frame here, made up by not showing one frame.
+             * The leak absorbs a display that is not exactly 60 Hz; a long stop (menu, window
+             * dragged) is not made up. PS_CATCHUP=0: never skip. */
+            static double behind; static int on = -1;
+            if (on < 0) { const char *c = getenv("PS_CATCHUP"); on = !(c && *c == '0'); }
+            double period = 1000.0 / 60.0, gap = (double)(now - prev) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+            behind = gap > 5 * period ? 0 : behind * 0.98 + gap - period;
+            if (behind < -0.5 * period) behind = -0.5 * period;
+            if (on && behind > 0.8 * period && s_catchup < 2) { s_catchup++; behind -= period; }
+        }
         if (prev && getenv("PS_SLOW_LOG")) {
             double gap = (double)(now - prev) * 1000.0 / (double)SDL_GetPerformanceFrequency();
             frames++;
-            if (gap > 25.0) { gaps++; fprintf(stderr, "hitch: frame %ld %.1f ms between presents (%ld in %ld frames)\n", s_frame_no, gap, gaps, frames); }
+            if (gap > 25.0) { gaps++; fprintf(stderr, "hitch: frame %ld %.1f ms between presents (%ld in %ld frames; pacing wait %.1f, frame work %.1f, present call %.1f ms)\n", s_frame_no, gap, gaps, frames, s_dbg_sync, s_dbg_cost, s_dbg_pm); }
         }
         prev = now;
     }
@@ -470,8 +499,8 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
     if (getenv("PS_LATENCY_LOG")) {
         s_lat_sum += ms_since(s_poll_t); s_lat_n++;
         if (s_lat_n == 300) {
-            fprintf(stderr, "latency: input poll -> present %.1f ms avg (frame cost %.1f ms); audio queue avg %.1f ms, min %.1f ms\n",
-                    s_lat_sum / s_lat_n, s_cost_ms, s_aq_n ? s_aq_sum / s_aq_n / 44.1 : 0, s_aq_min / 44.1);
+            fprintf(stderr, "latency: input poll -> present %.1f ms avg (frame cost %.1f ms); audio queue avg %.1f ms, min %.1f ms, ran dry %ld time(s)\n",
+                    s_lat_sum / s_lat_n, s_cost_ms, s_aq_n ? s_aq_sum / s_aq_n / 44.1 : 0, s_aq_min / 44.1, s_aq_dry);
             s_aq_sum = 0; s_aq_n = 0; s_aq_min = 0xFFFFFFFF;
             s_lat_sum = 0; s_lat_n = 0;
         }
@@ -481,16 +510,19 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
 void platform_queue_audio(const int16_t *samples, int sample_count) {
     extern int ps_poll_fast_forward(void);
     if (s_audio_dev > 0 && samples && !ps_poll_fast_forward()) {
-        /* Keep the queue near 2 frames (~33 ms) by resampling: the display may run a hair
+        /* Keep the queue near 3 frames (~50 ms; 2 left it at 2 ms after one missed refresh) by resampling: the display may run a hair
          * faster than the Genesis' 59.92 Hz (exactly 60 when the pacing is locked to it),
          * which would otherwise make audio lag further and further. The rate follows the
          * queue's distance from its target, within +-0.5% (inaudible), linear interpolation
          * carrying the phase across frames. */
-        uint32_t queued = SDL_GetQueuedAudioSize(s_audio_dev) / 4, target = 44100 * 2 / 60;
-        if (queued < 64) {               /* start, or ran dry: one frame of silent headroom */
-            static int16_t silence[735 * 2];
+        uint32_t queued = SDL_GetQueuedAudioSize(s_audio_dev) / 4, target = 44100 * 3 / 60;
+        if (queued < 64) {               /* start, or ran dry: silent headroom */
+            static int16_t silence[735 * 2 * 2];   /* two frames: one left the start a frame from dry again */
             SDL_QueueAudio(s_audio_dev, silence, sizeof silence);
-            queued += 735;
+            queued += 735 * 2;
+            static int started;                /* the first call finds it empty: the start, not a dry queue */
+            if (started) s_aq_dry++;
+            if (started++ && getenv("PS_SLOW_LOG")) fprintf(stderr, "audio: queue dry at frame %ld (%s)\n", s_frame_no, s_locked ? "display-paced" : "timer");
         }
         static double ratio = 1.0, phase;      /* input samples per output sample */
         double want = 1.0 + ((double)queued - target) / target * 0.01;
@@ -519,7 +551,7 @@ void platform_queue_audio(const int16_t *samples, int sample_count) {
     }
 }
 
-void platform_set_frame_delay(bool on) { s_delay_mode = on ? -1 : 0; }
+void platform_set_frame_delay(bool on) { if (!getenv("PS_FRAME_DELAY")) s_delay_mode = on ? -1 : 0; }   /* the environment wins over the menu's setting */
 void platform_set_volume(int percent) { s_volume = percent; }
 void platform_set_fullscreen(bool on) {
     if (s_window) SDL_SetWindowFullscreen(s_window, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
@@ -596,12 +628,16 @@ static void frame_sync(void) {
     }
 #endif
     if (s_locked) {
-        /* the present already waited for the display; low latency: sleep most of the next
-         * refresh, then poll input and run the frame just in time for it */
+        /* the present already waited for the display: run the next frame right away. Sleeping
+         * most of the refresh first (poll input late, present just in time) made presents miss
+         * their refresh, each one a frame shown twice and 17 ms off the audio queue - measured
+         * on QS, windowed, 60 Hz MacBook display, 1800 frames of 0.5 ms work each: 3
+         * misses with no sleep, 4 at 4 ms, 13 at 8 and 10 ms, 39 to 367 at 12 ms (auto slept
+         * about 11.5 ms). So only an explicit PS_FRAME_DELAY=<ms> sleeps here. */
         s_next = 0;
-        if (s_delay_mode != 0) {
+        if (s_delay_mode > 0) {
             double period_ms = 1000.0 / 60.0 * s_repeat;
-            double lead_ms = s_delay_mode > 0 ? period_ms - s_delay_mode : s_cost_ms * 1.5 + 4.0;   /* 4 ms: macOS sleeps can wake late */
+            double lead_ms = period_ms - s_delay_mode;
             uint64_t until = s_vsync_t + (uint64_t)((period_ms - lead_ms) * (double)freq / 1000.0);
             while (SDL_GetPerformanceCounter() + freq / 500 < until) SDL_Delay(1);
             while (SDL_GetPerformanceCounter() < until) ;

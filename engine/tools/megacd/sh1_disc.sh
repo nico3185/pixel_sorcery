@@ -14,15 +14,28 @@ here=${0:A:h}; root=$here/../../..
 work=${1:?usage: sh1_disc.sh WORK OUTPREFIX}; out=${2:?usage: sh1_disc.sh WORK OUTPREFIX}
 rom=${ROM:-$root/../roms/sh1.bin}; py=$root/engine/.venv/bin/python; g=$root/games/sh1
 t=$work/s1z; mkdir -p $t
+# boot evidence (frames 0-60, which the captures skip for the checksum loop that reads the whole ROM): only
+# its executed half, so the boot code's operands count as run (--strict-imm: VDPSetupGame's move.w $12A0)
+if [[ ! -d $work/ev/boot ]]; then
+  ninja -C $g/build-trace >/dev/null
+  mkdir -p $work/ev/boot
+  PS_ROMUSE=$work/ev/boot PS_ROMUSE_FROM=0 $g/build-trace/genrecomp_build/genrecomp_trace --headless --frames 60 \
+    --trace-out /dev/null $rom >/dev/null 2>&1
+  for f in $work/ev/boot/*.bin(N); do $py -c "
+import sys; d = bytearray(open(sys.argv[1], 'rb').read()); d[2 + 65536:] = bytes(len(d) - 2 - 65536)
+open(sys.argv[1], 'wb').write(d)" $f; done
+fi
 m68k-elf-as -m68000 --defsym DESC=0x23FF00 -o $t/sw.o $here/swap.s
 m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $t/swap.bin $t/sw.o
 python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex('00200B10' '00201126' '00200388' '00FFFE00'))" > $t/desc.bin
-common=(--data 071990-0719CC --data 071A9C-071AE8 --data 078B44-078C08
+m68k-elf-as -m68000 -o $t/sega.o $here/games/sh1_sega.s && m68k-elf-ld -Ttext=0x23E200 --oformat=binary -o $t/sega.bin $t/sega.o
+common=(--strict-imm --data 071990-0719CC --data 071A9C-071AE8 --data 078B44-078C08
         --patch 33A=4E714E71 --patch 356=0080 --patch 36E=3F3F --patch D922=003F
         --patch D700=4EB90023E000 --blob 23E000=$work/s1_bs.bin
+        --patch 2F10=4EF90023E200 --blob 23E200=$t/sega.bin
         --patch 388=4EB90023F0004E714E714E71 --patch 37A2=4EF90023F004 --blob 23FF00=$t/desc.bin)
 helper() {  # NAME ZONE ZONE2 MODES [--defsym ACTMIN=.. / ACTMAX=..]
-  m68k-elf-as -m68000 -I $t --defsym ZONE=$2 --defsym ZONE2=$3 --defsym MODES=$4 ${@:5} -o $t/h$1.o $here/games/sh1_zone.s
+  m68k-elf-as -m68000 -I $t --defsym ZONE=$2 --defsym ZONE2=$3 --defsym MODES=$4 --defsym VBLFIX=${VBLFIX:-1} ${@:5} -o $t/h$1.o $here/games/sh1_zone.s
   m68k-elf-ld -Ttext=0x23F000 --oformat=binary -o $t/h$1.bin $t/h$1.o; }
 # the sound tables' pointers, played or not (MusicIndex $071A9C: 19 songs, the effects $078B44: 49, the PSG
 # envelopes $071990: 15): an effect no capture heard would keep its cartridge address and send the driver
@@ -90,6 +103,7 @@ starts = sorted(set(songs + sfx)); ends = dict(zip(starts, starts[1:] + [0x07970
 # life $88, act clear $8E), and the drowning countdown ($92) in the water zone (1: Labyrinth, SBZ act 3)
 keep = set(sfx) | {songs[m - 0x81] for m in (0x87, 0x88, 0x8E)} | ({songs[0x92 - 0x81]} if z == 1 else set())
 keep |= {lo for lo in songs if u[lo:ends[lo]].any()}
+if z <= 4: keep |= set(songs)   # room for every song (a boss or an act's own music the captures missed)
 args = []
 for lo in sorted(keep):
     args += ['--force', '%06X-%06X' % (lo, ends[lo]), '--rigid', '%06X-%06X' % (lo, ends[lo])]

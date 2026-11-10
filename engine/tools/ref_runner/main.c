@@ -56,7 +56,9 @@ static void pc_hook(hook_type_t t, int w, unsigned int a, unsigned int v) {
     /* PS_BADREAD: a disc game's reads where none of its data is (BIOS ROM $000200-$01FFFF, $040000-$1FFFFF)
      * while its own code runs: a pointer the relocation left at its cartridge address (first 64, distinct) */
     if (t == HOOK_M68K_R && s_badread && ((lastpc >= 0x020000 && lastpc < 0x040000) || (lastpc >= 0x200200 && lastpc < 0x240000))) {   /* not the menu ($200000+) */
-        unsigned x = a & 0xFFFFFF; static unsigned seen[64]; static int ns;
+        unsigned x = a & 0xFFFFFF; static unsigned seen[64]; static int ns; static unsigned sk_lo = 1, sk_hi; static int sk_init;
+        if (!sk_init++) { const char *e = getenv("PS_BADREAD_SKIP"); if (e) sscanf(e, "%x-%x", &sk_lo, &sk_hi); }   /* PCs left out (a checksum loop) */
+        if (lastpc >= sk_lo && lastpc < sk_hi) return;
         if ((x >= 0x200 && x < 0x020000) || (x >= 0x040000 && x < 0x200000)) {
             int k; for (k = 0; k < ns && seen[k] != (lastpc << 8 ^ x); k++) ;
             if (k == ns && ns < 64) { seen[ns++] = lastpc << 8 ^ x; fprintf(stderr, "ref: bad read %06X at PC %06X\n", x, lastpc); }

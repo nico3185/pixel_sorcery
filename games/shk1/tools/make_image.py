@@ -81,6 +81,12 @@ def main():
     a = sys.argv[1:]
     if a and a[0] == '--syms':
         write_syms(a[1]); return
+    # --slots A,B,C,D: the 4 line-0 slots his own colours go to on a console (the palette swap). Default
+    # 3,10,11,14: the slots SH1's other objects use least (2% of their line-0 pixels in the census,
+    # against 11.5% for Sonic's 2-5); --slots 2,3,4,5: the classic swap over Sonic's blues
+    T = [int(v) for v in a[a.index('--slots') + 1].split(',')] if '--slots' in a else [3, 10, 11, 14]
+    a = [x for i, x in enumerate(a) if x != '--slots' and (i == 0 or a[i - 1] != '--slots')]
+    assert len(T) == 4 and all(1 <= t <= 15 for t in T)
     s1p, k2p, outp = a[:3]
     s1, k2 = open(s1p, 'rb').read(), open(k2p, 'rb').read()
     for name, data, want in (('SH1', s1, CFG['sh1_sha1']), ('SHK2', k2, CFG['shk2_sha1'])):
@@ -269,10 +275,16 @@ def main():
     rgb = lambda c: ((c >> 1) & 7, (c >> 5) & 7, (c >> 9) & 7)
     dist = lambda a, b: sum((x - y) ** 2 for x, y in zip(rgb(a), rgb(b)))
     slot_d = [0] + [min([1] + list(range(6, 16)), key=lambda t: dist(kpal[s], s1pal[t])) for s in range(1, 16)]
-    target = list(s1pal); target[2:6] = kpal[2:6]
-    slot = list(range(16))
-    for s in (14, 15):
-        slot[s] = min(range(2, 16), key=lambda t: dist(kpal[s], target[t]))
+    target = list(s1pal)
+    for i, t in enumerate(T): target[t] = kpal[2 + i]
+    if T == [2, 3, 4, 5]:                      # the classic swap: his slots as SHK2's, 14/15 on the nearest
+        slot = list(range(16))
+        for s in (14, 15):
+            slot[s] = min(range(2, 16), key=lambda t: dist(kpal[s], target[t]))
+    else:                                      # his 4 colours in T, every other colour of his on the nearest
+        slot = [0] + [min([t for t in range(1, 16) if t not in T], key=lambda t: dist(kpal[s], s1pal[t]))
+                      for s in range(1, 16)]   # SH1 colour outside T
+        for i, t in enumerate(T): slot[2 + i] = t
     rm = H(P['remap'])
     art = H(P['art'])
     for base, sl in ((L['art'], slot_d), (L['art2'], slot)):
@@ -291,16 +303,17 @@ def main():
         if (s1w, kw) not in pairs:
             pairs.append((s1w, kw))
     for d in P['dry']:
-        add(tuple(w(s1, H(d) + 2 * i) for i in range(2, 6)), tuple(kpal[2:6]))
+        add(tuple(w(s1, H(d) + 2 * t) for t in T), tuple(kpal[2:6]))
     for wet, dry in P['wet']:
         wa, da = H(wet), H(dry)
         kw = []
-        for i in range(2, 6):
-            sd, sw = rgb(w(s1, da + 2 * i)), rgb(w(s1, wa + 2 * i))
+        for i, t in zip(range(2, 6), T):
+            sd, sw = rgb(w(s1, da + 2 * t)), rgb(w(s1, wa + 2 * t))
             k = rgb(kpal[i])
             c = [max(0, min(7, k[j] + sw[j] - sd[j])) for j in range(3)]
             kw.append((c[0] << 1) | (c[1] << 5) | (c[2] << 9))
-        add(tuple(w(s1, wa + 2 * i) for i in range(2, 6)), tuple(kw))
+        add(tuple(w(s1, wa + 2 * t) for t in T), tuple(kw))
+    img[0x957F8:0x95800] = struct.pack('>4H', *[2 * t for t in T])   # KCOL_SLOTS (k1.s, the native main.c)
     pt = L['paltab']
     img[pt:pt + 2] = struct.pack('>H', len(pairs) - 1)
     for n_, (a_, b_) in enumerate(pairs):
@@ -341,6 +354,36 @@ def main():
         sys.exit('monitor')
     img[at:at + len(packed)] = packed
     img[H(hud['mon_s1_plc']):H(hud['mon_s1_plc']) + 4] = struct.pack('>I', at)
+
+    # other objects' art away from his 4 slots (CFG 'reindex', default slots only): pixels there go to the
+    # nearest other colour of SH1's line 0; each art re-encoded at 'at' up, its PLC entries repointed
+    RX = CFG.get('reindex')
+    if RX and T == RX['slots']:
+        near = list(range(16))
+        for t in T: near[t] = min([c for c in range(1, 16) if c not in T], key=lambda c: dist(s1pal[t], s1pal[c]))
+        rx = lambda data: bytes((near[b >> 4] << 4) | near[b & 15] for b in data)
+        want = {H(x) for x in RX['art']}; mon_at = struct.unpack('>I', img[H(hud['mon_s1_plc']):H(hud['mon_s1_plc']) + 4])[0]
+        if H(hud['mon_s1_art']) in want: want.add(mon_at)
+        at_ = H(RX['at']); done = {}
+        T0 = 0x1D612                             # ArtLoadCues: lists of (art, VRAM) entries
+        for i_ in range(32):
+            la = T0 + w(img, T0 + 2 * i_)
+            for j_ in range(w(img, la) + 1):
+                e_ = la + 2 + 6 * j_; ptr = struct.unpack('>I', img[e_:e_ + 4])[0]
+                if ptr not in want: continue
+                if ptr not in done:
+                    tl, _ = nemesis.decode(img, ptr)
+                    if ptr == mon_at:            # his face (tiles mt..mt+3) keeps his slots
+                        mt = H(hud['mon_face_tile'])
+                        tl = rx(tl[:32 * mt]) + tl[32 * mt:32 * (mt + 4)] + rx(tl[32 * (mt + 4):])
+                    else:
+                        tl = rx(tl)
+                    pk = nemesis.encode(tl)
+                    if nemesis.decode(pk)[0] != tl or at_ + len(pk) > 0x0C0000:
+                        sys.exit('reindex: art %06X' % ptr)
+                    img[at_:at_ + len(pk)] = pk; done[ptr] = at_; at_ = (at_ + len(pk) + 1) & ~1
+                img[e_:e_ + 4] = struct.pack('>I', done[ptr])
+        print('re-indexed %d art pieces away from slots %s (%d bytes)' % (len(done), T, at_ - H(RX['at'])), file=sys.stderr)
 
     # act results "KNUCKLES HAS", special stage "KNUCKLES GOT THEM ALL": SH1's title-card font
     # (letter -> first tile; I is 8 wide), each text a new frame in a copy of its mapping table

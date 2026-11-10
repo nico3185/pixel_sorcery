@@ -57,6 +57,7 @@ case $game in
     driver=ram:12D0:D6:48:B65:33; front=0+2C+34+38+48; frontsw=; zone=; zonesw=; card=5; zgroup= ;;
   *) print -u2 "unknown game $game"; exit 2 ;;
 esac
+nopoke=${nopoke:-0}                               # only SHBS sets it (its lives/timer RAM differ)
 zwin=${zwin:-47,46,45,44}                         # word RAM windows for the sound driver's banks
 nearsz=${nearsz:-0x200}; gapsz=${gapsz:-0x800}     # table margin, data merge gap (zonepack.py)
 py=$root/engine/.venv/bin/python; g=$root/games/${gdir:-$game}   # project (recomp.json, tracer)
