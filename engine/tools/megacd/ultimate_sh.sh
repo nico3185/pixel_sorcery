@@ -43,8 +43,8 @@ run() {  # item: level select ($FFE0 = 1, cursor $FF83), A+START at the title, S
     --trace-out /dev/null $rom >/dev/null 2>&1
 }
 for i in $(seq 0 19); do run $i & if (( (i + 1) % 4 == 0 )); then wait; fi; done; wait
-for p in $g/sessions/*.polls(N); do
-  d=$work/ev/$(basename $p .polls); mkdir -p $d; n=$(wc -l < $p)
+for p in $g/sessions/*.polls(N) $g/recordings/start-*.polls(N); do   # your sessions, the level-select starts
+  d=$work/ev/rec-$(basename $p .polls); mkdir -p $d; n=$(wc -l < $p)
   PS_ROMUSE=$d PS_ROMUSE_FROM=60 PS_PTRS=$d/ptrs.txt PS_POLL_REPLAY=$p \
     $tr --headless --frames $((n * 2 + 600)) --trace-out /dev/null $rom >/dev/null 2>&1 &
 done; wait
@@ -55,11 +55,8 @@ print "2/5 BuildSprites helper"
 m68k-elf-as -m68000 -o $work/bs.o $here/games/sh1_buildsprites.s
 m68k-elf-ld -Ttext=0x23E000 --oformat=binary -o $work/s1_bs.bin $work/bs.o
 
-print "3/5 relocation"
-( cd $g && $py $here/relocate.py $rom recomp.json $work/s1cd --ptrs $work/ptrs.txt $ex --all-code \
-    --map 000000-03DCF2=200000,060000-07C000=020000,03DCF2-041800=03C000 \
-    --patch 33A=4E714E71 --patch 356=0080 --patch 36E=3F3F --patch D922=003F \
-    --patch D700=4EB90023E000 --blob 23E000=$work/s1_bs.bin | head -1 )
+print "3/5 relocation: one image per zone (sh1_disc.sh)"
+ROM=$rom $here/sh1_disc.sh $work $work/s1 | tail -1
 
 print "4/5 menu art"
 if [[ $pic == *.bin ]]; then cp $pic $work/menu_art.bin    # an already converted menu (menu_art.py's output)
@@ -81,6 +78,10 @@ bs=(); if [[ -f ${ROM5:-$root/../roms/shk_sh1.bin} && -f ${ROM4:-$root/../roms/s
   ROM=${ROM4:-$root/../roms/shk.bin} ROM1=$rom EVROM=${ROM5:-$root/../roms/shk_sh1.bin} \
     $here/s3engine_disc.sh shbs $work/bs | tail -1
   bs=(--game 5:$work/bs.front); fi
+# a card whose images did not build is left off the disc (said so), the others still go on it
+have() { for x in "$@"; do [[ $x == *:* && $x != --* ]] && { [[ -f ${x#*:}.trapcart.md ]] || return 1; }; done; return 0; }
+for v in s2 s3 sk k3 bs; do eval "a=(\${$v[@]:-})"; (( ${#a} )) && ! have $a && { print -u2 "  card left out ($v): its images did not build"; eval "$v=()"; }; done
 python3 $here/build_disc.py $scd $out/ultimate.iso --region E --menu $work/menu_art.bin \
-  --game 1:$work/s1cd $s2 $s3 $sk $bs $k3 --scd $scd | tail -2
+  --game 1:$work/s1.front --image 13:$work/s1.zone1 --image 14:$work/s1.zone2 --image 15:$work/s1.zone3 \
+  --image 16:$work/s1.zone4 --image 17:$work/s1.zone5 --image 18:$work/s1.zone6 $s2 $s3 $sk $bs $k3 --scd $scd | tail -2
 print "play: GENRECOMP_REGION=2 $g/build-trace/genrecomp_build/genrecomp_ref '$out/ultimate.cue'"

@@ -17,7 +17,7 @@
  * palette with the nearest colours, 2 extended - the native default (owner: palette expansion for the
  * Mac/PC builds): his own-colour art, SH1's palette untouched, and the renderer gives his tiles (Sonic's
  * art, VRAM tile $780 up) his colours from K_PALTAB ($95800: count - 1, then per palette and its water
- * version SH1's slots 2-5 and his), so nothing else sharing Sonic's slots changes */
+ * version SH1's colours in his 4 slots - KCOL_SLOTS $957F8 - and his), so nothing else sharing them changes */
 #define KCOL_ROM 0x095FFE
 #define K_PALTAB 0x095800
 static bool kcol_extended(void) { return bus_read16(KCOL_ROM) == 2; }
@@ -33,7 +33,8 @@ static void kcol_init(void) {
     for (int i = 0; i < e && n + 4 <= 64; i++)
         for (int k = 0; k < 4; k++) {
             uint32_t at = K_PALTAB + 2 + (uint32_t)i * 16;
-            pairs[n][0] = (uint16_t)(2 + k); pairs[n][1] = bus_read16(at + 2 * k); pairs[n][2] = bus_read16(at + 8 + 2 * k); n++;
+            pairs[n][0] = (uint16_t)(bus_read16(0x0957F8 + 2 * (uint32_t)k) / 2);   /* KCOL_SLOTS: his 4 slots */
+            pairs[n][1] = bus_read16(at + 2 * k); pairs[n][2] = bus_read16(at + 8 + 2 * k); n++;
         }
     ps_render_set_sprite_colours(0x780, 0x800, (const uint16_t (*)[3])pairs, n, kcol_extended);   /* him, his lives icon */
     ps_render_add_sprite_tiles(0x6A0, 0x6B8, signpost);

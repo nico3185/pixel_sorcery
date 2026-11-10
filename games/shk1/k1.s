@@ -12,7 +12,8 @@
 	.equ	K_DPLCTAB,	0x8C000		| Knuckles' DPLC (SHK format: word count, words)
 	.equ	K_ART,		0xC0000		| Knuckles' art on SH1's own colours (default)
 	.equ	K_ART2,		0xE0000		| ... on his colours (option KNUCKLES COLOURS)
-	.equ	K_PALTAB,	0x95800		| SH1's slots 2-5 -> his (make_image.py)
+	.equ	K_PALTAB,	0x95800		| SH1's colours in his 4 slots -> his (make_image.py)
+	.equ	KCOL_SLOTS,	0x957F8		| his 4 slots, as byte offsets in a palette line (make_image.py --slots)
 	.equ	KCOL_ROM,	0x95FFE		| ROM word, Knuckles' colours: 1 palette swap (the image's default: his
 					| colours in slots 2-5), 0 SH1's palette, nearest colours (KNUCKLES 16 COLOURS)
 	.equ	KCOL_ART,	0xFFD5		| art set last loaded (0 / $FF)
@@ -273,7 +274,8 @@ K_DPLC:
 	move.b	#1,0xF767.w
 9:	rts
 
-K_ColSync:				| KNUCKLES COLOURS option: art set and palette slots 2-5
+K_ColSync:				| Knuckles' colours (KCOL_ROM): art set, and his 4 palette slots (KCOL_SLOTS)
+	movem.l	%d2-%d4/%a4,-(%sp)
 	tst.w	KCOL_ROM
 	sne	%d0
 	cmp.b	KCOL_ART.w,%d0
@@ -282,32 +284,36 @@ K_ColSync:				| KNUCKLES COLOURS option: art set and palette slots 2-5
 	move.b	#0xFF,0xF766.w		| reload the frame's tiles from the other art set
 3:	lea	K_PALTAB,%a1
 	move.w	(%a1)+,%d1
-4:	lea	0xFB04.w,%a2		| palette buffer, its fade target, the water palette
+4:	lea	0xFB00.w,%a2		| palette buffer, its fade target, the water palette
 	bsr.s	5f
-	lea	0xFB84.w,%a2
+	lea	0xFB80.w,%a2
 	bsr.s	5f
-	lea	0xFA84.w,%a2
+	lea	0xFA80.w,%a2
 	bsr.s	5f
 	lea	16(%a1),%a1
 	dbf	%d1,4b
+	movem.l	(%sp)+,%d2-%d4/%a4
 	rts
-5:	movea.l	%a1,%a3			| swap: SH1's 4 colours there -> his; else: his -> SH1's
+5:	lea	KCOL_SLOTS,%a4		| swap: SH1's 4 colours there -> his; else: his -> SH1's
+	movea.l	%a1,%a3			| entry: SH1's 4 words, then his 4
 	cmpi.w	#1,KCOL_ROM
-	bne.s	6f
-	cmpm.l	(%a3)+,(%a2)+
-	bne.s	7f
-	cmpm.l	(%a3)+,(%a2)+
-	bne.s	7f
-	move.l	(%a3)+,-8(%a2)
-	move.l	(%a3)+,-4(%a2)
-	rts
-6:	addq.w	#8,%a3
-	cmpm.l	(%a3)+,(%a2)+
-	bne.s	7f
-	cmpm.l	(%a3)+,(%a2)+
-	bne.s	7f
-	move.l	(%a1),-8(%a2)
-	move.l	4(%a1),-4(%a2)
+	beq.s	51f
+	addq.w	#8,%a3			| restore: look for his
+51:	moveq	#3,%d2
+52:	move.w	(%a4)+,%d3
+	move.w	(%a2,%d3.w),%d4
+	cmp.w	(%a3)+,%d4
+	bne.s	7f			| not this palette's colours (or already done)
+	dbf	%d2,52b
+	lea	KCOL_SLOTS,%a4
+	lea	8(%a1),%a3		| write his, or (restore) SH1's
+	cmpi.w	#1,KCOL_ROM
+	beq.s	53f
+	movea.l	%a1,%a3
+53:	moveq	#3,%d2
+54:	move.w	(%a4)+,%d3
+	move.w	(%a3)+,(%a2,%d3.w)
+	dbf	%d2,54b
 7:	rts
 
 K_VBDMA:				| a5 = VDP control port, as in SH1's VBlank

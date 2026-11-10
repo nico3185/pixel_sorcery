@@ -57,6 +57,8 @@ level:
 	jmp	0x2037A8                        | then the rest of Level (ROM $37A8)
 switch:
 	move.w	#0x2700, %sr
+	subq.l	#VBLFIX, 0xFFFFFE0C              | v_vbla_count: a VBlank falls during the load, stays pending
+	                                        |  and fires as the new image starts - not a frame of the game's
 	lea	0xFFFE00, %sp                   | Level is reached with a deep stack: it would run over the
 	                                        | copied stub - nothing on it has to survive the switch
 	lea	stub(%pc), %a0

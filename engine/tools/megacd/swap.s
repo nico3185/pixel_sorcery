@@ -8,6 +8,8 @@
 |   bank 1 selected; the new image's descriptor at $200500 (VBlank, HBlank, entry, stack) goes
 |   into the BIOS's jump slots; the Z80 resumes and the entry runs (the game's main loop: its
 |   RAM - game mode, zone - says where it is).
+	| copied to $FFFD20 (thunk.s, sh1_zone.s); it enters the new image with rte, so no interrupt runs on
+	| the new stack while this stub is still needed
 	.ifndef	DESC
 	.set	DESC, 0x200500                  | the image's descriptor (SH1: --defsym DESC=0x23FF00)
 	.endif
@@ -47,5 +49,6 @@ _start:
 	move.w	#0x8004, 0xC00004               | HBlank interrupts off: a handler address the game
 	move.w	#0, (%a3)                       |  keeps in RAM belongs to the old image; the new
 	                                        |  image's level init sets HBlank up again
-	move.w	#0x2300, %sr
-	jmp	(%a1)
+	move.l	%a1, -(%sp)                     | entry and SR $2300 at once (rte): a VBlank between enabling
+	move.w	#0x2300, -(%sp)                 |  interrupts and the jump ran the game's handler on the new
+	rte                                     |  stack, over this stub's tail (Labyrinth: then a crash)
