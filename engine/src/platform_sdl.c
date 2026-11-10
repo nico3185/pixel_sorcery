@@ -456,18 +456,20 @@ void platform_present_frame_w(const uint8_t *framebuffer, int width) {
         if (pm > s_present_max) s_present_max = pm;
         static uint64_t win_t0;
         if (!win_t0) win_t0 = t0;
-        if (++n % 60 == 0) {
+        static int win_n;                      /* presents in this window: 8 for the first (a second on the timer
+                                                * with vsync also waiting doubled frames at every start), then 60 */
+        if (++win_n == (n < 8 ? 8 : 60) && (n += win_n)) {
             /* timer -> locked: a present waited for the display (> 4 ms, at least once a
              * second); locked -> timer: frames came faster than the display (the present
              * stopped blocking), averaged over the second */
-            double avg = ms_since(win_t0) / 60.0, period = 1000.0 / 60.0 * (s_repeat ? s_repeat : 1);
+            double avg = ms_since(win_t0) / win_n, period = 1000.0 / 60.0 * (s_repeat ? s_repeat : 1);
             win_t0 = SDL_GetPerformanceCounter();
             bool lock = s_vsync && s_repeat && (s_locked ? avg > 0.8 * period : s_present_max > 4.0);
             if (lock != s_locked && getenv("PS_SLOW_LOG"))
                 fprintf(stderr, "pacing: %s (present waits up to %.1f ms, %d refresh(es) per frame)\n",
                         lock ? "locked to the display" : "timer at 59.92 Hz", s_present_max, s_repeat);
             s_locked = lock;
-            s_present_max = 0;
+            s_present_max = 0; win_n = 0;
         }
     }
     {   /* PS_SLOW_LOG: a gap of more than 25 ms between two presents is a missed refresh */
@@ -518,7 +520,9 @@ void platform_queue_audio(const int16_t *samples, int sample_count) {
             static int16_t silence[735 * 2 * 2];   /* two frames: one left the start a frame from dry again */
             SDL_QueueAudio(s_audio_dev, silence, sizeof silence);
             queued += 735 * 2;
-            s_aq_dry++;
+            static int started;                /* the first call finds it empty: the start, not a dry queue */
+            if (started) s_aq_dry++;
+            if (started++ && getenv("PS_SLOW_LOG")) fprintf(stderr, "audio: queue dry at frame %ld (%s)\n", s_frame_no, s_locked ? "display-paced" : "timer");
         }
         static double ratio = 1.0, phase;      /* input samples per output sample */
         double want = 1.0 + ((double)queued - target) / target * 0.01;
