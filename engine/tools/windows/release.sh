@@ -27,7 +27,10 @@ mkdir -p $st && (cd $st && unzip -q $out/$name.zip)
 tree=$st/$name
 mkdir -p $tree/engine/.venv/bin
 printf '#!/bin/sh\nexport PYTHONUTF8=1\nexec /mingw64/bin/python "$@"\n' > $tree/engine/.venv/bin/python; chmod +x $tree/engine/.venv/bin/python
-(cd $tree && zsh engine/tools/build_all.sh --roms $roms $smoke) | tail -3
+# as many compilers as free memory holds (build_all.sh does the same from 0.7.2; an older snapshot does not)
+jobs=$(nproc); mem=$(awk '/^MemAvailable:/ {a = $2} /^MemFree:/ {f = $2} END {print a ? a : f}' /proc/meminfo)
+(( mem / 1500000 < jobs )) && jobs=$(( mem / 1500000 > 0 ? mem / 1500000 : 1 ))
+(cd $tree && zsh engine/tools/build_all.sh -j $jobs --roms $roms $smoke) | tail -3
 exe=$(cd $tree/games/$smoke && python -c "import json,sys;sys.stdout.write(json.load(open('sidebyside.json'))['exe'])")
 rom=$(cd $tree/games/$smoke && python -c "import json,sys;sys.stdout.write(json.load(open('sidebyside.json'))['rom'])")
 (cd $tree/games/$smoke && timeout 300 ./$exe.exe --headless --frames 1200 $(cat selfcheck.args 2>/dev/null) $tree/../roms/$rom >/dev/null 2>&1) \

@@ -56,9 +56,15 @@ static void pc_hook(hook_type_t t, int w, unsigned int a, unsigned int v) {
     /* PS_BADREAD: a disc game's reads where none of its data is (BIOS ROM $000200-$01FFFF, $040000-$1FFFFF)
      * while its own code runs: a pointer the relocation left at its cartridge address (first 64, distinct) */
     if (t == HOOK_M68K_R && s_badread && ((lastpc >= 0x020000 && lastpc < 0x040000) || (lastpc >= 0x200200 && lastpc < 0x240000))) {   /* not the menu ($200000+) */
-        unsigned x = a & 0xFFFFFF; static unsigned seen[64]; static int ns; static unsigned sk_lo = 1, sk_hi; static int sk_init;
-        if (!sk_init++) { const char *e = getenv("PS_BADREAD_SKIP"); if (e) sscanf(e, "%x-%x", &sk_lo, &sk_hi); }   /* PCs left out (a checksum loop) */
-        if (lastpc >= sk_lo && lastpc < sk_hi) return;
+        unsigned x = a & 0xFFFFFF; static unsigned seen[64]; static int ns; static unsigned sk[4][2]; static int sk_n = -1;
+        if (sk_n < 0) {                            /* PS_BADREAD_SKIP=LO-HI[,LO-HI...]: PCs left out (a checksum loop, the menu) */
+            sk_n = 0;
+            for (const char *e = getenv("PS_BADREAD_SKIP"); e && *e && sk_n < 4; ) {
+                if (sscanf(e, "%x-%x", &sk[sk_n][0], &sk[sk_n][1]) == 2) sk_n++;
+                e = strchr(e, ','); if (e) e++;
+            }
+        }
+        for (int q = 0; q < sk_n; q++) if (lastpc >= sk[q][0] && lastpc < sk[q][1]) return;
         if ((x >= 0x200 && x < 0x020000) || (x >= 0x040000 && x < 0x200000)) {
             int k; for (k = 0; k < ns && seen[k] != (lastpc << 8 ^ x); k++) ;
             if (k == ns && ns < 64) { seen[ns++] = lastpc << 8 ^ x; fprintf(stderr, "ref: bad read %06X at PC %06X\n", x, lastpc); }
@@ -74,6 +80,11 @@ static void pc_hook(hook_type_t t, int w, unsigned int a, unsigned int v) {
     prev = a;
     if (a >= 0x020000 && a < 0x240000) game = 1;
     else if (game && (a < 0x020000 || (a >= 0xFFFD18 && a < 0xFFFD20))) frozen = 1;   /* $FFFD20+: an image switch stub (swap.s) */
+    {   /* PS_PCRING_STOP=LO-HI: also freeze when the PC enters that range (SH2 on the disc: an exception lands in
+         * the BIOS's slots past $FFFD7E, inside the switch stub's area, so the default rule never fires) */
+        static unsigned lo = 1, hi; if (lo == 1) { const char *e = getenv("PS_PCRING_STOP"); if (!e || sscanf(e, "%x-%x", &lo, &hi) != 2) lo = hi = 0; }
+        if (game && a >= lo && a < hi) frozen = 1;
+    }
 }
 #endif
 
@@ -219,6 +230,7 @@ int main(int argc, char *argv[]) {
         const uint8_t *src = bitmap.data + bitmap.viewport.y * bitmap.pitch + bitmap.viewport.x * 4;
         for (int y = 0; y < h; y++)
             memcpy(present + y * GEN_RENDER_WIDTH * 4, src + y * bitmap.pitch, (size_t)w * 4);
+        { extern long ps_frames; ps_frames++; }   /* frames since power-on: the frame column of PS_WATCH and PS_CHECKPOINTS */
         {   /* PS_FRAMES_DIR=DIR [PS_FRAMES_EVERY=N]: PNGs of the frames, for headless checks */
             static const char *fd; static long every, fn; static int init;
             if (!init) { init = 1; fd = getenv("PS_FRAMES_DIR"); every = getenv("PS_FRAMES_EVERY") ? atol(getenv("PS_FRAMES_EVERY")) : 60; if (every < 1) every = 1; }
@@ -235,7 +247,8 @@ int main(int argc, char *argv[]) {
                 if (f) { uint8_t r[0x10000];
                          for (int i = 0; i < 0x10000; i += 2) { r[i] = work_ram[i + 1]; r[i + 1] = work_ram[i]; }  /* GPGX keeps words byte-swapped */
                          fwrite(r, 1, sizeof r, f); fwrite(cram, 1, sizeof cram, f);
-                         for (int k = M68K_REG_D0; k <= M68K_REG_PC; k++) { uint32_t v = m68k_get_reg((m68k_register_t)k); fwrite(&v, 4, 1, f); }
+                         for (int k = M68K_REG_D0; k <= M68K_REG_SR; k++) { uint32_t v = m68k_get_reg((m68k_register_t)k); fwrite(&v, 4, 1, f); }   /* D0-D7, A0-A7, PC, SR */
+                         if (getenv("PS_RAMDUMP_VDP")) { fwrite(reg, 1, 0x20, f); fwrite(&vint_pending, 1, 1, f); fwrite(&status, 2, 1, f); }   /* PS_RAMDUMP_VDP=1: VDP registers, VInt pending, status */
 #ifdef HOOK_CPU
                          for (int k = 0; k < 512; k++) fwrite(&s_pcring[(s_pcpos + k) & 511], 4, 1, f);
 #endif

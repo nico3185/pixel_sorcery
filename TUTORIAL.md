@@ -139,3 +139,63 @@ cd games/coi && PS_POLL_REPLAY=movies/play-XXXX.polls ./build/coi --headless --f
    with §3 until every recording matches.
 5. Widescreen: find gameplay state, map id and camera X/Y by correlating RAM snapshots with
    the scroll registers (as done for COI), register them with `ps_wide_set_game`.
+
+## 7. Build routes and collection launchers
+
+From the repository root, `make` lists the common routes. `make all` first prepares ROMs: recognized dumps are linked into `../roms`, available lock-on
+images (SHK2, SH3K and SHBS) are created, and SHK1 (`shk1.bin`)
+is refreshed from SH1 REV00 + SHK2. It then builds available native cartridge ports and
+other derived outputs whose local inputs are present. It auto-detects the SHCD cue at
+`ROM_DIR/cd/shcd/shcd.cue`; override with `SONICCD_DISC=...` if needed. If the SHCD cue is present at `ROM_DIR/cd/shcd/shcd.cue` and its matching BIOS is
+available, it builds the native SHCD executable. If you set `COMPILATION_DISC` to your Europe
+SHCD cue and `MENU_IMAGE`, it also builds the Ultimate SH Mega CD compilation to
+`build/ultimate-sh`. Missing optional inputs print a `SKIP` line. Example:
+
+```sh
+make all
+make all COMPILATION_DISC="/path/SHCD (Europe).cue" MENU_IMAGE="/path/menu.png"
+```
+
+`make build TITLE=shk1` (or `TITLE=shk1`) builds SHK1 as a **native desktop
+port**; `make play TITLE=shk1` runs it. `make shk1-rom` builds the Knuckles-in-Sonic-1 **Genesis cartridge image** alone;
+`make shbs-rom` builds the SHBS lock-on image. `make build-all` builds only the available native cartridge ports. `make check TITLE=shk1`
+regenerates, builds and runs its self-check. `make shcd DISC=/path/to/disc.cue` builds the
+native SHCD executable; generation also requires the matching Mega CD BIOS via `PS_SCD_BIOS`
+or the platform's PixelSorcery BIOS folder. `make sh-compilation COMPILATION_DISC=... MENU_IMAGE=...`
+explicitly builds the Ultimate SH disc. `make play TITLE=shcd` is the build-and-play route when
+the disc is installed at the path in `games/shcd/sidebyside.json`.
+
+The SH Collection configuration includes SHK1. Build its game first, then
+package the collection on the target operating system:
+
+```sh
+# macOS: creates launchers/build/SH Collection.app
+make launcher-macos
+
+# Linux: creates the Linux shelf under launchers/build/linux and opens it
+make launcher-linux
+
+# Windows, from MSYS2 MinGW64: creates the Windows shelf under launchers/build/win and opens it
+make launcher-windows
+```
+
+The shelf includes only title executables that have already been built for that operating
+system. The macOS app bundles SDL; Linux uses system SDL2 and zlib; Windows bundles the
+available SDL2/zlib and MinGW runtime DLLs. These are per-platform builds, not cross-compilers.
+For the distributable PixelSorcery app itself, platform packaging routes are
+`engine/tools/macapp/make_dmg.sh`, `engine/tools/linux/make_deb.sh`, and
+`engine/tools/windows/make_zip.sh` (Windows release packaging runs in MSYS2 MinGW64).
+
+### Local build results and constraints
+
+On the macOS checkout used for this guide, `make all` built all 13 available cartridge ports
+with four jobs. ROM preparation found the local lock-on images and SHK1 Genesis ROM. The local
+Japanese SHCD cue and matching BIOS were available: `shcd_native` compiled successfully.
+The Ultimate SH disc was skipped because its explicit Europe cue and menu image were not supplied.
+The full aggregate run completed in about 154 seconds; the SHCD generation step reported
+its generated C was already up to date.
+
+The launcher/package targets are host-platform routes: macOS uses `make launcher-macos` and
+`make package-macos`, Linux uses the corresponding `-linux` targets, and Windows uses
+`-windows` from MSYS2 MinGW64. The aggregate build was run on macOS; Linux and Windows builds
+were not run in this check. These routes are listed in `make help`.

@@ -114,6 +114,11 @@ static void ru_hook(hook_type_t type, int width, unsigned int address, unsigned 
         if (from < 0) { const char *f = getenv("PS_ROMUSE_FROM"); from = f ? atol(f) : 0; }
         if (ps_frames < from) return;
     }
+    {   /* PS_ROMUSE_LEVEL=1: only while the game mode ($FFF600, loading bit aside) is a level ($08 demo, $0C) -
+         * a zone's own needs, without the title and menus that run with the same zone value (SH2/3) */
+        static int lv = -1; if (lv < 0) lv = getenv("PS_ROMUSE_LEVEL") && atoi(getenv("PS_ROMUSE_LEVEL"));
+        if (lv) { unsigned m = READ_BYTE(work_ram, 0xF600) & 0x7C; if (m != 0x08 && m != 0x0C) return; }
+    }
     unsigned a = address & 0xFFFFFF;
     if (type == HOOK_M68K_E) { int k = ru_slot(); if (k >= 0) ru_mark(s_ru_exec[k], a, 2); }
     else if (((type == HOOK_Z80_R && !dmaonly && !cpuonly) || (type == HOOK_M68K_R && !z80only && !dmaonly)) && a < s_rom_size) {
@@ -233,10 +238,18 @@ static void ptr_save(void) {
 static struct { unsigned loc, val; int left; } s_pend[PTR_PEND];
 static uint32_t *s_cand; static uint8_t *s_start;
 static void ptr_mark(unsigned a) { s_ptr_bm[a >> 4] |= (uint8_t)(1u << ((a >> 1) & 7)); }
+static uint8_t *s_rd;   /* PS_PTRS_NEAR: 68K data reads, a bit per 2 bytes */
 static void ptr_final(void) {
+    /* PS_PTRS_NEAR=N: a candidate also counts when a data read later fell in [value, value + N) - sprite
+     * mappings are read at mappings + 2 x frame, never at the start for a frame other than 0 (SH2's Sky
+     * Chase: a badnik's mappings, named by its sub-object data, kept their cartridge address on the disc) */
+    unsigned near = getenv("PS_PTRS_NEAR") ? (unsigned)strtoul(getenv("PS_PTRS_NEAR"), NULL, 0) : 0;
     for (uint32_t a = 0; a < s_rom_size; a += 2) {
         uint32_t v = s_cand[a >> 1];
-        if (v && (s_start[v >> 3] >> (v & 7) & 1)) ptr_mark(a);
+        int used = v && (s_start[v >> 3] >> (v & 7) & 1);
+        for (uint32_t k = 0; v && !used && s_rd && k < near && v + k < s_rom_size; k += 2)
+            used = s_rd[(v + k) >> 4] >> (((v + k) >> 1) & 7) & 1;
+        if (used) ptr_mark(a);
     }
     ptr_save();
 }
@@ -246,9 +259,16 @@ static void ptr_hook(hook_type_t type, int width, unsigned int address, unsigned
         s_ptr_path = getenv("PS_PTRS"); s_ptr_on = s_ptr_path && *s_ptr_path;
         all = getenv("PS_PTRS_ALL") && atoi(getenv("PS_PTRS_ALL"));
         if (s_ptr_on) { s_ptr_bm = calloc(1, s_rom_size / 16 + 1); s_cand = calloc(s_rom_size / 2 + 1, 4);
-                        s_start = calloc(1, s_rom_size / 8 + 1); atexit(all ? ptr_save : ptr_final); }
+                        s_start = calloc(1, s_rom_size / 8 + 1); atexit(all ? ptr_save : ptr_final);
+                        if (getenv("PS_PTRS_NEAR")) s_rd = calloc(1, s_rom_size / 16 + 1); }
     }
     if (!s_ptr_on) return;
+    {   /* PS_PTRS_FROM=FRAME: nothing before it - a boot checksum loop reads every word of the ROM, so every
+         * candidate looked used (SH2 on its original ROM: 611 "pointers", code words among them) */
+        static long from = -1; extern long ps_frames;
+        if (from < 0) from = getenv("PS_PTRS_FROM") ? atol(getenv("PS_PTRS_FROM")) : 0;
+        if (ps_frames < from) return;
+    }
     unsigned a = address & 0xFFFFFF;
     if (type == HOOK_M68K_W && (a & 0xE0001C) == 0xC00004) {     /* 68K-bus DMA sources */
         unsigned ws[2] = { value >> 16, value & 0xFFFF }; int nw = width == 4 ? 2 : 1;
@@ -265,6 +285,7 @@ static void ptr_hook(hook_type_t type, int width, unsigned int address, unsigned
     }
     if (type == HOOK_M68K_E || (type == HOOK_M68K_R && a < s_rom_size)) {
         if (a < s_rom_size) s_start[a >> 3] |= (uint8_t)(1u << (a & 7));
+        if (s_rd && type == HOOK_M68K_R && a < s_rom_size) s_rd[a >> 4] |= (uint8_t)(1u << ((a >> 1) & 7));
         for (int i = 0; i < PTR_PEND; i++) {               /* a use close to the read */
             if (!s_pend[i].left) continue;
             if (a >= s_pend[i].val && a < s_pend[i].val + 0x100 && !(type == HOOK_M68K_R && a >= s_pend[i].loc && a < s_pend[i].loc + 4))

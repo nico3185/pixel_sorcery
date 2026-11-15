@@ -35,6 +35,22 @@ def shell(script, *args):
     return [path] + list(args)
 
 
+def mem_cores():
+    """compilers that free memory holds (a generated file can take 1.5 GB in cc1), None if unknown"""
+    try:
+        if os.name == 'nt':
+            import ctypes
+            class Mem(ctypes.Structure):
+                _fields_ = [('size', ctypes.c_ulong), ('load', ctypes.c_ulong)] + \
+                           [(n, ctypes.c_ulonglong) for n in ('total', 'avail', 'tpage', 'apage', 'tvirt', 'avirt', 'xvirt')]
+            m = Mem(); m.size = ctypes.sizeof(Mem)
+            return max(1, int(m.avail // 1500000000)) if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)) else None
+        for line in open('/proc/meminfo'):
+            if line.startswith('MemAvailable:'): return max(1, int(line.split()[1]) // 1500000)
+    except (OSError, ValueError, AttributeError): pass
+    return None
+
+
 def collections():
     """[(file stem, the shelf's name)] for launchers/*.txt, as the Mac app's Collections row"""
     out, d = [], os.path.join(ROOT, 'launchers')
@@ -103,7 +119,7 @@ class App:
         ttk.Button(top, text='Rescan', command=self.rescan).pack(side='left', padx=(6, 0))
         # settings, as the Mac app: processes (titles at the same time), cores, Build / Build + self-check
         self.cpus, self.native_only = os.cpu_count() or 4, False
-        self.procs = tk.IntVar(value=self.pref.get('processes', 2)); self.cores = tk.IntVar(value=self.pref.get('cores', 0) or self.cpus)
+        self.procs = tk.IntVar(value=self.pref.get('processes', 2)); self.cores = tk.IntVar(value=self.pref.get('cores', 0) or min(self.cpus, mem_cores() or self.cpus))   # default: what memory holds
         self.check = tk.BooleanVar(value=self.pref.get('check', False))
         sets = self.sets = ttk.Frame(p); sets.pack(fill='x', pady=(10, 0))
         ttk.Label(sets, text='Processes').pack(side='left')

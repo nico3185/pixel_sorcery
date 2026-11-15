@@ -8,8 +8,8 @@
 #   MENU.png     the game-select picture, or MENU.bin already converted by menu_art.py (4x2 cards; MENU_UNFRAME=x0,y0,x1,y1 removes a
 #                highlight baked into the picture, default 92,176,432,504)
 #   ROM          sh1 (REV00), default ../roms/sh1.bin
-#   ROM2         sh2 (REV01), default ../roms/sh2.bin (card 2: its first level for now)
-#   ROM3         sh3 (USA), default ../roms/sh3.bin (card 3: title to its first act)
+#   ROM2         sh2 (REV01), default ../roms/sh2.bin (card 2: title, level select, one image per zone - 0.7.2, in progress)
+#   ROM3         sh3 (USA), default ../roms/sh3.bin (card 3: every zone - 0.7.3, in progress)
 #   ROM4         shk, default ../roms/shk.bin (card 4: title to its first act)
 #   ROM5         shk + sh1 (lock-on dump, evidence only), default ../roms/shk_sh1.bin
 #                (card 5: shbs; the disc image is shk's code with sh1's header, from
@@ -64,10 +64,11 @@ else $py $here/menu_art.py $pic $work/menu_art.bin --unframe ${MENU_UNFRAME:-92,
 
 print "5/5 SH2 (games/sh2: ../roms/sh2.bin, REV01) and the disc"
 s2=(); if [[ -f ${ROM2:-$root/../roms/sh2.bin} ]]; then
-  ROM=${ROM2:-$root/../roms/sh2.bin} $here/sh2_disc.sh $work/s2 | tail -1; s2=(--game 2:$work/s2); fi
-s3=(); if [[ -f ${ROM3:-$root/../roms/sh3.bin} ]]; then        # SH3: front end + Angel Island
-  ROM=${ROM3:-$root/../roms/sh3.bin} $here/s3engine_disc.sh sh3 $work/s3 | tail -1
-  s3=(--game 3:$work/s3.front --image 10:$work/s3.zone1); fi
+  ROM=${ROM2:-$root/../roms/sh2.bin} $here/sh2_disc.sh $work/s2 | tail -1 | cut -c1-80
+  [[ -f $work/s2.args ]] && s2=(${(f)"$(< $work/s2.args)"}); fi   # one image per zone: --game 2:... --image G:... (groups 24-35)
+s3=(); if [[ -f ${ROM3:-$root/../roms/sh3.bin} ]]; then        # SH3: one image per zone or act (0.7.3)
+  ROM=${ROM3:-$root/../roms/sh3.bin} $here/sh3_disc.sh $work/s3 | tail -1 | cut -c1-80
+  [[ -f $work/s3.args ]] && s3=(${(f)"$(< $work/s3.args)"}); fi   # --game 3:... --image G:... (groups 36-45)
 sk=(); if [[ -f ${ROM4:-$root/../roms/shk.bin} ]]; then         # SHK: front + Mushroom Hill
   ROM=${ROM4:-$root/../roms/shk.bin} $here/s3engine_disc.sh shk $work/sk | tail -1
   sk=(--game 4:$work/sk.front --image 11:$work/sk.zone1); fi

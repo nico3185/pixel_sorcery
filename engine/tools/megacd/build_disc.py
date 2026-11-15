@@ -8,6 +8,7 @@ The header, the main-CPU program (ip.s), the sub-CPU module (sp.s) and the paylo
 assembled with m68k-elf-as/ld (brew install m68k-elf-binutils). The payload (hello.s, or --payload
 FILE.bin linked for $200000) is stored after the SP; the SP loads it into word RAM, the IP runs it.
 """
+import hashlib
 import os, subprocess, sys, tempfile
 
 SEC_LEN = {'E': 0x56E, 'U': 0x584, 'J': 0x156}
@@ -68,7 +69,7 @@ def main():
             av = menu.find(b'AVAIL!!!') + 8
             for n_ in games:
                 menu[av + n_ - 1] = 1
-    groups = [[] for _ in range(24)]              # group: [(bytes, sub-CPU destination)]
+    groups = [[] for _ in range(48)]              # group: [(bytes, sub-CPU destination)]; sp.s holds 48
     entries = {}
     def image(cart):                              # word RAM, program-RAM bank 1, and banks 2/3:
         g = [(cart[0x200000:0x240000], 0x080000), (cart[0x020000:0x040000], 0x020000)]
@@ -134,8 +135,9 @@ def main():
     placed = {}
     for gi, g in enumerate(groups):
         for k, (img, dest) in enumerate(g):
-            key = (id(img), dest)
-            if key not in placed:                 # group 0 may reuse game 1's images
+            key = (hashlib.sha1(img).hexdigest(), dest)   # the same bytes once on the disc: group 0 may reuse
+            if key not in placed:                 # game 1's images, and every zone of a game shares its player art
+                                                  # (sp.s skips a bank 2/3 load whose LBA is already there)
                 count = (len(img) + 2047) // 2048
                 disc[lba * 2048:lba * 2048 + len(img)] = img
                 placed[key] = (lba, count)
