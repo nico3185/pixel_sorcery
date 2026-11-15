@@ -25,7 +25,7 @@ if [[ ! -d $work/ev/boot ]]; then
 import sys; d = bytearray(open(sys.argv[1], 'rb').read()); d[2 + 65536:] = bytes(len(d) - 2 - 65536)
 open(sys.argv[1], 'wb').write(d)" $f; done
 fi
-m68k-elf-as -m68000 --defsym DESC=0x23FF00 -o $t/sw.o $here/swap.s
+m68k-elf-as -m68000 --defsym DESC=0x23FF00 --defsym LOADSCREEN=1 -o $t/sw.o $here/swap.s
 m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $t/swap.bin $t/sw.o
 python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex('00200B10' '00201126' '00200388' '00FFFE00'))" > $t/desc.bin
 m68k-elf-as -m68000 -o $t/sega.o $here/games/sh1_sega.s && m68k-elf-ld -Ttext=0x23E200 --oformat=binary -o $t/sega.bin $t/sega.o

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""code_refs.py ROM OUT ROMUSE.bin...: the PC-relative ties of executed code, for zonepack.py --refs.
+"""code_refs.py ROM OUT ROMUSE.bin... [--funcs FILE] [--tables-out FILE]: the PC-relative ties of executed code,
+for zonepack.py --refs; --tables-out: the data tables that code reads by index (LO-HI lines, for --force-file).
 
 Each line "SOURCE TARGET" (hex): a branch or a d16(pc) operand of an instruction that ran (the
 exec half of PS_ROMUSE captures), and each instruction's fall-through to the next one (unless it
@@ -15,7 +16,9 @@ def main():
     rom = open(sys.argv[1], 'rb').read()
     n = len(rom); nb = n // 8 + 1
     ex = bytearray(nb)
-    files = [x for k, x in enumerate(sys.argv[3:]) if x != '--funcs' and sys.argv[3 + k - 1] != '--funcs']
+    opt = ('--funcs', '--tables-out')
+    files = [x for k, x in enumerate(sys.argv[3:]) if x not in opt and sys.argv[3 + k - 1] not in opt]
+    tables = []                                   # --tables-out FILE: indexed data tables, LO-HI
     for f in files:
         raw = open(f, 'rb').read()
         for i, x in enumerate(raw[:nb]):
@@ -57,23 +60,50 @@ def main():
             # offset tables: "move.w T(pc,dn),d1; jmp T(pc,d1)" - entries are word offsets from T,
             # so T and every routine it reaches keep their distance (entries read while they land
             # on executed code; a few misses are tolerated, tables can hold unused slots)
+            # a table code takes the address of (lea T(pc),an) and indexes later: kept whole too, up to the
+            # next code (SH2's touch sizes: an arrow in Aquatic Ruin 2 missed Sonic on the disc)
+            if i.mnemonic.split('.')[0] in ('lea', 'pea'):
+                for tb in (int(v, 16) for v in re.findall(r'\$([0-9a-f]+)\(pc\)', i.op_str)):
+                    if tb < n and not ex[tb >> 3] >> (tb & 7) & 1:
+                        end = tb + 2
+                        while end < min(tb + 0x400, n) and not ex[end >> 3] >> (end & 7) & 1:
+                            end += 2
+                        tables.append((tb, end))
             for tb in (int(v, 16) for v in re.findall(r'\$([0-9a-f]+)\(pc, [ad]\d\.[wl]\)', i.op_str)):
-                miss = 0
-                for k in range(0, 0x200, 2):
-                    if tb + k + 2 > n:
-                        break
+                # a data table read by index (move.b T(pc,d0),d1: not a jump table): a run reads a few
+                # entries, the others sat in "unused" blocks other data filled (SH2's spiral,
+                # Obj06's $21668: Sonic fell through it on the disc) - kept whole, up to the next code or 1 KB
+                # (SH2's sine table is 640 bytes: at 512 its last quarter was lost and rings a hit scatters
+                # flew another way in Aquatic Ruin 2)
+                if not ('jmp' in i.mnemonic or 'jsr' in i.mnemonic) and tb < n:
+                    end = tb + 2
+                    while end < min(tb + 0x400, n) and not ex[end >> 3] >> (end & 7) & 1:
+                        end += 2
+                    tables.append((tb, end))
+                miss, hit = 0, False              # misses count only once an entry has landed on executed code:
+                for k in range(0, 0x200, 2):      # an image that runs only a table's last entries (SH3's
+                    if tb + k + 2 > n:            # competition zones, 56 words into the zone-event table) ties
+                        break                     # them too - the scan used to stop before reaching them
                     o = int.from_bytes(rom[tb + k:tb + k + 2], 'big', signed=True)
                     tgt = tb + o
                     if 0 <= tgt < n and not tgt & 1 and ex[tgt >> 3] >> (tgt & 7) & 1:
-                        out.append((tb, tgt)); miss = 0
-                    else:
+                        out.append((tb, tgt)); miss = 0; hit = True
+                    elif hit:
                         miss += 1
                         if miss > 3:
                             break
+                    elif tgt & 1 or not 0 <= tgt < n or abs(o) >= 0x2000:
+                        break                     # before the first hit, entries must look like a table's: even,
+                                                  # within 8 KB of the table (a routine table's targets are near it;
+                                                  # the image's own evidence may not run them: SH3's competition
+                                                  # zones) - else this is not a table and nothing is tied (SH2's
+                                                  # Metropolis grew one 161 KB piece from junk "entries")
             if i.mnemonic.split('.')[0] not in ('rts', 'rte', 'rtr', 'jmp', 'bra'):
                 out.append((a, a + i.size))
             break
     open(sys.argv[2], 'w').write(''.join(f'{s:06X} {t:06X}\n' for s, t in out))
+    if '--tables-out' in sys.argv:
+        open(sys.argv[sys.argv.index('--tables-out') + 1], 'w').write(''.join(f'{a:06X}-{b:06X}\n' for a, b in sorted(set(tables))))
     print(f'{sys.argv[2]}: {len(out)} ties')
 
 

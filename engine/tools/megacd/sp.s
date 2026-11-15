@@ -46,7 +46,20 @@ main:	move.b	0xFF800E, %d7                   | the BIOS leaves its own values: n
 	adda.w	%d1, %a3
 3:	move.l	4(%a3), %d6                     | sector count; 0 ends the group
 	beq.s	6f
-	lea	readreq(%pc), %a0
+	move.l	8(%a3), %d0                     | program-RAM banks 2/3 ($40000/$60000: art the
+	cmp.l	#0x40000, %d0                   |  main CPU never writes, only the DMA reads): an
+	beq.s	8f                              |  image already there is not read again - every
+	cmp.l	#0x60000, %d0                   |  zone of a game carries the same player art, a
+	bne.s	9f                              |  quarter of a switch's 640 KB (1.7 s at 1x)
+8:	lea	lastlba(%pc), %a0
+	btst	#17, %d0                        | $60000: the second slot
+	beq.s	10f
+	addq.l	#4, %a0
+10:	move.l	(%a3), %d0
+	cmp.l	(%a0), %d0
+	beq.s	11f                             | same LBA as loaded: skip
+	move.l	%d0, (%a0)
+9:	lea	readreq(%pc), %a0
 	move.l	(%a3), (%a0)                    | start LBA
 	move.l	%d6, 4(%a0)
 	move.w	#ROMREADN, %d0
@@ -68,8 +81,8 @@ main:	move.b	0xFF800E, %d7                   | the BIOS leaves its own values: n
 	jsr	CDBIOS
 	lea	2048(%a2), %a2
 	dbra	%d6, 4b
-	lea	12(%a3), %a3
-	bra.s	3b
+11:	lea	12(%a3), %a3
+	bra	3b
 6:	move.w	#ROMPAUSEON, %d0                | pause the drive: left playing it reads on past
 	jsr	CDBIOS                          |  the data track into the audio tracks (music)
 	bset	#0, 0xFF8003                    | RET: word RAM to the main CPU
@@ -116,7 +129,8 @@ chainend:
 chainon:	.byte	0, 0                    | build_disc.py: $80 + N of a chained Mega CD game
 	.even
 readreq:	.long	0, 0
+lastlba:	.long	-1, -1                  | LBA last loaded to $40000 and $60000
 header:	.long	0, 0
-	.ascii	"LOADTBL!"                      | build_disc.py fills 24 groups of up to 6 x
-loads:	.fill	24 * GROUPSZ, 1, 0               | (LBA, count, destination); count 0 ends a group
+	.ascii	"LOADTBL!"                      | build_disc.py fills 48 groups of up to 6 x
+loads:	.fill	48 * GROUPSZ, 1, 0               | (LBA, count, destination); count 0 ends a group
 end:

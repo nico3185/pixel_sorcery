@@ -130,7 +130,7 @@ fixed=(); for r in $(cat $work/z80fixed.txt); do fixed+=(--fixed $r); done
 print "4/5 helpers"
 m68k-elf-as -m68000 --defsym QBASE=0xFB00 --defsym QEND=0xFBFC -o $work/dq.o $here/games/dmaqueue.s
 m68k-elf-ld -Ttext=0x200400 -o $work/dq.elf $work/dq.o; m68k-elf-objcopy -O binary $work/dq.elf $work/dq.bin
-m68k-elf-as -m68000 -o $work/sw.o $here/swap.s; m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $work/swap.bin $work/sw.o
+m68k-elf-as -m68000 --defsym LOADSCREEN=1 -o $work/sw.o $here/swap.s; m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $work/swap.bin $work/sw.o
 # image NAME MODES TARGET_GROUP SWITCH_MODES
 image() { name=$1; modes=$2; tg=$3; sw=$4
   mm=(); for x in ${(s:+:)modes}; do mm+=($(printf '%02X' $((0x$x)))); done

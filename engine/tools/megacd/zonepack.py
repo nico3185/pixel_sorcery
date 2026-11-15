@@ -113,9 +113,13 @@ def main():
         ts = sorted(int(l, 16) for l in open(f) if l.strip())
         size = int(size, 0)
         for k, t in enumerate(ts):
-            if t // B not in blocks:                 # only tables the image already uses
-                continue
             end = min(t + size, ts[k + 1] if k + 1 < len(ts) else t + size, n)
+            # only tables the image already uses - anywhere in their extent: a table indexed from its
+            # start may be read far from it (SH2's level-art table $42594, 12 bytes a zone: Chemical
+            # Plant reads $42630 only, so its start was left out and "lea $42594" kept the cartridge
+            # address - the level loaded garbage art lists on the disc)
+            if not any(b in blocks for b in range(t // B, (end + B - 1) // B)):
+                continue
             if rom and not t & 1:                    # --rom: an offset table (word offsets from
                 w0 = int.from_bytes(rom[t:t + 2], 'big')   # its start, frames after it: sprite
                 if 2 <= w0 <= 0x400 and not w0 & 1:  # mappings, animation scripts) comes whole,
@@ -160,7 +164,28 @@ def main():
             else:
                 merged.append(r)
         rigid = merged
-    rigid = [(lo, hi) for lo, hi in rigid]
+    # a segment longer than the largest free area is cut where no reference crosses (the joining above only
+    # followed contiguous used blocks): SH3's Launch Base, 130 KB of object code in a row, beside 126 KB
+    # of word RAM and the 128 KB window - nearest the middle, again until the pieces fit
+    place0 = a[a.index('--place') + 1] if '--place' in a else '200000-240000,020000-040000'
+    free0 = [[int(p.split('-')[0], 16), int(p.split('-')[1], 16)] for p in place0.split(',')]
+    for flo, fhi, fnew in fixed:                     # the free areas once the fixed ranges took theirs
+        free0 = [iv for f0, f1 in free0 for iv in ([f0, min(f1, fnew)], [max(f0, fnew + fhi - flo), f1]) if iv[1] > iv[0]]
+    room = max(f1 - f0 for f0, f1 in free0) // B - 8
+    out_r = []
+    todo = [list(r) for r in rigid]
+    while todo:
+        lo, hi = todo.pop()
+        if hi - lo <= room:
+            out_r.append((lo, hi)); continue
+        cuts = [b for b in range(lo + 1, hi) if not tie[b]]
+        if not cuts:
+            out_r.append((lo, hi)); continue
+        mid = (lo + hi) // 2
+        c = min(cuts, key=lambda b: abs(b - mid))
+        print(f'# rigid segment {lo * B:06X}-{hi * B:06X} cut at {c * B:06X} (no reference crosses)', file=sys.stderr)
+        todo += [[lo, c], [c, hi]]
+    rigid = sorted(out_r)
     inrigid = {b for lo, hi in rigid for b in range(lo, hi)}
     runs = []                                        # the rest: data ranges (tables kept whole)
     for b in used:

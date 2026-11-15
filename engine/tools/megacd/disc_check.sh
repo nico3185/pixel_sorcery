@@ -3,7 +3,7 @@
 # level-select start of games/GAME/level_select.json (recordings/start-NAME.polls, level_starts.py) played on the
 # reference runner from both, the disc's own boot spliced in front (BIOS, CD-ROM, the menu's card CARD, up to the
 # game's title). Compared at every poll from the level's load: game mode, zone/act, the player's x ($FFF600,
-# $FFFE10, $FFD008: the SH games). One line per start: identical, the first differing poll, or where the disc
+# $FFFE10, the player's x - $FFD008, SH2 $FFB008; PX=ADDR another). One line per start: identical, the first differing poll, or where the disc
 # stopped. PS_REF (default build/ci-mac/genrecomp_ref), ROM (default ../roms/GAME.bin). sh1_disc_check.sh is
 # this for SH1 (card 1).
 set -eu
@@ -11,7 +11,12 @@ game=${1:?usage: disc_check.sh GAME CARD DISC.cue OUTDIR}; card=${2:?}; cue=${3:
 cue=${cue:A}; mkdir -p $o; o=${o:A}
 root=${0:A:h}/../../..; cd $root
 R=${PS_REF:-build/ci-mac/genrecomp_ref}; rom=${ROM:-$root/../roms/$game.bin}; rec=games/$game/recordings
-starts=(${(f)"$(python3 -c "import json; print('\n'.join(json.load(open('games/$game/level_select.json'))['items'].values()))")"})
+# the player's x: SH1 keeps the player object at $FFD000, SH2 at $FFB000 (its $D000 is another object)
+px=${PX:-$(case $game in sh2) print B008 ;; sh3|shk|sh3k) print B010 ;; *) print D008 ;; esac)}   # SH3 engine: x at +$10
+starts=(${(f)"$(python3 -c "
+import json; d = json.load(open('games/$game/level_select.json'))   # items (a level select), or stages (SHK: RAM starts)
+print('\n'.join(d['items'].values()) if 'items' in d else '\n'.join(n for n, _ in d['stages']))")"})
+[[ -n ${ONLY:-} ]] && starts=(${=ONLY})                     # ONLY="EHZ1 MTZ1": those starts only
 title() {  # the first poll of the title screen (game mode $04) in a watch file at or after poll $2
   awk -v from=$2 '$1 >= from && $3 == "04" { print $1; exit }' $1; }
 # the cartridge's title poll
@@ -22,21 +27,22 @@ python3 -c "
 m = {}
 def press(a, b):
     for i in range(a, a + 4): m[i] = b
-press(300, 0x80); press(420, 0x80); c = $card - 1; t = 700
+press(300, 0x80); press(420, 0x80); c = $card - 1; t = 900   # the menu takes input from about frame 800 (a RIGHT at 700 or 760 was lost: card 1 started)
 for _ in range(c % 4): press(t, 0x08); t += 20
 for _ in range(c // 4): press(t, 0x02); t += 20
-press(max(t, 800), 0x80)
-open('$o/boot.mv', 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(1600)))"
+press(t + 60, 0x80)
+open('$o/boot.mv', 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(2400)))"
 GENRECOMP_REGION=2 GENRECOMP_MOVIE=$o/boot.mv PS_POLL_RECORD=$o/boot.polls PS_WATCH=$o/t.disc:F600 \
-  $R --headless --frames 1600 $cue >/dev/null 2>&1
+  $R --headless --frames 2400 $cue >/dev/null 2>&1
 dt=$(title $o/t.disc 200)
 print "title: cartridge poll $ct, disc poll $dt"
 i=0
 for n in $starts; do
   ( r=$rec/start-$n.polls; L=$(wc -l < $r)
     { head -$dt $o/boot.polls; tail -n +$((ct + 1)) $r; } > $o/$n.rp
-    PS_POLL_REPLAY=$r PS_WATCH=$o/$n.cart:F600,FE10+2,D008+2 $R --headless --frames $((L * 2 + 300)) $rom >/dev/null 2>&1
-    GENRECOMP_REGION=2 PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,D008+2 \
+    PS_POLL_REPLAY=$r PS_WATCH=$o/$n.cart:F600,FE10+2,$px+2 $R --headless --frames $((L * 2 + 300)) $rom >/dev/null 2>&1
+    pk=(); [[ -f $rec/start-$n.poke ]] && pk=(GENRECOMP_POKE="$(< $rec/start-$n.poke)")   # a RAM start (SHK: no level select of its own)
+    env $pk GENRECOMP_REGION=2 PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,$px+2 \
       $R --headless --frames $((L * 2 + 3000)) $cue >/dev/null 2>&1 ) &
   i=$((i + 1)); (( i % 6 == 0 )) && wait
 done; wait

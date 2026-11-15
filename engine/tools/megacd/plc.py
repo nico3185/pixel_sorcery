@@ -65,13 +65,18 @@ def main():
     ptrs, force = [], []
     for i in ids:
         a = t + offs[i]
-        c = int.from_bytes(rom[a:a + 2], 'big') + 1
+        c = int.from_bytes(rom[a:a + 2], 'big', signed=True) + 1   # $FFFF: an empty list (SHK has two)
         force.append((a, a + 2 + 6 * c))         # the list itself
         for k in range(c):
             loc = a + 2 + 6 * k
             art = int.from_bytes(rom[loc:loc + 4], 'big') & 0xFFFFFF
+            if not 0x200 <= art < len(rom) - 2:   # past this ROM: a lock-on list (SHK's lists for the SH3
+                continue                          #  half, whose art is in the locked-on cartridge)
             ptrs.append(loc)
-            force.append((art, nemesis_end(rom, art)))
+            try:
+                force.append((art, nemesis_end(rom, art)))
+            except (IndexError, ValueError):      # not a Nemesis stream after all: the pointer still moves
+                pass
     open(sys.argv[4], 'w').write(''.join(f'{p:06X}\n' for p in ptrs))
     open(sys.argv[5], 'w').write(''.join(f'{lo:06X}-{hi:06X}\n' for lo, hi in force))
     print(f'{len(ids)} lists, {len(ptrs)} art pointers, {sum(h - l for l, h in force) // 1024} KB')

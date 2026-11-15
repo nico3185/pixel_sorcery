@@ -29,10 +29,26 @@ _start:
 3:	btst	#0, 3(%a2)
 	bne.s	3b
 	move.b	%d7, 14(%a2)                    | main flag $80 + group: load it
+	.ifdef	LOADSCREEN                      | --defsym LOADSCREEN=1: the load screen - all 64 colours one pulsing
+	lea	0xC00004, %a4                   |  blue (a plain screen), the display registers untouched: switching
+	moveq	#0, %d4                         |  the picture off ran the next frames' DMA faster and lost SH1 a
+4:	addq.w	#1, %d4                         |  VBlank. The game's VBlank restores the palette from its RAM copy
+	move.w	%d4, %d3
+	lsr.w	#4, %d3
+	andi.w	#0x0E00, %d3                    | blue 0-7, a step every 8192 turns
+	move.w	#0x8F02, (%a4)                  | auto-increment 2 (the games' own setting)
+	move.l	#0xC0000000, (%a4)
+	moveq	#63, %d1
+5:	move.w	%d3, -4(%a4)                    | VDP data port
+	dbra	%d1, 5b
+	cmp.b	15(%a2), %d7                    | echoed once loaded
+	bne.s	4b
+	.else
 4:	cmp.b	15(%a2), %d7                    | echoed once loaded
 	bne.s	4b
-5:	btst	#0, 3(%a2)                      | word RAM back (RET)
-	beq.s	5b
+	.endif
+6:	btst	#0, 3(%a2)                      | word RAM back (RET)
+	beq.s	6b
 	bset	#1, 1(%a2)                      | SBRQ: halt the sub CPU (program RAM is ours)
 6:	btst	#1, 1(%a2)
 	beq.s	6b
@@ -49,6 +65,20 @@ _start:
 	move.w	#0x8004, 0xC00004               | HBlank interrupts off: a handler address the game
 	move.w	#0, (%a3)                       |  keeps in RAM belongs to the old image; the new
 	                                        |  image's level init sets HBlank up again
+	.ifdef	ABSORB                          | --defsym ABSORB=1 (SH2): the VBlank that fell during the load
+	lea	0xFFFD08, %a0                   |  is taken here by an empty handler instead of the game's as the
+	move.l	(%a0), %d0                      |  new image starts. Added against a one-poll drift that turned out
+	lea	absorb(%pc), %a2                |  to be collision data; EHZ1 is identical with it, not checked without
+	move.l	%a2, (%a0)
+	move.w	#0x2500, %sr
+	nop
+	nop
+	move.w	#0x2700, %sr
+	move.l	%d0, (%a0)
+	.endif
 	move.l	%a1, -(%sp)                     | entry and SR $2300 at once (rte): a VBlank between enabling
 	move.w	#0x2300, -(%sp)                 |  interrupts and the jump ran the game's handler on the new
 	rte                                     |  stack, over this stub's tail (Labyrinth: then a crash)
+	.ifdef	ABSORB
+absorb:	rte
+	.endif

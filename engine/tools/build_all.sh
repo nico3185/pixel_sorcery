@@ -19,6 +19,10 @@
 set -u; export LC_NUMERIC=C   # printf: a decimal point whatever the locale
 here=${0:A:h:h:h}; [[ $OSTYPE == (msys|cygwin)* ]] && here=$(cygpath -m $here)   # MSYS2: C:/... paths, native Windows python and tools read them too
 jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc); check=0; titles=(); par=; romdir=
+if [[ -r /proc/meminfo ]]; then   # Linux, MSYS2: no more compilers than free memory holds (a generated file can take 1.5 GB in cc1)
+  mem=$(awk '/^MemAvailable:/ {a = $2} /^MemFree:/ {f = $2} END {print a ? a : f}' /proc/meminfo)
+  (( mem / 1500000 < jobs )) && jobs=$(( mem / 1500000 > 0 ? mem / 1500000 : 1 ))
+fi
 menu=0; play=0; roundtrip=0; coverage=0
 if (( $# == 0 )) && [[ -t 0 && -t 1 ]]; then   # the build app (macOS), else the terminal screen
   app="$here/launchers/build/PixelSorcery.app"
