@@ -163,6 +163,7 @@ static uint16_t xc_map(int slot, uint16_t cur) {    /* what slot `slot` shows wh
 static uint16_t s_pal0[64];             /* the frame's palette at line 0 */
 static uint8_t s_wmask[256][1024];      /* modern water: 1 water, 2 sprite over it */
 static uint32_t s_wbehind[256][1024];   /* the sharp scene behind the water */
+static uint32_t s_wfront[256][1024];    /* the game's water colour at that pixel (0: a hole of the screen door) */
 static uint32_t s_wlight; static int s_wlight_lum = -1, s_wwidth;
 static int s_water_log;
 static double s_water_alpha = 0.65;
@@ -810,6 +811,7 @@ static void render_line(int line, uint32_t *out) {
             else if (s_sd_mark[o]) {
                 m = 1;
                 s_wbehind[line][x] = pal[1][(pb[o] & 15) ? (pb[o] & 0x3F) : 0];
+                s_wfront[line][x] = (pa[o] & 15) ? pal[1][pa[o] & 0x3F] : 0;
                 if (pa[o] & 15) {                                       /* the game's light water colour */
                     uint32_t c = pal[1][pa[o] & 0x3F];
                     int l = (int)((c >> 16) & 0xFF) * 3 + (int)((c >> 8) & 0xFF) * 6 + (int)(c & 0xFF);
@@ -887,6 +889,29 @@ void ps_render_water_frame(uint32_t *buf, int pitch, int height) {
         cnt[x] = 0; top[x] = -1; bot[x] = -1;
         for (int y = 0; y < h; y++) if (s_wmask[y][x] == 1) { cnt[x]++; if (top[x] < 0) top[x] = y; bot[x] = y; }
         band[x] = cnt[x] >= h / 5;
+    }
+    /* a body of water, not a waterfall: the screen door over most of the picture's width (COI's
+     * underwater rooms, Toyland's liquid). Falling streaks there would turn it into a cascade; it is
+     * drawn as what the dithering stands for, the game's water colour at half opacity over the scene. */
+    int wide = 0;
+    for (int x = 0; x < n; x++) wide += band[x];
+    if (wide * 5 >= n * 3) {
+        for (int y = 0; y < h; y++) {
+            uint32_t *row = buf + (long)y * pitch;
+            for (int x = 0; x < n; x++) {
+                if (s_wmask[y][x] != 1) continue;
+                uint32_t f = s_wfront[y][x];
+                if (!f) for (int d = 1; d <= 3 && !f; d++)              /* a hole: the nearest water pixel's colour */
+                    f = (x >= d && s_wmask[y][x - d] == 1 ? s_wfront[y][x - d] : 0) ? s_wfront[y][x - d]
+                      : (x + d < n && s_wmask[y][x + d] == 1) ? s_wfront[y][x + d] : 0;
+                if (!f) continue;
+                uint32_t b = s_wbehind[y][x];
+                row[x] = 0xFF000000u | ((((f >> 16) & 0xFF) + ((b >> 16) & 0xFF)) >> 1) << 16
+                       | ((((f >> 8) & 0xFF) + ((b >> 8) & 0xFF)) >> 1) << 8 | (((f & 0xFF) + (b & 0xFF)) >> 1);
+            }
+        }
+        s_wlight_lum = -1;
+        return;
     }
     /* close one- and two-column gaps inside the band */
     for (int x = 1; x < n - 2; x++) if (!band[x] && band[x - 1] && (band[x + 1] || band[x + 2])) { band[x] = 1; top[x] = top[x - 1]; bot[x] = bot[x - 1]; }

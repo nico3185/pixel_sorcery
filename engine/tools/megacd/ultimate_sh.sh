@@ -3,10 +3,11 @@
 # For your own use only: the disc holds code and data from your games - never share it.
 #
 # Inputs, all yours (nothing of them goes into the repository):
-#   DISC.cue     your Mega CD disc of the series (Europe) - its data track is the disc's base
+#   DISC.cue     your SHCD disc - its data track is the disc's base, and its region the disc's: Japan
+#                (NTSC, 60 Hz, the Japanese BIOS) or Europe (PAL, 50 Hz: every game runs and sounds at 50 Hz)
 #                (files, security block) and its audio tracks are the disc's audio tracks
 #   MENU.png     the game-select picture, or MENU.bin already converted by menu_art.py (4x2 cards; MENU_UNFRAME=x0,y0,x1,y1 removes a
-#                highlight baked into the picture, default 92,176,432,504)
+#                highlight baked into the picture, default 92,176,432,504); "-" draws a plain one (menu_default.py)
 #   ROM          sh1 (REV00), default ../roms/sh1.bin
 #   ROM2         sh2 (REV01), default ../roms/sh2.bin (card 2: title, level select, one image per zone - 0.7.2, in progress)
 #   ROM3         sh3 (USA), default ../roms/sh3.bin (card 3: every zone - 0.7.3, in progress)
@@ -19,12 +20,17 @@
 # jumping; plus your recorded sessions in games/sh1/sessions), relocation (relocate.py),
 # the BuildSprites helper, menu art, disc (build_disc.py). Output: OUTDIR/ultimate.iso +
 # ultimate.cue (about 7 minutes; default ~/Library/Application Support/PixelSorcery/megacd/ultimate).
-# Play: GENRECOMP_REGION=2 games/sh1/build-trace/genrecomp_build/genrecomp_ref OUTDIR/ultimate.cue
+# Play: games/sh1/build-trace/genrecomp_build/genrecomp_ref OUTDIR/ultimate.cue
 set -eu
 root=${0:A:h}/../../..
 here=${0:A:h}
 [[ $# -ge 2 ]] || { sed -n 2,16p $0; exit 2; }
-scd=${1:A}; pic=${2:A}
+scd=${1:A}; pic=$2; [[ $pic == - ]] || pic=${pic:A}
+# the region of the base disc (its boot sector's security code, as the player reads it): $A1 Japan, $64 Europe
+region=$(python3 -c "
+import sys; sys.path.insert(0, '$here'); import build_disc as b
+d = b.read_data(sys.argv[1], 0x800); print({0xA1: 'J', 0x64: 'E'}.get(d[0x20B], 'U'))" $scd)
+gregion=${${${region/J/3}/E/2}/U/1}
 out=${3:-$HOME/Library/Application Support/PixelSorcery/megacd/ultimate}
 rom=${ROM:-$root/../roms/sh1.bin}
 py=$root/engine/.venv/bin/python
@@ -59,7 +65,8 @@ print "3/5 relocation: one image per zone (sh1_disc.sh)"
 ROM=$rom $here/sh1_disc.sh $work $work/s1 | tail -1
 
 print "4/5 menu art"
-if [[ $pic == *.bin ]]; then cp $pic $work/menu_art.bin    # an already converted menu (menu_art.py's output)
+if [[ $pic == - ]]; then $py $here/menu_default.py $work/menu.png && $py $here/menu_art.py $work/menu.png $work/menu_art.bin
+elif [[ $pic == *.bin ]]; then cp $pic $work/menu_art.bin    # an already converted menu (menu_art.py's output)
 else $py $here/menu_art.py $pic $work/menu_art.bin --unframe ${MENU_UNFRAME:-92,176,432,504}; fi
 
 print "5/5 SH2 (games/sh2: ../roms/sh2.bin, REV01) and the disc"
@@ -82,7 +89,7 @@ bs=(); if [[ -f ${ROM5:-$root/../roms/shk_sh1.bin} && -f ${ROM4:-$root/../roms/s
 # a card whose images did not build is left off the disc (said so), the others still go on it
 have() { for x in "$@"; do [[ $x == *:* && $x != --* ]] && { [[ -f ${x#*:}.trapcart.md ]] || return 1; }; done; return 0; }
 for v in s2 s3 sk k3 bs; do eval "a=(\${$v[@]:-})"; (( ${#a} )) && ! have $a && { print -u2 "  card left out ($v): its images did not build"; eval "$v=()"; }; done
-python3 $here/build_disc.py $scd $out/ultimate.iso --region E --menu $work/menu_art.bin \
+python3 $here/build_disc.py $scd $out/ultimate.iso --region $region --menu $work/menu_art.bin \
   --game 1:$work/s1.front --image 13:$work/s1.zone1 --image 14:$work/s1.zone2 --image 15:$work/s1.zone3 \
   --image 16:$work/s1.zone4 --image 17:$work/s1.zone5 --image 18:$work/s1.zone6 $s2 $s3 $sk $bs $k3 --scd $scd | tail -2
-print "play: GENRECOMP_REGION=2 $g/build-trace/genrecomp_build/genrecomp_ref '$out/ultimate.cue'"
+print "play ($region, ${${region:#E}:+60}${${region:#E}:-50} Hz): GENRECOMP_REGION=$gregion $g/build-trace/genrecomp_build/genrecomp_ref '$out/ultimate.cue'"

@@ -9,7 +9,7 @@
 # Layout, every image (zonepack.py packs each on its own, as s3engine_disc.sh does):
 #   word RAM $200500 the image's descriptor (VBlank, HBlank, main loop, stack), $200510 the switch
 #   (games/sh2_zone.s + swap.s), $200700 helpers (the sound driver's loader, the DMA queue),
-#   $200800 Casino Night's bumper lists (cnz), $200B00-$226800 code/data, $226800 the object layouts (ROM $E6800-$E8000: ObjPos lists found by offsets
+#   $200900 Casino Night's bumper lists (cnz), $200C00-$226800 code/data, $226800 the object layouts (ROM $E6800-$E8000: ObjPos lists found by offsets
 #   from $E6800, some past $E8000 - Death Egg's at $EB230 - so they keep their distance to the Z80's banks),
 #   $228000 the Z80's banks (ROM $E8000-$100000);
 #   program-RAM bank 1 ($020000-$03FFFF) code/data; banks 2/3 Sonic's/Tails' art (virtual $0A0000/$0E0000).
@@ -27,11 +27,11 @@ tr=$g/build-trace/genrecomp_build/genrecomp_trace
 # from the recording (Metropolis 1: the capture never rode the spiral the recording rides at poll 300). The
 # boot before it: a capture of its executed half only (front image).
 mkdir -p $work/boot
-[[ -n "$(ls $work/boot/*.bin 2>/dev/null)" ]] || PS_ROMUSE=$work/boot PS_ROMUSE_KEY=FFF600 $tr --headless --frames 112 --trace-out /dev/null $rom >/dev/null 2>&1
+[[ -n "$(print -l $work/boot/*.bin(N))" ]] || PS_ROMUSE=$work/boot PS_ROMUSE_KEY=FFF600 $tr --headless --frames 112 --trace-out /dev/null $rom >/dev/null 2>&1
 print "1/4 evidence: $(ls $g/recordings/start-*.polls | wc -l | tr -d ' ') level-select starts, by zone and by game mode"
 i=0
 for p in $g/recordings/start-*.polls; do
-  [[ -n ${S2_KEEP_EV:-} && -n "$(ls $work/evz/${p:t:r}/*.bin 2>/dev/null)" ]] && continue
+  [[ -n ${S2_KEEP_EV:-} && -n "$(print -l $work/evz/${p:t:r}/*.bin(N))" ]] && continue
   n=$(wc -l < $p); b=${p:t:r}; mkdir -p $work/evz/$b $work/evm/$b
   PS_ROMUSE=$work/evz/$b PS_ROMUSE_FROM=112 PS_ROMUSE_KEY=FFFE10 PS_PTRS=$work/evz/$b/ptrs.txt PS_PTRS_FROM=112 PS_PTRS_NEAR=0x80 PS_POLL_REPLAY=$p \
     $tr --headless --frames $((n * 2 + 600)) --trace-out /dev/null $rom >/dev/null 2>&1 &
@@ -132,7 +132,7 @@ C
     python3 $here/zonepack.py 0x100000 --rom $rom $uargs --near $work/targets.txt:$1 --gap $2 \
       $force $coll --fixed E6800-E8000=226800 --fixed E8000-100000=228000 --fixed 50000-64320=0A0000 --fixed 64320-6FBE0=0E0000 \
       --force 000200-000410 --refs $work/refs_$name.txt --force-file $work/funcs_$name.txt $tabf \
-      --place ${S2_SIZES:+400000-600000,}200B00-226800,020000-040000 > $work/map_$name.txt 2> $work/pack_$name.txt; }
+      --place ${S2_SIZES:+400000-600000,}200C00-226800,020000-040000 > $work/map_$name.txt 2> $work/pack_$name.txt; }
   pack 0x200 0x800 || pack 0x100 0x200 || { print -u2 "$name: does not fit ($(tail -1 $work/pack_$name.txt))"; exit 1; }   # tighter: s3engine_disc.sh's values for 4 MB
   [[ -n ${S2_SIZES:-} ]] && { print "  $name: $(tail -1 $work/pack_$name.txt)"; continue; }   # S2_SIZES=1: what each image needs, no limit
   # where the map put an address
@@ -149,16 +149,17 @@ v=int(sys.argv[1],16); print('%X' % next((new+v-lo for lo,hi,new in m if lo<=v<h
   m68k-elf-as -m68000 --defsym SNDLOAD=0x$snd --defsym ZB1D=0x45 --defsym ZB1E=0x46 --defsym ZB1F=0x47 \
     -o $work/h.o $here/games/sh2_helpers.s
   m68k-elf-ld -Ttext=0x200700 -o $work/h.elf $work/h.o; m68k-elf-objcopy -O binary $work/h.elf $work/h_$name.bin
+  (( $(wc -c < $work/h_$name.bin) <= 0x200 )) || { print -u2 "sh2_helpers.s: over 512 bytes (the cnz lists start at \$200900)"; exit 1; }
   sl=$(nm $work/h.elf | awk '/ sndload$/ {print toupper($1)}'); dq=$(nm $work/h.elf | awk '/ dmaqueue$/ {print toupper($1)}')
   # Casino Night's special bumpers ($1781A act 1, $1795E act 2: 6-byte entries scanned both ways from the camera):
   # the backward scan stops on the word 4 bytes before a list being 0 - before act 1's it is the high word of the
   # "jmp $1370.l" that ends the previous routine, nonzero once relocated, so near the act's start the scan ran
   # back into code and the handler jumped through its 6-entry table with index 6 (CNZ1 crashed at poll 4810).
-  # Both lists go to $200804 behind a zero entry x (the scan reads the previous entry's x at -4), and the two
+  # Both lists go to $200904 behind a zero entry x (the scan reads the previous entry's x at -4), and the two
   # lea that name them are pointed there.
   cnzl=(); if [[ $name == cnz ]]; then
     python3 -c "import sys; r = open('$rom', 'rb').read(); sys.stdout.buffer.write(bytes(4) + r[0x1781A:0x17AA2])" > $work/cnzlists.bin
-    cnzl=(--blob 200800=$work/cnzlists.bin --patch 173D2=43F900200804 --patch 173DE=43F900200948); fi
+    cnzl=(--blob 200900=$work/cnzlists.bin --patch 173D2=43F900200904 --patch 173DE=43F900200A48); fi
   # the hit boxes of the touch code ($3FB28..$3FC34: move.l #$00040004,d1 - two sizes, not $40004) stay as they
   # are: relocated, Aquatic Ruin 2's arrow missed Sonic on the disc where it hits him on the cartridge
   ( cd $g && $py $here/relocate.py $rom recomp.json $out.$name --ptrs $work/ptrs.txt $ex --all-code --map $(cat $work/map_$name.txt) \

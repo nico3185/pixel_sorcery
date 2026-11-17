@@ -22,18 +22,24 @@ title() {  # the first poll of the title screen (game mode $04) in a watch file 
 # the cartridge's title poll
 PS_POLL_REPLAY=$rec/start-$starts[1].polls PS_WATCH=$o/t.cart:F600 $R --headless --frames 2500 $rom >/dev/null 2>&1
 ct=$(title $o/t.cart 0)
-# the disc's boot: Start on the BIOS screen (300), CD-ROM (420), the card (cards left to right, 4 a row), Start
+# the disc's boot: Start on the BIOS screen, CD-ROM, the card (cards left to right, 4 a row), Start. The BIOS is
+# the disc's region's: Europe takes Start at 300, CD-ROM at 420, the menu reads the pad from about frame 800 (a
+# RIGHT at 700 or 760 was lost: card 1 started); Japan's title runs longer - 500, 700, the menu from about 1200
+reg=$(python3 -c "
+import sys; sys.path.insert(0, '$root/engine/tools/megacd'); import build_disc as b
+print({0xA1: 'J', 0x64: 'E'}.get(b.read_data(sys.argv[1], 0x800)[0x20B], 'U'))" $cue)
 python3 -c "
 m = {}
 def press(a, b):
     for i in range(a, a + 4): m[i] = b
-press(300, 0x80); press(420, 0x80); c = $card - 1; t = 900   # the menu takes input from about frame 800 (a RIGHT at 700 or 760 was lost: card 1 started)
+s1, s2, t = {'E': (300, 420, 900)}.get('$reg', (500, 700, 1400))
+press(s1, 0x80); press(s2, 0x80); c = $card - 1
 for _ in range(c % 4): press(t, 0x08); t += 20
 for _ in range(c // 4): press(t, 0x02); t += 20
 press(t + 60, 0x80)
-open('$o/boot.mv', 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(2400)))"
-GENRECOMP_REGION=2 GENRECOMP_MOVIE=$o/boot.mv PS_POLL_RECORD=$o/boot.polls PS_WATCH=$o/t.disc:F600 \
-  $R --headless --frames 2400 $cue >/dev/null 2>&1
+open('$o/boot.mv', 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(3000)))"
+GENRECOMP_MOVIE=$o/boot.mv PS_POLL_RECORD=$o/boot.polls PS_WATCH=$o/t.disc:F600 \
+  $R --headless --frames 3000 $cue >/dev/null 2>&1
 dt=$(title $o/t.disc 200)
 print "title: cartridge poll $ct, disc poll $dt"
 i=0
@@ -42,7 +48,7 @@ for n in $starts; do
     { head -$dt $o/boot.polls; tail -n +$((ct + 1)) $r; } > $o/$n.rp
     PS_POLL_REPLAY=$r PS_WATCH=$o/$n.cart:F600,FE10+2,$px+2 $R --headless --frames $((L * 2 + 300)) $rom >/dev/null 2>&1
     pk=(); [[ -f $rec/start-$n.poke ]] && pk=(GENRECOMP_POKE="$(< $rec/start-$n.poke)")   # a RAM start (SHK: no level select of its own)
-    env $pk GENRECOMP_REGION=2 PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,$px+2 \
+    env $pk PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,$px+2 \
       $R --headless --frames $((L * 2 + 3000)) $cue >/dev/null 2>&1 ) &
   i=$((i + 1)); (( i % 6 == 0 )) && wait
 done; wait
@@ -54,7 +60,7 @@ ok = 0
 for n in starts:
     res = []
     for f, base in ((f'{o}/{n}.cart', ct), (f'{o}/{n}.disc', dt)):
-        w = rd(f); want = '10' if n.startswith('SS') else '0C'
+        w = rd(f); want = '10' if n[:2] == 'SS' and n[2:3].isdigit() else '0C'   # a special stage (SS1); Sky Sanctuary (SSZ) is a level
         k = next((j for j, x in enumerate(w) if int(x[0]) > base and x[2] == want), None)
         res.append(None if k is None else [x[2:] for x in w[k:]])
     c, d = res

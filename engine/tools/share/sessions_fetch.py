@@ -3,7 +3,7 @@
 Reads the public repository's issues labelled "session" (gh), and for each:
   - consent: the issue form's box ticked by its author, and the zip's share.json naming a consent text this
     project published (consent.txt, by version and SHA-256); otherwise refused, nothing downloaded;
-  - the zip (the issue's attachment) checked: only session.{polls,meta,log,poke} + share.json, every file's
+  - the zip (the issue's attachment) checked: only session.{polls,meta,log,poke,crash} + share.json, every file's
     SHA-256 as share.json lists it;
   - withdrawn (the issue closed, or its author commenting "withdraw"): the session deleted, the record marked;
   - every decision recorded in shared/consents.db (SQLite: issue, account, consent version and hash, dates, zip
@@ -15,27 +15,31 @@ import cloud      # the Cloudflare mirror (D1 + R2), off unless configured
 
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 REPO = 'nico3185/pixel_sorcery'; SHARED = os.path.join(ROOT, 'shared')
-CONSENTS = {v: hashlib.sha256(open(os.path.join(HERE, f), 'rb').read()).hexdigest()   # version -> text hash
-            for v, f in ((1, 'consent_v1.txt'), (2, 'consent.txt'))}
-ALLOWED = {'session.polls', 'session.meta', 'session.log', 'session.poke', 'share.json'}
+CONSENTS = {v: hashlib.sha256(open(os.path.join(HERE, f), 'rb').read().replace(b'\r\n', b'\n')).hexdigest()   # version -> text hash
+            for v, f in ((1, 'consent_v1.txt'), (2, 'consent_v2.txt'), (3, 'consent.txt'))}
+ALLOWED = {'session.polls', 'session.meta', 'session.log', 'session.poke', 'session.crash', 'share.json'}
 
 def db():
     os.makedirs(SHARED, exist_ok=True)
     c = sqlite3.connect(os.path.join(SHARED, 'consents.db'))
     c.execute(TABLE); cloud.sql(TABLE)
+    if 'report_type' not in {r[1] for r in c.execute('pragma table_info(consents)')}:
+        c.execute("alter table consents add column report_type text default 'session'")
+    if cloud.ON and not cloud.sql('select report_type from consents limit 1'):
+        cloud.sql("alter table consents add column report_type text default 'session'")
     return c
 
 TABLE = '''create table if not exists consents (issue integer primary key, account text, title text,
-             consent_version integer, consent_sha256 text, consented_at text, recorded_at text default current_timestamp,
+             consent_version integer, consent_sha256 text, consented_at text, report_type text default 'session', recorded_at text default current_timestamp,
              zip_sha256 text, files text, status text, reason text, updated_at text default current_timestamp)'''
 
 def record(c, issue, account, status, reason='', share=None, zip_sha=''):
     s = share or {}
-    q = ('''insert into consents (issue, account, title, consent_version, consent_sha256, consented_at, zip_sha256, files, status, reason)
-                 values (?,?,?,?,?,?,?,?,?,?) on conflict(issue) do update set status=excluded.status, reason=excluded.reason,
+    q = ('''insert into consents (issue, account, title, consent_version, consent_sha256, consented_at, report_type, zip_sha256, files, status, reason)
+                 values (?,?,?,?,?,?,?,?,?,?,?) on conflict(issue) do update set status=excluded.status, reason=excluded.reason,
                  updated_at=current_timestamp, zip_sha256=coalesce(nullif(excluded.zip_sha256,''), zip_sha256)''',
               (issue, account, s.get('title', ''), s.get('consent_version'), s.get('consent_sha256', ''), s.get('consented', ''),
-               zip_sha, json.dumps(s.get('files', {})), status, reason))
+               s.get('report_type', 'session'), zip_sha, json.dumps(s.get('files', {})), status, reason))
     c.execute(*q); c.commit(); cloud.sql(*q)
 
 def status(c, issue):
@@ -50,11 +54,14 @@ def main():
                            '--json', 'number,author,state,body,comments,title'))
     c = db()
     for it in issues:
-        n, who = it['number'], it['author']['login']; folder = os.path.join(SHARED, str(n))
+        n, who = it['number'], it['author']['login']
         withdrawn = it['state'] == 'CLOSED' or any(cm['author']['login'] == who and re.search(r'\bwithdraw', cm['body'], re.I)
                                                    for cm in it.get('comments', []))
         if withdrawn:
-            shutil.rmtree(folder, ignore_errors=True); cloud.delete(f'sessions/{n}.zip')
+            old_title = c.execute('select title from consents where issue = ?', (n,)).fetchone()
+            if old_title and re.fullmatch(r'[a-z0-9_-]{1,40}', old_title[0] or ''):
+                shutil.rmtree(os.path.join(SHARED, old_title[0], 'issues', str(n)), ignore_errors=True)
+            shutil.rmtree(os.path.join(SHARED, str(n)), ignore_errors=True); cloud.delete(f'sessions/{n}.zip')
             record(c, n, who, 'withdrawn', 'closed or withdraw comment'); continue
         if not re.search(r'- \[[xX]\] I agree to share this session', it['body']):
             record(c, n, who, 'refused', 'consent box not ticked'); continue
@@ -66,10 +73,18 @@ def main():
             share = json.loads(z.read('share.json'))
         except Exception as e:
             record(c, n, who, 'refused', f'not a session zip ({e})'); continue
+        crash_data = z.read('session.crash') if 'session.crash' in names else b''
         why = ('other files: ' + ', '.join(sorted(names - ALLOWED)) if names - ALLOWED else
                'consent text unknown' if CONSENTS.get(share.get('consent_version')) != share.get('consent_sha256') else
+               'report type invalid' if share.get('report_type', 'session') not in ('session', 'crash') else
+               'report type does not match files' if ((share.get('report_type') == 'crash') != ('session.crash' in names)) else
+               'crash marker missing or invalid' if (share.get('report_type') == 'crash' and not (crash_data in (b'signal=SIGSEGV\n', b'signal=SIGABRT\n', b'signal=SIGBUS\n', b'signal=SIGFPE\n', b'signal=SIGILL\n') or re.fullmatch(rb'exception=0x[0-9A-Fa-f]{1,8}\n', crash_data))) else
+               'file list differs' if set(share.get('files', {})) != names - {'share.json'} else
                'file checksums differ' if any(hashlib.sha256(z.read(k)).hexdigest() != v for k, v in share.get('files', {}).items()) else '')
         if why: record(c, n, who, 'refused', why, share); continue
+        if not re.fullmatch(r'[a-z0-9_-]{1,40}', share.get('title', '')):
+            record(c, n, who, 'refused', 'invalid title', share); continue
+        folder = os.path.join(SHARED, share['title'], 'issues', str(n))
         os.makedirs(folder, exist_ok=True); z.extractall(folder)
         before = status(c, n)
         if before[0] != 'kept': cloud.put(f'sessions/{n}.zip', data)
@@ -89,8 +104,13 @@ def check(data):
     try:
         z = zipfile.ZipFile(io.BytesIO(data)); names = set(z.namelist()); share = json.loads(z.read('share.json'))
     except Exception as e: return f'not a session zip ({e})', None
+    crash_data = z.read('session.crash') if 'session.crash' in names else b''
     why = ('other files: ' + ', '.join(sorted(names - ALLOWED)) if names - ALLOWED else
            'consent text unknown' if CONSENTS.get(share.get('consent_version')) != share.get('consent_sha256') else
+           'report type invalid' if share.get('report_type', 'session') not in ('session', 'crash') else
+           'report type does not match files' if ((share.get('report_type') == 'crash') != ('session.crash' in names)) else
+           'crash marker missing or invalid' if (share.get('report_type') == 'crash' and not (crash_data in (b'signal=SIGSEGV\n', b'signal=SIGABRT\n', b'signal=SIGBUS\n', b'signal=SIGFPE\n', b'signal=SIGILL\n') or re.fullmatch(rb'exception=0x[0-9A-Fa-f]{1,8}\n', crash_data))) else
+           'file list differs' if set(share.get('files', {})) != names - {'share.json'} else
            'file checksums differ' if any(hashlib.sha256(z.read(k)).hexdigest() != v for k, v in share.get('files', {}).items()) else '')
     return (why, None) if why else (share, z)
 
@@ -99,12 +119,15 @@ def api_sessions(replay):
     received -> checked again, replayed, kept with the result (the app reads it) or refused; withdrawn -> local copy gone"""
     rows = (cloud.sql("select id, title, status from uploads where status in ('received', 'withdrawn')") or {}).get('result', [{}])[0].get('results', [])
     for r in rows:
-        folder = os.path.join(SHARED, 'api', r['id'])
-        if r['status'] == 'withdrawn': shutil.rmtree(folder, ignore_errors=True); continue
+        if r['status'] == 'withdrawn':
+            shutil.rmtree(os.path.join(SHARED, r['title'], 'api', r['id']), ignore_errors=True); continue
         data = cloud.get(f'api/{r["id"]}.zip')
         share, z = check(data) if data else ('zip missing', None)
         if z is None:
             cloud.sql("update uploads set status = 'refused', result = ?1, updated_at = current_timestamp where id = ?2", (share, r['id'])); continue
+        if not re.fullmatch(r'[a-z0-9_-]{1,40}', share.get('title', '')):
+            cloud.sql("update uploads set status = 'refused', result = 'invalid title', updated_at = current_timestamp where id = ?1", (r['id'],)); continue
+        folder = os.path.join(SHARED, share['title'], 'api', r['id'])
         os.makedirs(folder, exist_ok=True); z.extractall(folder); res = ''
         if replay:
             p = subprocess.run([os.path.join(ROOT, 'engine', 'tools', 'check.sh'), share['title'], os.path.join(folder, 'session.polls')],

@@ -152,3 +152,18 @@ void ps_60hz(const char *path) {
     int disc = x && (!strcasecmp(x, ".cue") || !strcasecmp(x, ".iso") || !strcasecmp(x, ".chd"));
     if (disc && !getenv("GENRECOMP_REGION")) config.region_detect = 0;
 }
+
+/* PS_STATE_MCD=1 with PS_STATE_DUMP (ps_poll.c): the Mega CD's PRG-RAM (512K) and 2M Word RAM (256K)
+ * appended to each dump, to compare a disc's memory with what its images should hold */
+int ps_mcd_mem(const uint8_t **prg, const uint8_t **wram) {
+    if (system_hw != SYSTEM_MCD) return 0;
+    *prg = scd.prg_ram; *wram = scd.word_ram_2M;
+    return 1;
+}
+
+/* PS_CDD_TRACK (ps_poll.c): the CD drive's status, track and sector at each poll - which audio track a disc plays */
+int ps_cdd_state(int *status, int *track, int *lba) {
+    if (system_hw != SYSTEM_MCD) return 0;
+    *status = cdd.status; *track = cdd.index + 1; *lba = cdd.lba;
+    return 1;
+}

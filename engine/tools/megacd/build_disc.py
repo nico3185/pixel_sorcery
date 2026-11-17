@@ -25,9 +25,9 @@ def read_data(path, n):
     return raw[:n]
 
 
-def assemble(src, tmp, org=0):
+def assemble(src, tmp, org=0, defs=()):
     o, b = os.path.join(tmp, src + '.o'), os.path.join(tmp, src + '.bin')
-    subprocess.run(['m68k-elf-as', '-m68000', '-I', tmp, '-o', o, os.path.join(here, src)], check=True)
+    subprocess.run(['m68k-elf-as', '-m68000', '-I', tmp] + [f'--defsym={d}' for d in defs] + ['-o', o, os.path.join(here, src)], check=True)
     subprocess.run(['m68k-elf-ld', f'-Ttext={org:#x}', '--oformat=binary', '-o', b, o], check=True)
     return open(b, 'rb').read()
 
@@ -51,7 +51,7 @@ def main():
     menu_art = sys.argv[sys.argv.index('--menu') + 1] if '--menu' in sys.argv else None
     with tempfile.TemporaryDirectory() as tmp:
         open(os.path.join(tmp, 'swap.bin'), 'wb').write(assemble('swap.s', tmp, 0xFFFD18))   # ip.s includes it
-        ip, sp = bytearray(assemble('ip.s', tmp)), bytearray(assemble('sp.s', tmp))
+        ip, sp = bytearray(assemble('ip.s', tmp, defs=[f'SECEND={0x200 + SEC_LEN[region]:#x}'])), bytearray(assemble('sp.s', tmp))
         hello = assemble('hello.s', tmp, 0x200000)
         menu = None
         if menu_art:

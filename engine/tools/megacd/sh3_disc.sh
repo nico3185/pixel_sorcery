@@ -7,7 +7,7 @@
 # reader (PS_ROMUSE_CPUONLY / DMAONLY / Z80ONLY): keyed by zone/act ($FFFE10) while a level runs
 # (PS_ROMUSE_LEVEL), and by game mode ($FFF600) for the front. SH3 reads no checksum at boot: from frame 0.
 # Layout, every image:
-#   word RAM $200400 DMA queue helper (games/dmaqueue.s, queue at $FFFB00), $200500 the image's descriptor
+#   word RAM $200B00 DMA queue helper (games/dmaqueue_map.s, queue at $FFFB00; images from $200D00), $200500 the image's descriptor
 #   (VBlank, HBlank, main loop, stack), $200510 the switch (games/sh3_zone.s + swap.s), $200700-$23F000
 #   code/data around the sound driver's banks (z80plan_s3.py: four 32 KB windows, $40-$47);
 #   program-RAM bank 1 ($020000-$03FFFF) code/data; banks 2/3 the player art ($100000-$140000, fixed).
@@ -23,7 +23,7 @@ print "1/4 evidence: $(ls $g/recordings/start-*.polls | wc -l | tr -d ' ') level
 i=0
 for p in $g/recordings/start-*.polls; do
   b=${p:t:r}
-  [[ -n ${S3_KEEP_EV:-} && -n "$(ls $work/cpu/$b/*.bin 2>/dev/null)" ]] && continue
+  [[ -n ${S3_KEEP_EV:-} && -n "$(print -l $work/cpu/$b/*.bin(N))" ]] && continue
   n=$(wc -l < $p); fr=$((n * 2 + 600))
   mkdir -p $work/cpu/$b $work/dma/$b $work/z80/$b $work/mcpu/$b $work/mdma/$b
   PS_ROMUSE_CPUONLY=1 PS_ROMUSE_LEVEL=1 PS_ROMUSE=$work/cpu/$b PS_ROMUSE_KEY=FFFE10 PS_PTRS=$work/cpu/$b/ptrs.txt PS_PTRS_NEAR=0x80 \
@@ -79,8 +79,9 @@ ex=(); for f in $work/cpu/*/*.bin(N) $work/mcpu/*/*.bin(N); do ex+=(--exec $f); 
 ( cd $g && $py $here/relocate.py $rom recomp.json $work/probe $ex --all-code \
     --map 000000-200000=400000 --targets-out $work/targets.txt >/dev/null 2>&1 )
 print "3/4 helpers"
-m68k-elf-as -m68000 --defsym QBASE=0xFB00 --defsym QEND=0xFBFC -o $work/dq.o $here/games/dmaqueue.s
-m68k-elf-ld -Ttext=0x200400 -o $work/dq.elf $work/dq.o; m68k-elf-objcopy -O binary $work/dq.elf $work/dq.bin
+m68k-elf-as -m68000 --defsym QBASE=0xFB00 --defsym QEND=0xFBFC --defsym ART2LO=0x100000 --defsym ART2HI=0x120000 --defsym ART3LO=0x120000 --defsym ART3HI=0x140000 -o $work/dq.o $here/games/dmaqueue_map.s
+m68k-elf-ld -Ttext=0x200B00 -o $work/dq.elf $work/dq.o; m68k-elf-objcopy -O binary $work/dq.elf $work/dq.bin
+(( $(wc -c < $work/dq.bin) <= 0x200 )) || { print -u2 "dmaqueue_map.s: over 512 bytes (images start at \$200D00)"; exit 1; }
 m68k-elf-as -m68000 --defsym ABSORB=1 --defsym LOADSCREEN=1 -o $work/sw.o $here/swap.s
 m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $work/swap.bin $work/sw.o
 # the images and their groups; zone x 2 + act -> image (ACTS table); captures by zone/act (cpu/dma, keys)
@@ -149,7 +150,7 @@ print('%06X-%06X' % (p, p + 0xC00) if 0x200 <= p < len(r) else '')")
       --fixed 100000-120000=0A0000 --fixed 120000-140000=0E0000 $zfix --rigid 149000-14B400 \
       $coll --force 5AB0C-5B10C --force 5AF8C-5B520 --force 000000-000800 --refs $work/refs_$name.txt \
       --force-file $work/funcs_$name.txt --force-file $work/tables_$name.txt \
-      --place ${S3_SIZES:+400000-600000,}200B00-23F000,020000-040000 > $work/map_$name.txt 2> $work/pack_$name.txt; }
+      --place ${S3_SIZES:+400000-600000,}200D00-23F000,020000-040000 > $work/map_$name.txt 2> $work/pack_$name.txt; }
   pack 0x200 0x800 || pack 0x100 0x200 || { print -u2 "$name: does not fit ($(tail -1 $work/pack_$name.txt))"; exit 1; }
   [[ -n ${S3_SIZES:-} ]] && { print "  $name: $(tail -1 $work/pack_$name.txt)"; continue; }
   at() { python3 -c "
@@ -179,8 +180,8 @@ Z
   ( cd $g && $py $here/relocate.py $rom recomp.json $out.$name --strict-imm --ptrs $work/ptrs.txt $ex --all-code --data 05CC96-05CFE6 \
       --map $(cat $work/map_$name.txt) \
       --patch 314=70024E71 --patch B63C=4E714E714E714E71 --patch 6F8=0080 --patch 714=3F3F \
-      --patch 734=4EB9002005104E714E714E714E71 --patch 46B0=4EF900200514 --patch 1812=4EF900200400 $zp \
-      --blob 200400=$work/dq.bin --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin \
+      --patch 734=4EB9002005104E714E714E714E71 --patch 46B0=4EF900200514 --patch 1812=4EF900200B00 $zp \
+      --blob 200B00=$work/dq.bin --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin \
       --blob 200700=$work/zf_$name.bin | head -1 )
   print "  $name: $(tail -1 $work/pack_$name.txt)"
   [[ $name == front ]] && args+=(--game 3:$out.front) || args+=(--image $grp[$name]:$out.$name)

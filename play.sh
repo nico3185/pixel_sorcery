@@ -30,7 +30,7 @@ if [[ ${1:-} == (-h|--help) ]]; then cat <<'HELP'
 Usage: ./play.sh TITLE [--resume [SESSION.polls] MINUTE] [game options]
 
   (no option)          play; builds first if needed. Every run is recorded in
-                       games/$title/sessions/<date>.{polls,log,meta}
+                       games/$title/sessions/<date>.{polls,log,meta,crash}
   --resume S.polls M   replay session S up to minute M at full speed, then you play on
                        (S.meta settings - widescreen enemies, cheats, RAM codes - are
                        applied exactly as recorded; your own settings take over after)
@@ -109,8 +109,10 @@ cd $game
 # Every session is replayable: inputs per controller poll + full log (misses, bad returns).
 mkdir -p sessions; stamp=$(date +%Y%m%d-%H%M%S)
 export PS_POLL_RECORD=${PS_POLL_RECORD:-sessions/$stamp.polls}
+export PS_CRASH_REPORT=${PS_CRASH_REPORT:-sessions/$stamp.crash}
+: > "$PS_CRASH_REPORT"
 exec 2> >(tee sessions/$stamp.log >&2)
-print "session: $game/sessions/$stamp.{polls,log}"
+print "session: $game/sessions/$stamp.{polls,log,crash}"
 [[ -n $resume ]] && export PS_RESUME=$resume
 case $exe in
   *_native) print "build: ${exe:t} - native Mega CD (no emulator core; work in progress: special stages not drawn; --reference for the emulator-core build)" ;;

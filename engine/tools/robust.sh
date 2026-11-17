@@ -5,8 +5,9 @@
 # way; one line per title in robust_report.md, details in games/TITLE/build/robust.json.
 #
 # Recordings: build/selfcheck.polls, the player's sessions (games/TITLE/sessions and
-# Application Support/PixelSorcery/TITLE/sessions), and games/TITLE/recordings/*.polls (long
-# plays, TAS conversions - local only). Sessions are compared with logic settings off (no
+# Application Support/PixelSorcery/TITLE/sessions), consented shared sessions in shared/TITLE/ISSUE,
+# and games/TITLE/recordings/*.polls (long plays, TAS conversions - local only). Shared recordings
+# reach this directory only after consent, validation, and replay by sessions_fetch.py. Sessions are compared with logic settings off (no
 # .meta): cheats and widescreen enemies change the game on purpose.
 # Steps per title: check_seeds.py (seeds inside instructions), sidebyside.py on every recording
 # (adds missing entry points, regenerates, until MATCH or a real divergence), the same with
@@ -38,7 +39,7 @@ for t in $titles; do
   [[ -f $rom ]] || continue                          # no ROM on this machine: not a result
   # the recordings, copied without their .meta (logic settings off)
   recs=(); i=0
-  for p in $g/build/selfcheck.polls(N) $g/sessions/*.polls(N) "$HOME/Library/Application Support/PixelSorcery/$t/sessions/"*.polls(N) $g/recordings/*.polls(N); do
+  for p in $g/build/selfcheck.polls(N) $g/sessions/*.polls(N) "$HOME/Library/Application Support/PixelSorcery/$t/sessions/"*.polls(N) "$root/shared/$t/issues/"*/session.polls(N) "$root/shared/$t/api/"*/session.polls(N) $g/recordings/*.polls(N); do
     (( $(wc -l < "$p") > 120 )) || continue
     i=$((i + 1)); cp "$p" $tmp/$t-$i.polls; recs+=($tmp/$t-$i.polls)
     print "$t-$i ${p:t}" >> $tmp/$t.names
