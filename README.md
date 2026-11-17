@@ -117,9 +117,10 @@ In a game: the settings menu (F1, Tab, the pad's Back, or C while paused) has sa
 select (the game's own, reached for you), DISPLAY, SOUND & CONTROLS and CHEATS pages. **Rewind mode**: REWIND or
 FORWARD (Backspace / `]`, or the pad's triggers) pauses on the last 30 seconds; hold them to move, A plays from there.
 
-**Share a session** (optional, never automatic): "Share last session..." shows exactly what would be sent (your
-button presses, version and settings, a log without your user name or paths) and asks for your consent; then you
-post it yourself as an issue here, and it is replayed against the original. Close the issue to withdraw it.
+**Share a session or crash report** (optional, never automatic): "Share last session or crash report..." shows
+the consent text before sending. A crash report adds only the signal name or exception code to your button presses,
+version, settings and scrubbed log. The accepted report is replayed against the original and joins regression runs;
+use **Withdraw** to remove it. No screenshots, audio or game data are sent.
 
 ## Quick start (macOS)
 
@@ -127,8 +128,9 @@ post it yourself as an issue here, and it is replayed against the original. Clos
 git clone --recursive https://github.com/nico3185/pixel_sorcery.git PixelSorcery
 cd PixelSorcery
 brew install cmake ninja sdl2 python m68k-elf-binutils
-python3 -m venv engine/.venv && engine/.venv/bin/pip install capstone numpy pillow librosa
-mkdir -p ../roms        # your dumps, named as in the table above (or ROM=/path/to/rom)
+make setup                          # Python tools, and a check of the system tools
+make all ROM_DIR=/path/to/your/dumps   # dumps under any names: found by content, every port and
+                                    # every derived image they allow is built (see `make help`)
 ./play.sh               # list the games
 ./play.sh sh2           # first run: recompile + build + self-check, then play
 ./play.sh coi --list    # recorded sessions
@@ -174,8 +176,8 @@ Download `PixelSorcery-<version>-windows.exe` from the
   to C and compiled for your PC (a few minutes per game the first time).
 - **Your games:** a card per built game: **Play**. **Controller…** maps your gamepad (A B C START
   X Y Z, rewind, fast forward). **Collections** opens a cartridge shelf of your built games.
-- **Share last session…** (on a card): only after you read and accept the consent text, it packs
-  your last session of that game to report a problem.
+- **Share last session or crash report…** (on a card): after you read and accept the consent text, it sends
+  the latest session and includes a minimal crash marker if that run crashed.
 
 Mega CD titles need your console's BIOS (`scd_us.bin`, `scd_eu.bin` or `scd_jp.bin`) in
 `%APPDATA%\PixelSorcery\bios`. The same window runs on macOS and Linux from a clone:

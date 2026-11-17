@@ -22,7 +22,7 @@ print "1/4 evidence: $(ls $g/recordings/start-*.polls | wc -l | tr -d ' ') level
 i=0
 for p in $g/recordings/start-*.polls; do
   b=${p:t:r}
-  [[ -n ${S3_KEEP_EV:-} && -n "$(ls $work/cpu/$b/*.bin 2>/dev/null)" ]] && continue
+  [[ -n ${S3_KEEP_EV:-} && -n "$(print -l $work/cpu/$b/*.bin(N))" ]] && continue
   n=$(wc -l < $p); fr=$((n * 2 + 600))
   mkdir -p $work/cpu/$b $work/dma/$b $work/z80/$b $work/mcpu/$b $work/mdma/$b
   PS_ROMUSE_CPUONLY=1 PS_ROMUSE_LEVEL=1 PS_ROMUSE=$work/cpu/$b PS_ROMUSE_KEY=FFFE10 PS_PTRS=$work/cpu/$b/ptrs.txt PS_PTRS_NEAR=0x80 \
@@ -84,8 +84,9 @@ ex=(); for f in $work/cpu/*/*.bin(N) $work/mcpu/*/*.bin(N); do ex+=(--exec $f); 
     --map 000000-200000=400000 --targets-out $work/targets.txt >/dev/null 2>&1 )
 PS_Z80_DUMP=$work/z80dump.bin $tr --headless --frames 600 --trace-out /dev/null $rom >/dev/null 2>&1   # the driver as unpacked
 print "3/4 helpers"
-m68k-elf-as -m68000 --defsym QBASE=0xFB00 --defsym QEND=0xFBFC -o $work/dq.o $here/games/dmaqueue.s
-m68k-elf-ld -Ttext=0x200400 -o $work/dq.elf $work/dq.o; m68k-elf-objcopy -O binary $work/dq.elf $work/dq.bin
+m68k-elf-as -m68000 --defsym QBASE=0xFB00 --defsym QEND=0xFBFC --defsym ART2LO=0x100000 --defsym ART2HI=0x120000 --defsym ART3LO=1 --defsym ART3HI=1 -o $work/dq.o $here/games/dmaqueue_map.s
+m68k-elf-ld -Ttext=0x200B00 -o $work/dq.elf $work/dq.o; m68k-elf-objcopy -O binary $work/dq.elf $work/dq.bin
+(( $(wc -c < $work/dq.bin) <= 0x200 )) || { print -u2 "dmaqueue_map.s: over 512 bytes (images start at \$200D00)"; exit 1; }
 m68k-elf-as -m68000 --defsym ABSORB=1 --defsym LOADSCREEN=1 -o $work/sw.o $here/swap.s
 m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $work/swap.bin $work/sw.o
 # the images and their groups; zone x 2 + act -> image (ACTS table); captures by zone/act (cpu/dma, keys)
@@ -154,7 +155,7 @@ print('%06X-%06X' % (p, p + 0xC00) if 0x200 <= p < len(r) else '')")
       --fixed 100000-120000=0A0000 $zfix --rigid BA100-BDA00 --rigid 166500-166B00 --rigid 18BB00-18C800 \
       $coll --force 91F0C-9250C --force 9238C-$plcend --force 000000-000800 --refs $work/refs_$name.txt \
       --force-file $work/funcs_$name.txt --force-file $work/tables_$name.txt \
-      --place ${S3_SIZES:+400000-600000,}200B00-23F000,020000-040000 > $work/map_$name.txt 2> $work/pack_$name.txt; }
+      --place ${S3_SIZES:+400000-600000,}200D00-23F000,020000-040000 > $work/map_$name.txt 2> $work/pack_$name.txt; }
   pack 0x200 0x800 || pack 0x100 0x200 || { print -u2 "$name: does not fit ($(tail -1 $work/pack_$name.txt))"; exit 1; }
   [[ -n ${S3_SIZES:-} ]] && { print "  $name: $(tail -1 $work/pack_$name.txt)"; continue; }
   at() { python3 -c "
@@ -196,8 +197,8 @@ open('$work/z80patch_pairs.bin', 'wb').write(out)"
       --map $(cat $work/map_$name.txt) \
       --patch 344=72FF6000014C4E71 --patch C32A=4E714E714E714E71 --patch C342=4E714E714E714E71 --patch C38A=4E714E714E714E71 \
       --patch C3AE=4E714E714E714E71 --patch 484=0080 --patch 33C=3F3F --patch 4CEB6=4E714E714E71 \
-      --patch 4B6=4EB9002005104E714E714E714E71 --patch 5FB2=4EF900200514 --patch 1588=4EF900200400 $zp $zb \
-      --blob 200400=$work/dq.bin --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin \
+      --patch 4B6=4EB9002005104E714E714E714E71 --patch 5FB2=4EF900200514 --patch 1588=4EF900200B00 $zp $zb \
+      --blob 200B00=$work/dq.bin --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin \
       --blob 200700=$work/zf_$name.bin | head -1 )
   print "  $name: $(tail -1 $work/pack_$name.txt)"
   [[ $name == front ]] && args+=(--game 4:$out.front) || args+=(--image $grp[$name]:$out.$name)

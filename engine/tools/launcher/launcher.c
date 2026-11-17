@@ -24,7 +24,7 @@
  * MickeyAndDonaldCollection: here a clip captured once, demo.bmp, as the label).
  * GAMESDIR/ID is the title's native executable. Per title, PREF/ID/ (SDL_GetPrefPath:
  * ~/Library/Application Support/PixelSorcery/ID on macOS, as make_app.sh's apps) keeps the ROM
- * (asked for once), label.bmp, demo.bmp and the play sessions (sessions/DATE.{polls,log}).
+ * (asked for once), label.bmp, demo.bmp and the play sessions (sessions/DATE.{polls,log,crash}).
  * --roms DIR: look there for ROM FILE NAME first (development). PS_LAUNCHER_HOME=dir replaces
  * PREF (tests). Keys: left/right, up/down (versions), Return/Z/Space play, Tab settings, F or F11 fullscreen, Esc
  * quits; gamepads: d-pad or stick, A/Start play, Y/Back settings; mouse: click a cartridge, wheel. */
@@ -492,13 +492,16 @@ static Game *s_play_game;
 static int s_fullscreen;
 static int SDLCALL play_thread(void *u) {
     Game *g = u;
-    char sess[1100], log[1200], rec[1200], stamp[32];
+    char sess[1100], log[1200], rec[1200], crash[1200], stamp[32];
     time_t t = time(NULL); strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&t));
     snprintf(sess, sizeof sess, "%s/sessions", g->store); mkdirs(sess);
     snprintf(log, sizeof log, "%s/%s.log", sess, stamp);
     snprintf(rec, sizeof rec, "PS_POLL_RECORD=%s/%s.polls", sess, stamp);
+    snprintf(crash, sizeof crash, "PS_CRASH_REPORT=%s/%s.crash", sess, stamp);
+    char crash_path[1200]; snprintf(crash_path, sizeof crash_path, "%s/%s.crash", sess, stamp);
+    FILE *crash_file = fopen(crash_path, "w"); if (crash_file) fclose(crash_file);
     char res[1300]; snprintf(res, sizeof res, "PS_RESUME=%s", g->resume);
-    const char *env[] = { rec, "PS_RENDERER=native", "PS_Z80=recomp", "PS_LAUNCHER=1", *g->resume ? res : NULL, NULL };
+    const char *env[] = { rec, crash, "PS_RENDERER=native", "PS_Z80=recomp", "PS_LAUNCHER=1", *g->resume ? res : NULL, NULL };
     const char *full[] = { "--fullscreen", NULL };
     settings_apply(g);
     run_game(g, SET.fullscreen ? full : NULL, env, log);

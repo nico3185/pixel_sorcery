@@ -13,7 +13,7 @@
  *                         hand control to the player (resume a run; PS_POLL_RECORD keeps the
  *                         whole session, replayed part included, so it still replays exactly)
  *   PS_POLL_STOP=N        exit after poll N (replay to a divergence and stop)
- *   PS_STATE_DUMP=dir:N   every N polls: dir/state_<poll>.bin = 68K RAM 64K | Z80 RAM 8K | VRAM 64K |
+ *   PS_STATE_DUMP=dir:N   (PS_STATE_MCD=1: + Mega CD PRG-RAM 512K | 2M Word RAM 256K) every N polls: dir/state_<poll>.bin = 68K RAM 64K | Z80 RAM 8K | VRAM 64K |
  *                         CRAM 128 | VSRAM 128 | VDP regs 32 (GPGX native byte order)
  *   PS_AUDIO_LOG=file     every YM2612/PSG write: "poll line chip addr data"
  *   PS_CHECKPOINT_MASK=a-b,c-d   68K RAM offsets (hex, end exclusive) zeroed before hashing:
@@ -82,10 +82,21 @@ static void on_poll(void)
             fwrite(g_ps_vdp.reg, 1, 0x20, f); fclose(f);
 #else
             fwrite(vram, 1, 0x10000, f);
-            fwrite(cram, 1, 0x80, f); fwrite(vsram, 1, 0x80, f); fwrite(reg, 1, 0x20, f); fclose(f);
+            fwrite(cram, 1, 0x80, f); fwrite(vsram, 1, 0x80, f); fwrite(reg, 1, 0x20, f);
+            { extern int ps_mcd_mem(const uint8_t **, const uint8_t **); const uint8_t *prg, *wram;
+              if (getenv("PS_STATE_MCD") && ps_mcd_mem(&prg, &wram)) { fwrite(prg, 1, 0x80000, f); fwrite(wram, 1, 0x40000, f); } }
+            fclose(f);
 #endif
         }
     }
+#ifndef PS_NATIVE
+    {   /* PS_CDD_TRACK=file: "poll status track lba" whenever the CD drive's state changes (Mega CD) */
+        static FILE *cl; static int init, ls = -1, lt = -1;
+        if (!init) { init = 1; const char *p = getenv("PS_CDD_TRACK"); if (p && *p) cl = fopen(p, "w"); }
+        int st, tr, lba; extern int ps_cdd_state(int *, int *, int *);
+        if (cl && ps_cdd_state(&st, &tr, &lba) && (st != ls || tr != lt)) { fprintf(cl, "%ld %d %d %d\n", n, st, tr, lba); fflush(cl); ls = st; lt = tr; }
+    }
+#endif
     if (s_play && s_live_after && n >= s_play_n) {
         free(s_play); s_play = NULL;
         fprintf(stderr, "ps_poll: resumed at poll %ld, live input\n", n);
@@ -95,7 +106,10 @@ static void on_poll(void)
         else { s_cur[0] = s_cur[1] = 0; }
         input.pad[0] = s_cur[0]; input.pad[PS_PAD_INDEX(1)] = s_cur[1];
     }
-    if (s_rec) fprintf(s_rec, "%04X %04X\n", input.pad[0], input.pad[PS_PAD_INDEX(1)]);
+    if (s_rec) {
+        fprintf(s_rec, "%04X %04X\n", input.pad[0], input.pad[PS_PAD_INDEX(1)]);
+        if (n % 60 == 0) fflush(s_rec);             /* crash reports keep the last second of input */
+    }
     if (s_watch) {
         fprintf(s_watch, "%ld %ld", n, ps_frames);
         for (int w = 0; w < s_nwatch; w++) {

@@ -186,11 +186,11 @@ struct ContentView: View {
                                     .buttonStyle(.borderedProminent).controlSize(.large)
                                 Spacer()
                                 Menu("Share") {
-                                    Button("Share last session…") { sharing = t }
+                                    Button("Share last session or crash report…") { sharing = t }
                                     Button("Status of my last share") { engine.send("shared " + t.id) }
                                     Button("Withdraw my last share") { engine.send("withdraw " + t.id) }
                                 }.menuStyle(.borderlessButton).fixedSize().controlSize(.small)
-                                    .help("Send your last play session of this game to the project - only after you agree")
+                                    .help("Send your last play session or crash report to the project - only after you agree")
                             }
                         }
                         .padding(12).frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
@@ -202,7 +202,7 @@ struct ContentView: View {
         }
         .sheet(item: $sharing) { t in               // explicit consent first: the whole text, Cancel or I agree
             VStack(alignment: .leading, spacing: 12) {
-                Text("Share your last session of \(t.name)?").font(.title3).bold()
+                Text("Share your last session or crash report of \(t.name)?").font(.title3).bold()
                 ScrollView {
                     Text((try? String(contentsOfFile: engine.repo + "/engine/tools/share/consent.txt", encoding: .utf8)) ?? "")
                         .font(.system(size: 12, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading)
@@ -211,7 +211,7 @@ struct ContentView: View {
                 HStack {
                     Spacer()
                     Button("Cancel") { sharing = nil }.keyboardShortcut(.cancelAction)
-                    Button("I agree — send the session") { engine.send("share " + t.id); sharing = nil }
+                    Button("I agree — send the report") { engine.send("share " + t.id); sharing = nil }
                 }
             }.padding(20).frame(width: 720)
         }

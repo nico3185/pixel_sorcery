@@ -10,6 +10,11 @@
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
+#include <signal.h>
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #ifdef __APPLE__
 #include <objc/message.h>
 #include <objc/runtime.h>
@@ -26,6 +31,11 @@
 static LONG WINAPI ps_crash_handler(EXCEPTION_POINTERS *ep) {
     fprintf(stderr, "\n*** CRASH: exception 0x%08lX at %p ***\n",
             ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress);
+    const char *crash_path = getenv("PS_CRASH_REPORT");
+    if (crash_path && *crash_path) {
+        FILE *report = fopen(crash_path, "w");
+        if (report) { fprintf(report, "exception=0x%08lX\n", ep->ExceptionRecord->ExceptionCode); fclose(report); }
+    }
     HANDLE process = GetCurrentProcess(), thread = GetCurrentThread();
     SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
     SymInitialize(process, NULL, TRUE);
@@ -54,6 +64,47 @@ static LONG WINAPI ps_crash_handler(EXCEPTION_POINTERS *ep) {
     }
     fflush(stderr);
     return EXCEPTION_EXECUTE_HANDLER;
+}
+#elif defined(_WIN32)
+/* MinGW builds do not use MSVC's SEH/StackWalk handler above; use the C runtime's
+ * signal bridge so fatal signals still leave the same minimal, user-consented marker. */
+static void ps_crash_signal(int sig) {
+    const char *path = getenv("PS_CRASH_REPORT");
+    if (path && *path) {
+        const char *name = sig == SIGSEGV ? "signal=SIGSEGV\n" : sig == SIGABRT ? "signal=SIGABRT\n" :
+                           sig == SIGFPE ? "signal=SIGFPE\n" : sig == SIGILL ? "signal=SIGILL\n" : "signal=UNKNOWN\n";
+        FILE *report = fopen(path, "w"); if (report) { fputs(name, report); fclose(report); }
+    }
+    signal(sig, SIG_DFL); raise(sig);
+}
+static void ps_install_crash_handler(void) {
+    signal(SIGSEGV, ps_crash_signal); signal(SIGABRT, ps_crash_signal);
+    signal(SIGFPE, ps_crash_signal); signal(SIGILL, ps_crash_signal);
+}
+#else
+/* A crash marker is deliberately minimal: the surrounding .polls and .log are enough to
+ * reproduce it, and the marker itself contains no personal or game data. write(2) and
+ * sigaction(2) are async-signal-safe, so this remains usable for fatal signals. */
+static int s_crash_fd = -1;
+static void ps_crash_signal(int sig) {
+    const char *name = sig == SIGSEGV ? "signal=SIGSEGV\n" : sig == SIGABRT ? "signal=SIGABRT\n" :
+                       sig == SIGBUS ? "signal=SIGBUS\n" : sig == SIGFPE ? "signal=SIGFPE\n" :
+                       sig == SIGILL ? "signal=SIGILL\n" : "signal=UNKNOWN\n";
+    size_t len = sig == SIGSEGV ? 15 : sig == SIGABRT ? 15 : sig == SIGBUS ? 14 : sig == SIGFPE ? 14 : sig == SIGILL ? 14 : 15;
+    if (s_crash_fd >= 0) (void)write(s_crash_fd, name, len);
+    struct sigaction sa = {0}; sa.sa_handler = SIG_DFL; sigemptyset(&sa.sa_mask);
+    (void)sigaction(sig, &sa, NULL);
+    (void)raise(sig);
+}
+static void ps_install_crash_handler(void) {
+    const char *path = getenv("PS_CRASH_REPORT");
+    if (!path || !*path) return;
+    s_crash_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (s_crash_fd < 0) return;
+    const int signals[] = { SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL };
+    struct sigaction sa = {0}; sa.sa_handler = ps_crash_signal;
+    sigemptyset(&sa.sa_mask); sa.sa_flags = SA_RESETHAND;
+    for (size_t i = 0; i < sizeof signals / sizeof signals[0]; i++) (void)sigaction(signals[i], &sa, NULL);
 }
 #endif
 
@@ -172,6 +223,8 @@ int platform_parse_args(int argc, char **argv) {
     for (int i = 0; s_argv0 && i < argc; i++) s_argv0[i] = strdup(argv[i]);
 #ifdef _MSC_VER
     SetUnhandledExceptionFilter(ps_crash_handler);
+#else
+    ps_install_crash_handler();
 #endif
     int out = 1;
     for (int i = 1; i < argc; i++) {

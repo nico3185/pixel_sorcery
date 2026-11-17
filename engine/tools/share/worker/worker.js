@@ -7,8 +7,8 @@
 // minute per address, in Cloudflare's memory only); exponential refusal (one upload per 10 minutes per sender; each
 // early or refused attempt doubles the wait, 1 min .. 24 h; the sender is a one-way HMAC of the address under a key
 // that changes every day, deleted when its wait ends - a day later after refusals); at most DAILY uploads a day and MAX_BYTES in the bucket.
-const CONSENTS = { 2: '__CONSENT_V2_SHA256__' };          // version -> sha256 of engine/tools/share/consent.txt
-const ALLOWED = new Set(['session.polls', 'session.meta', 'session.log', 'session.poke', 'share.json']);
+const CONSENTS = { 2: '__CONSENT_V2_SHA256__', 3: '__CONSENT_V3_SHA256__' }; // published consent hashes
+const ALLOWED = new Set(['session.polls', 'session.meta', 'session.log', 'session.poke', 'session.crash', 'share.json']);
 const MAX_ZIP = 1 << 20, DAILY = 100, MAX_BYTES = 2 * 2 ** 30, GAP = 600, BASE = 60, CAP = 86400;
 
 const json = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', ...h } });
@@ -72,15 +72,24 @@ async function upload(req, env) {
     if (extra.length || !files['share.json'] || !files['session.polls']) throw new Error('files: ' + (extra.join(', ') || 'missing'));
     share = JSON.parse(new TextDecoder().decode(await read(buf, files['share.json'])));
     if (!CONSENTS[share.consent_version] || CONSENTS[share.consent_version] !== share.consent_sha256) throw new Error('consent text unknown');
+    if (!['session', 'crash'].includes(share.report_type || 'session')) throw new Error('report type');
+    if (share.report_type === 'crash' && !files['session.crash']) throw new Error('crash marker missing');
+    if ((share.report_type === 'crash') !== !!files['session.crash']) throw new Error('report type does not match files');
+    const listed = new Set(Object.keys(share.files || {}));
+    if (Object.keys(files).some(n => n !== 'share.json' && !listed.has(n)) || Object.keys(files).some(n => n !== 'share.json' && !share.files[n])) throw new Error('file list mismatch');
     for (const [k, h] of Object.entries(share.files || {}))
       if (!files[k] || await sha256(await read(buf, files[k])) !== h) throw new Error('checksum: ' + k);
+    if (share.report_type === 'crash') {
+      const crash = new TextDecoder().decode(await read(buf, files['session.crash']));
+      if (!/^signal=SIG(SEGV|ABRT|BUS|FPE|ILL)\n$/.test(crash) && !/^exception=0x[0-9A-Fa-f]{1,8}\n$/.test(crash)) throw new Error('invalid crash marker');
+    }
     if (!/^[a-z0-9_-]{1,40}$/.test(share.title || '')) throw new Error('title');
   } catch (e) { return refuse(env, who, row, 'refused: ' + e.message, 400); }
   const id = crypto.randomUUID(), key = hex(crypto.getRandomValues(new Uint8Array(32)));
   await env.BUCKET.put(`api/${id}.zip`, buf);
-  await env.DB.prepare(`insert into uploads (id, key_sha256, title, rom_sha1, consent_version, consent_sha256, consented_at, zip_sha256, files, size, status)
-                        values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'received')`)
-    .bind(id, await sha256(key), share.title, share.rom_sha1 || '', share.consent_version, share.consent_sha256, share.consented || '',
+  await env.DB.prepare(`insert into uploads (id, key_sha256, title, report_type, rom_sha1, consent_version, consent_sha256, consented_at, zip_sha256, files, size, status)
+                        values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'received')`)
+    .bind(id, await sha256(key), share.title, share.report_type || 'session', share.rom_sha1 || '', share.consent_version, share.consent_sha256, share.consented || '',
           await sha256(buf), JSON.stringify(share.files || {}), buf.byteLength).run();
   await env.DB.prepare('insert into throttle (who, strikes, until) values (?1, 0, ?2) on conflict(who) do update set strikes = 0, until = ?2')
     .bind(who, now() + GAP).run();

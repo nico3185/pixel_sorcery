@@ -55,12 +55,13 @@ launch:	move.w	#0x2700, %sr
 1:	move.w	(%a0)+, (%a1)+
 	dbra	%d0, 1b
 	jmp	0xFFF000
-| the game's boot sector + IP are in word RAM: its code (disc $76E-$FFF) to $FF056E, where the
-| BIOS puts it after the security block; then, with the sub CPU running its module, jump in
+| the game's boot sector + IP are in word RAM: its code (disc SECEND-$FFF: after the region's security block,
+| $76E Europe, $784 USA, $356 Japan; build_disc.py --defsym) to $FF0000 + SECEND - $200, where the BIOS puts
+| it after the security block; then, with the sub CPU running its module, jump in
 scdboot:
-	lea	0x200000 + 0x76E, %a0
-	lea	0xFF056E, %a1
-	move.w	#(0x1000 - 0x76E) / 2 - 1, %d0
+	lea	0x200000 + SECEND, %a0
+	lea	0xFF0000 + SECEND - 0x200, %a1
+	move.w	#(0x1000 - SECEND) / 2 - 1, %d0
 1:	move.w	(%a0)+, (%a1)+
 	dbra	%d0, 1b
 	move.b	#0x77, 0xA1200E                 | main flag $77: copied
@@ -71,7 +72,7 @@ scdboot:
 	bne.s	3b
 	movea.l	#0xFFFD00, %sp
 	move.w	#0x2000, %sr                    | interrupts on, as the BIOS enters an IP: its
-	jmp	0xFF056E                        | VBlank raises the sub CPU's level 2 (SHCD's module runs on it)
+	jmp	0xFF0000 + SECEND - 0x200       | VBlank raises the sub CPU's level 2 (SHCD's module runs on it)
 scdend:
 start:	lea	swapstub(%pc), %a0              | image switch stub (swap.s) to $FFFD18: images
 	lea	0xFFFD18, %a1                   | of a game too big for the main CPU call it

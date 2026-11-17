@@ -343,15 +343,15 @@ class App:
         self.send('shelf ' + name); self.status.set(f'Opening the {name} shelf…')
 
     def share(self, t):   # explicit, recorded consent first: only "I agree" sends the command
-        w = tk.Toplevel(self.root); w.title('Share your last session'); w.configure(bg=BG); w.transient(self.root); w.grab_set()
+        w = tk.Toplevel(self.root); w.title('Share your last session or crash report'); w.configure(bg=BG); w.transient(self.root); w.grab_set()
         try: text = open(os.path.join(TOOLS, 'share', 'consent.txt'), encoding='utf-8').read()
         except OSError: text = '(consent.txt is missing: nothing can be shared)'
-        ttk.Label(w, text=f'Share your last {self.rows[t]["name"]} session', font=HEAD, padding=(16, 16, 16, 6)).pack(anchor='w')
+        ttk.Label(w, text=f'Share your last {self.rows[t]["name"]} session or crash report', font=HEAD, padding=(16, 16, 16, 6)).pack(anchor='w')
         box = tk.Text(w, wrap='word', width=78, height=20, font=BODY, relief='flat', padx=10, pady=10)
         box.insert('1.0', text); box.configure(state='disabled'); box.pack(fill='both', expand=True, padx=16)
         bar = ttk.Frame(w, padding=16); bar.pack(fill='x')
         def agree(): w.destroy(); self.send('share ' + t); self.status.set('Sending the session…')
-        tk.Button(bar, text='I agree - send the session', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN,
+        tk.Button(bar, text='I agree - send the report', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN,
                   activeforeground='white', relief='flat', padx=14, pady=4, command=agree,
                   state='normal' if 'missing' not in text[:40] else 'disabled').pack(side='right')
         ttk.Button(bar, text='Cancel', command=w.destroy).pack(side='right', padx=8)

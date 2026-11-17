@@ -15,13 +15,13 @@ starts=(GHZ1 GHZ2 GHZ3 MZ1 MZ2 MZ3 SYZ1 SYZ2 SYZ3 LZ1 LZ2 LZ3 SLZ1 SLZ2 SLZ3 SBZ
 python3 -c "
 m = {i: 0x80 for a in (300, 420, 800) for i in range(a, a + 4)}
 open('$o/boot.mv', 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(1300)))"
-GENRECOMP_REGION=2 GENRECOMP_MOVIE=$o/boot.mv PS_POLL_RECORD=$o/boot.polls $R --headless --frames 1300 $cue >/dev/null 2>&1
+GENRECOMP_MOVIE=$o/boot.mv PS_POLL_RECORD=$o/boot.polls $R --headless --frames 1300 $cue >/dev/null 2>&1
 i=0
 for n in $starts; do
   ( r=$rec/start-$n.polls; L=$(wc -l < $r)
     { head -350 $o/boot.polls; tail -n +129 $r; } > $o/$n.rp
     PS_POLL_REPLAY=$r PS_WATCH=$o/$n.cart:F600,FE10+2,D008+2 $R --headless --frames $((L * 2 + 300)) $rom >/dev/null 2>&1
-    GENRECOMP_REGION=2 PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,D008+2 \
+    PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,D008+2 \
       $R --headless --frames $((L * 2 + 3000)) $cue >/dev/null 2>&1 ) &
   i=$((i + 1)); (( i % 6 == 0 )) && wait
 done; wait

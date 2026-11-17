@@ -4,11 +4,11 @@
 With it: a zip of session.{polls,meta,log[,poke]} + share.json, stripped of anything personal (home folder
 and user name in paths, the gamepad's name and identifier, the play time in file names), the consent recorded
 locally (consents.json beside the zip folder), and a prefilled issue URL printed (TITLE=... URL=... ZIP=...).
-SESSION defaults to the title's latest session (games/TITLE/sessions)."""
+SESSION defaults to the title's latest session (game folder or platform app data)."""
 import datetime, getpass, glob, hashlib, json, os, re, sys, urllib.parse, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
-CONSENT = os.path.join(HERE, 'consent.txt'); CONSENT_VERSION = 2
+CONSENT = os.path.join(HERE, 'consent.txt'); CONSENT_VERSION = 3
 ENDPOINT = os.path.join(HERE, 'endpoint.txt')   # the project's session API (worker/), written by worker/deploy.py
 REPO = 'nico3185/pixel_sorcery'
 
@@ -25,6 +25,15 @@ def scrub(text):
         out.append(line)
     return '\n'.join(out) + '\n'
 
+def crash_marker(base):
+    """Return a known-safe fatal signal/exception marker, or None for a normal run."""
+    path = base + '.crash'
+    if not os.path.isfile(path) or not os.path.getsize(path): return None
+    crash = open(path, 'rb').read(256)
+    if crash not in (b'signal=SIGSEGV\n', b'signal=SIGABRT\n', b'signal=SIGBUS\n', b'signal=SIGFPE\n', b'signal=SIGILL\n') and not re.fullmatch(rb'exception=0x[0-9A-Fa-f]{1,8}\n', crash):
+        raise ValueError('crash marker is malformed')
+    return crash
+
 def rom_sha1(title):
     cfg = os.path.join(ROOT, 'games', title, 'sidebyside.json')
     try: rom = json.load(open(cfg)).get('rom', '')
@@ -36,6 +45,16 @@ def rom_sha1(title):
             return hashlib.sha1(open(p, 'rb').read()).hexdigest()
     return ''
 
+def session_dirs(title):
+    dirs = [os.path.join(ROOT, 'games', title, 'sessions')]
+    if sys.platform == 'darwin':
+        dirs.append(os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'PixelSorcery', title, 'sessions'))
+    elif os.name == 'nt':
+        dirs.append(os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'PixelSorcery', title, 'sessions'))
+    else:
+        dirs.append(os.path.join(os.environ.get('XDG_DATA_HOME', os.path.join(os.path.expanduser('~'), '.local', 'share')), 'PixelSorcery', title, 'sessions'))
+    return dirs
+
 def main():
     a = sys.argv[1:]
     if not a: sys.exit(__doc__)
@@ -46,7 +65,7 @@ def main():
     if '--withdraw' in a or '--status' in a: return manage(title, rec, '--withdraw' in a)
     sess = next((x for x in a if x.endswith('.polls')), None)
     if not sess:
-        c = sorted(glob.glob(os.path.join(ROOT, 'games', title, 'sessions', '*.polls')), key=os.path.getmtime)
+        c = sorted((p for d in session_dirs(title) for p in glob.glob(os.path.join(d, '*.polls'))), key=os.path.getmtime)
         c = [x for x in c if os.path.getsize(x) > 0]
         if not c: sys.exit('no session for ' + title)
         sess = c[-1]
@@ -58,9 +77,13 @@ def main():
         files['session.meta'] = ''.join(l for l in open(base + '.meta') if l.split()[:1] and l.split()[0] in ('version', 'title', 'logic')).encode()
     if os.path.exists(base + '.log'): files['session.log'] = scrub(open(base + '.log', errors='replace').read()).encode()
     if os.path.exists(base + '.poke'): files['session.poke'] = open(base + '.poke', 'rb').read()
+    try: crash = crash_marker(base)
+    except ValueError as e: sys.exit(str(e) + '; refusing to share it')
+    if crash is not None: files['session.crash'] = crash
     when = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     consent_sha = hashlib.sha256(open(CONSENT, 'rb').read().replace(b'\r\n', b'\n')).hexdigest()   # a Windows clone: CRLF
-    share = {'title': title, 'rom_sha1': rom_sha1(title), 'consent_version': CONSENT_VERSION, 'consent_sha256': consent_sha,
+    share = {'title': title, 'report_type': 'crash' if 'session.crash' in files else 'session',
+             'rom_sha1': rom_sha1(title), 'consent_version': CONSENT_VERSION, 'consent_sha256': consent_sha,
              'consented': when, 'note': note, 'files': {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}}
     files['share.json'] = json.dumps(share, indent=1).encode()
     os.makedirs(out, exist_ok=True)
