@@ -177,20 +177,33 @@ Every later step reads `ROMS` only, so `make all` can be re-run any time; it reb
 | `make shbs-rom` | `../roms/shk_sh1.bin`, SHBS for a Genesis | SHK, SH1 |
 | `make shcd` | `games/shcd/build/shcd_native` | a SHCD disc + its BIOS |
 | `make shcd-reference` | the same plus the emulator-core reference build | a SHCD disc + its BIOS |
-| `make sh-compilation` | `build/ultimate-sh/ultimate.cue` + `.iso`, the Ultimate SH Mega CD disc | SHCD (Europe) disc, SH1 (2, 3, SHK: their cards) |
+| `make sh-compilation` | `~/Documents/PixelSorcery/Ultimate SH (US)/ultimate.cue`, the Ultimate SH Mega CD disc (built in `build/ultimate-sh-US`) | a SHCD disc (US by default), SH1 (2, 3, SHK: their cards) |
+| `make sh-compilation-all` | one disc per region of SHCD you have | SHCD discs |
 | `make derived-all` | the four rows above, each when its inputs are there | |
 | `make all` | setup, prepare-roms, build-all, derived-all | |
 | `make launcher-macos` / `-linux` / `-windows` | the SH Collection shelf of the built ports | built ports, on that OS |
 | `make package-macos` / `-linux` / `-windows` | the PixelSorcery app: DMG / .deb / Windows zip + exe (`VERSION=x.y.z`) | on that OS (MSYS2 for Windows) |
 
-**The compilation disc** is found without arguments: the Europe SHCD is recognised by its hash
+**The compilation disc** is found without arguments: the SHCD disc of `COMPILATION_REGION` (US,
+the default: 60 Hz like the cartridges; EU: 50 Hz; JP: not working yet) is recognised by its hash
 anywhere under `ROM_DIR` or `ROMS` (`engine/tools/megacd/find_disc.py`). Its game-select picture is
 `menu.png` (or a converted `menu.bin`) in `ROM_DIR` if you have one, else a plain 4x2 card menu is
-drawn (`engine/tools/megacd/menu_default.py`). Overrides: `COMPILATION_DISC=/path/disc.cue`,
-`MENU_IMAGE=/path/menu.png` (`-` = the plain menu), `SONIC_COMPILATION_OUT=dir`. It takes about
-20 minutes (evidence runs of every game on the tracer). Play it:
-`GENRECOMP_REGION=2 games/sh1/build-trace/genrecomp_build/genrecomp_ref build/ultimate-sh/ultimate.cue`.
-Everything it holds comes from your dumps: keep it to yourself.
+drawn (`engine/tools/megacd/menu_default.py`). Overrides, on the make command line only (a variable
+left exported in your shell is ignored): `COMPILATION_DISC=/path/disc.cue`, `MENU_IMAGE=/path/menu.png`
+(`-` = the plain menu), `SONIC_COMPILATION_OUT=dir`. It takes about 20 minutes (evidence runs of every
+game on the tracer).
+
+**Where to find what was made.** The finished disc (its `.cue` and tracks) and the ROMs made from your
+dumps are copied to `EXPORT_DIR`, by default `Documents/PixelSorcery` (`Ultimate SH (US)/ultimate.cue`,
+`shk1.bin`, `shk_sh1.bin`); open the `.cue` in OpenEmu or another Mega CD emulator, or play it
+here: `games/sh1/build-trace/genrecomp_build/genrecomp_ref ~/Documents/PixelSorcery/"Ultimate SH (US)"/ultimate.cue`.
+`EXPORT_DIR=-` keeps them only in the build folders. Everything they hold comes from your dumps: keep
+them to yourself.
+
+**From the build screen.** Every route above is also in the build screen: "More builds" in the
+PixelSorcery app (Mac) and its window on Windows and Linux, `x` in the terminal screen
+(`engine/tools/build_all.sh --tui`). Pick one (the compilation disc with its region) and Build; Show
+opens the folder of what it made.
 
 **Other variables:** `CORES` (parallel jobs, default 4), `DISC`/`SONICCD_DISC` (another SHCD
 cue), `ROMS` or `PS_ROMS_DIR` (another prepared folder), `VERSION` (packages). `make help` lists

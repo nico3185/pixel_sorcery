@@ -168,6 +168,11 @@ v=0x$loader; print('%X'%next(new+v-lo for lo,hi,new in m if lo<=v<hi))")
     zb=(--patch $loader=4EF90023F0004E71 --blob 23F000=$work/z80ram_$name.bin)
   fi
   pt=(); for p in $patches; do pt+=(--patch $p); done
+  # A+B+C+Start back to the menu (games/home.s at $200200): the pad read (ReadJoypads, found by its first two
+  # instructions) jumps there
+  joy=$(python3 -c "import sys; print('%X' % open(sys.argv[1], 'rb').read().find(bytes.fromhex('41F8F60443F900A10003')))" $rom)
+  [[ -f $work/home.bin ]] || { m68k-elf-as -m68000 -o $work/home.o $here/games/home.s && m68k-elf-ld -Ttext=0x200200 --oformat=binary -o $work/home.bin $work/home.o; }
+  [[ $joy != -1 && $joy != "-1" ]] && pt+=(--patch $joy=4EF900200200 --blob 200200=$work/home.bin)
   if [[ -n ${lockhdr:-} ]]; then                  # SHK reads the locked-on cartridge's header
     python3 -c "r=open('$lockhdr','rb').read(); open('$work/lockhdr.bin','wb').write(r[0x100:0x200])"   # ($200100 name,
     pt+=(--blob 200100=$work/lockhdr.bin)         # $200180 serial: SH1 = SHBS's full game)

@@ -212,6 +212,23 @@ int main(int argc, char *argv[]) {
             s_play[s_play_n++] = recomp_input_read_pad(0);
         }
         if (system_hw == SYSTEM_MCD) system_frame_scd(0); else system_frame_gen(0);
+        {   /* PS_PC_LOG=FILE: the main 68000's PC and SR after each frame (where a hang sits) */
+            static FILE *pf; static int pinit; static unsigned s_frame_n;
+            if (!pinit) { pinit = 1; const char *e = getenv("PS_PC_LOG"); if (e && *e) pf = fopen(e, "w"); }
+            {   /* PS_WRAM_AT=FRAME:FILE: the Mega CD's 2M word RAM (256 KB, as the main CPU sees it) at that frame */
+                static long wat = -2; static const char *wf;
+                if (wat == -2) { const char *e = getenv("PS_WRAM_AT"); wat = -1; if (e && strchr(e, ':')) { wat = atol(e); wf = strchr(e, ':') + 1; } }
+                if (system_hw == SYSTEM_MCD && (long)s_frame_n == wat) {
+                    FILE *f = fopen(wf, "wb");
+                    if (f) { for (int i = 0; i < 0x40000; i += 2) { fputc(scd.word_ram_2M[i + 1], f); fputc(scd.word_ram_2M[i], f); } fclose(f); }
+                }
+            }
+            if (pf) fprintf(pf, "%u %06X %04X %08X sub %06X %X %02X\n", s_frame_n, m68k_get_reg(M68K_REG_PC) & 0xFFFFFF,
+                            m68k_get_reg(M68K_REG_SR), m68k_get_reg(M68K_REG_SP),
+                            system_hw == SYSTEM_MCD ? s68k_get_reg(M68K_REG_PC) & 0xFFFFFF : 0,
+                            system_hw == SYSTEM_MCD ? s68k.stopped : 0, system_hw == SYSTEM_MCD ? scd.regs[0x00].byte.l : 0);
+            s_frame_n++;
+        }
         {   /* PS_WAV_OUT=FILE: the sound (44.1 kHz stereo, 16-bit) for recordings */
             int ns = audio_update(audio);
             static FILE *wf; static int init; static long bytes;

@@ -86,10 +86,16 @@ bs=(); if [[ -f ${ROM5:-$root/../roms/shk_sh1.bin} && -f ${ROM4:-$root/../roms/s
   ROM=${ROM4:-$root/../roms/shk.bin} ROM1=$rom EVROM=${ROM5:-$root/../roms/shk_sh1.bin} \
     $here/s3engine_disc.sh shbs $work/bs | tail -1
   bs=(--game 5:$work/bs.front); fi
-# a card whose images did not build is left off the disc (said so), the others still go on it
+# a card whose images did not build is left off the disc (said so), the others still go on it - and the build
+# fails at the end when a game you have the ROM of did not build (its script stopped: the cause is above)
+failed=()
+[[ -f ${ROM2:-$root/../roms/sh2.bin} && ! -f $work/s2.args ]] && failed+=("SH2")
+[[ -f ${ROM3:-$root/../roms/sh3.bin} && ! -f $work/s3.args ]] && failed+=("SH3")
 have() { for x in "$@"; do [[ $x == *:* && $x != --* ]] && { [[ -f ${x#*:}.trapcart.md ]] || return 1; }; done; return 0; }
 for v in s2 s3 sk k3 bs; do eval "a=(\${$v[@]:-})"; (( ${#a} )) && ! have $a && { print -u2 "  card left out ($v): its images did not build"; eval "$v=()"; }; done
 python3 $here/build_disc.py $scd $out/ultimate.iso --region $region --menu $work/menu_art.bin \
   --game 1:$work/s1.front --image 13:$work/s1.zone1 --image 14:$work/s1.zone2 --image 15:$work/s1.zone3 \
   --image 16:$work/s1.zone4 --image 17:$work/s1.zone5 --image 18:$work/s1.zone6 $s2 $s3 $sk $bs $k3 --scd $scd | tail -2
-print "play ($region, ${${region:#E}:+60}${${region:#E}:-50} Hz): GENRECOMP_REGION=$gregion $g/build-trace/genrecomp_build/genrecomp_ref '$out/ultimate.cue'"
+[[ $region == E ]] && hz=50 || hz=60
+if (( ${#failed} )); then print -u2 "FAILED: ${(j:, :)failed} did not build (see above); the disc lacks them"; exit 1; fi
+print "play ($region, $hz Hz): GENRECOMP_REGION=$gregion $g/build-trace/genrecomp_build/genrecomp_ref '$out/ultimate.cue'"

@@ -29,10 +29,17 @@ m68k-elf-as -m68000 --defsym DESC=0x23FF00 --defsym LOADSCREEN=1 -o $t/sw.o $her
 m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $t/swap.bin $t/sw.o
 python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex('00200B10' '00201126' '00200388' '00FFFE00'))" > $t/desc.bin
 m68k-elf-as -m68000 -o $t/sega.o $here/games/sh1_sega.s && m68k-elf-ld -Ttext=0x23E200 --oformat=binary -o $t/sega.bin $t/sega.o
+# the SEGA voice (games/sh1_voice.s): the whole PCM in program-RAM bank 2 (virtual $0A0000: window $039688),
+# PlaySega ($71FAC) played from there - the front's bank 1 has Green Hill's data where its last 16 KB would be
+m68k-elf-as -m68000 -o $t/home.o $here/games/home.s && m68k-elf-ld -Ttext=0x23E400 --oformat=binary -o $t/home.bin $t/home.o   # A+B+C+Start: the menu
+m68k-elf-as -m68000 -o $t/voice.o $here/games/sh1_voice.s && m68k-elf-ld -Ttext=0x23E300 --oformat=binary -o $t/voice.bin $t/voice.o
+(( $(wc -c < $t/voice.bin) <= 0xD00 )) || { print -u2 "sh1_voice.s: past \$23F000"; exit 1; }
+python3 -c "import sys; sys.stdout.buffer.write(open(sys.argv[1], 'rb').read()[0x079688:0x080000])" $rom > $t/voicepcm.bin
 common=(--strict-imm --data 071990-0719CC --data 071A9C-071AE8 --data 078B44-078C08
         --patch 33A=4E714E71 --patch 356=0080 --patch 36E=3F3F --patch D922=003F
         --patch D700=4EB90023E000 --blob 23E000=$work/s1_bs.bin
         --patch 2F10=4EF90023E200 --blob 23E200=$t/sega.bin
+        --patch 11E6=4EF90023E400 --blob 23E400=$t/home.bin
         --patch 388=4EB90023F0004E714E714E71 --patch 37A2=4EF90023F004 --blob 23FF00=$t/desc.bin)
 helper() {  # NAME ZONE ZONE2 MODES [--defsym ACTMIN=.. / ACTMAX=..]
   m68k-elf-as -m68000 -I $t --defsym ZONE=$2 --defsym ZONE2=$3 --defsym MODES=$4 --defsym VBLFIX=${VBLFIX:-1} ${@:5} -o $t/h$1.o $here/games/sh1_zone.s
@@ -131,7 +138,8 @@ zmap() {  # ZONE ACTS IMAGE (ACTS: the evidence of those acts only, e.g. "0 1"; 
 helper front 0 6 0xFF                              # the card: every mode; Green Hill and the ending
 ex=(); for f in $work/ev/*/*.bin(N); do ex+=(--exec $f); done
 ( cd $g && $py $here/relocate.py $rom recomp.json $out.front --ptrs $t/ptrs.txt $ex --all-code \
-    --map 000000-03DCF2=200000,060000-07C000=020000,03DCF2-041800=03C000 $common --blob 23F000=$t/hfront.bin > $t/relocfront.txt; head -1 $t/relocfront.txt )
+    --map 000000-03DCF2=200000,060000-07C000=020000,03DCF2-041800=03C000 $common --blob 23F000=$t/hfront.bin \
+    --patch 71FAC=4EF90023E300 --blob 23E300=$t/voice.bin --blob 0B9688=$t/voicepcm.bin > $t/relocfront.txt; head -1 $t/relocfront.txt )
 for z in 1 2 3 4 5 6; do                          # 6: Final Zone (zone 5 act 2), apart: Scrap Brain fills the window
   if (( z == 5 )); then helper z5 5 5 0x0C --defsym ACTMAX=1; acts="0 1"; zz=5
   elif (( z == 6 )); then helper z6 5 5 0x0C --defsym ACTMIN=2; acts="2"; zz=5

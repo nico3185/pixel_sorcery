@@ -6,7 +6,8 @@ which titles can be built, and builds the chosen ones with live progress.
   The settings are the first rows (ROM folder, processes = titles built at the same time, cores,
   mode): up/down to one, left/right to change it, each with the value suggested for this Mac.
   keys  up/down move   left/right change a setting   space choose a title   a all   s sh shelf
-        d dc shelf   n none   r rescan   Enter start (on the ROM folder row: change it)   q quit
+        d dc shelf   n none   r rescan   x more builds (the Makefile's routes: the Mega CD compilation disc,
+        the ROMs made from dumps, shelf, package)   Enter start (on the ROM folder row: change it)   q quit
 
 Before building, the ROMs are put where play.sh, launch.sh and the builds expect them (../roms
 next to the repository): a link to each verified dump found elsewhere, the lock-on images made by
@@ -363,6 +364,84 @@ class Job:
             except OSError: pass
 
 
+# ------------------------------------------------------------------ more builds: the Makefile's routes
+# Every route of `make help` beyond the ports themselves (those are the table): run with the build screen's ROM
+# folder and cores; a route that makes something prints "OUTPUT: path" (the made disc and ROMs are copied to
+# EXPORT_DIR, Documents/PixelSorcery) and the screens offer to show it. Log: build/make-ROUTE.log.
+HOST = ('windows' if os.name == 'nt' or os.environ.get('MSYSTEM') else 'linux' if sys.platform.startswith('linux') else 'macos')
+REGIONS = ('US', 'EU', 'JP')                 # the compilation disc's base: US 60 Hz (default), EU 50 Hz, JP not working yet
+ROUTES = [   # (make target, label, what it does); "region": takes COMPILATION_REGION
+    ('sh-compilation', 'Ultimate SH Mega CD disc', 'every Sonic on your SHCD disc (US: 60 Hz, EU: 50 Hz); opened from Documents/PixelSorcery'),
+    ('sh-compilation-all', 'Ultimate SH, every region', 'one disc for each region of SHCD you have'),
+    ('shk1-rom', 'SHK1 ROM', 'a Genesis ROM from your SH1 and SHK2 dumps'),
+    ('shbs-rom', 'SHBS ROM', 'the lock-on image from your SHK and SH1 dumps'),
+    ('shcd-reference', 'SHCD reference build', 'SHCD plus its emulator-core reference (needs the core)'),
+    ('derived-all', 'Every ROM and disc above', 'each one whose inputs are in the ROM folder (the rest is skipped)'),
+    ('all', 'Everything', 'setup, prepare the ROMs, every port, every ROM and disc'),
+    ('prepare-roms', 'Prepare the ROMs', 'find your dumps by content and put them where the builds read them'),
+    ('setup', 'Check the tools', 'Python tools, cmake, ninja, SDL2, and the m68k binutils the disc needs'),
+    ('launcher-' + HOST, 'SH Collection shelf', 'one app holding the built Sonic ports'),
+    ('package-' + HOST, 'PixelSorcery package', {'macos': 'the DMG', 'linux': 'the .deb', 'windows': 'the zip and installer'}[HOST]),
+]
+REGION_ROUTES = {'sh-compilation'}
+
+
+def shcd_regions(folder):
+    """the regions of the SHCD discs in FOLDER and ../roms ("US EU"...), for the compilation's region choice"""
+    got = set()
+    for d in {folder, ROMS}:
+        try:
+            r = subprocess.run([PY, os.path.join(TOOLS, 'megacd', 'find_disc.py'), d, '--list'], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=120)
+            got |= {l.split(' ', 1)[0] for l in r.stdout.splitlines() if ' ' in l}
+        except (OSError, subprocess.TimeoutExpired): pass
+    return [x for x in REGIONS if x in got]
+
+
+class MakeJob:
+    """one route: make TARGET ROM_DIR=folder CORES=n [COMPILATION_REGION=r], its output parsed"""
+    def __init__(self, target, region=''):
+        self.target, self.region, self.proc, self.t0, self.t1 = target, region, None, time.time(), 0.0
+        self.stage, self.result, self.outputs, self.last = 'running', '', [], ''
+        self.log = os.path.join(ROOT, 'build', f'make-{target}.log')
+
+    def run(self, folder, cores, stop):
+        os.makedirs(os.path.dirname(self.log), exist_ok=True)
+        make = shutil.which('make') or shutil.which('gmake') or 'make'
+        cmd = [make, '--no-print-directory', self.target, f'ROM_DIR={folder}', f'CORES={cores}']
+        if self.region: cmd.append(f'COMPILATION_REGION={self.region}')
+        rc = 1
+        with open(self.log, 'w') as lf:
+            lf.write('$ ' + ' '.join(cmd) + '\n'); lf.flush()
+            try:
+                self.proc = subprocess.Popen(shc(cmd), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                             text=True, bufsize=1, start_new_session=True, env=dict(os.environ, PS_JOBS=str(cores)))
+                for line in self.proc.stdout:
+                    lf.write(line); lf.flush(); line = line.rstrip('\n')
+                    if line.startswith('OUTPUT: '): self.outputs.append(line[8:].strip())
+                    elif line.strip(): self.last = line.strip()[:160]
+                rc = self.proc.wait()
+            except OSError as e:
+                lf.write(f'{e}\n'); self.last = str(e)
+        self.result = 'OK' if rc == 0 else ('stopped' if stop.is_set() else 'FAILED')
+        if rc == 0 and any(l.startswith('SKIP ') for l in open(self.log, errors='replace')) and not self.outputs:
+            self.result = 'skipped (inputs missing)'
+        self.stage, self.t1 = 'done', time.time()
+
+    def kill(self):
+        Job.kill(self)
+
+
+def reveal(path):
+    """show PATH in the file manager (its folder, the file selected where the system can)"""
+    if not path or not os.path.exists(path): return False
+    if HOST == 'macos': cmd = ['open', '-R', path]
+    elif HOST == 'windows': cmd = ['explorer', '/select,', os.path.normpath(path)]
+    else: cmd = ['xdg-open', path if os.path.isdir(path) else os.path.dirname(path)]
+    try: subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True); return True
+    except OSError: return False
+
+
 # ------------------------------------------------------------------ engine for the build window
 def built(t):
     """the time of TITLE's native build (sidebyside.json's "exe", else build/TITLE), 0 when none"""
@@ -378,18 +457,22 @@ def engine():
     """--engine: the build window (ps_launcher --build) draws, this does the work. Commands on
     stdin, one a line: scan FOLDER | start CORES PROCS CHECK TITLE... | play TITLE | stop | quit.
     play: ./play.sh TITLE in its own session (the last build; play.sh builds first if it is missing
-    or stale), its output in games/TITLE/play.log. State on stdout four times a second, a line
-    each, ended by E:
+    or stale), its output in games/TITLE/play.log.
+    make TARGET [REGION] CORES: one of ROUTES (more builds) with the ROM folder; reveal PATH: show a made file.
+    State on stdout four times a second, a line each, ended by E:
       S|folder|running|scanning|cpus|native only     T|folder|code|name|rom state|rom detail|stage|done|total|seconds|result|built
       (built: the native build's time, 0 when there is none)
+      R|target|label|what it does|takes a region|stage|seconds|result|output|last line|log   (a route; stage: '', running, done)
+      G|regions of the SHCD discs found (US EU JP, for the compilation's choice)
       N|note (the last few)"""
     import queue
-    T = titles(); state = {'folder': ROMS, 'plan': {}, 'scanning': False}
+    T = titles(); state = {'folder': ROMS, 'plan': {}, 'scanning': False, 'regions': []}
     jobs, notes, stop, cmds = {}, [], threading.Event(), queue.Queue()
+    mk = {}                                                   # target -> MakeJob (the last run of each route)
     def note(m): notes.append(m); del notes[:-4]
     def rescan(folder):
         state['scanning'] = True; state['folder'] = folder
-        try: state['plan'] = rom_plan(scan(folder))
+        try: state['plan'] = rom_plan(scan(folder)); state['regions'] = shcd_regions(folder)
         finally: state['scanning'] = False
     def reader():
         for line in sys.stdin: cmds.put(line.strip())
@@ -414,13 +497,23 @@ def engine():
     while True:
         try:
             c = cmds.get(timeout=0.25).split(' ')
+            busy = any(j.stage != 'done' for j in list(jobs.values()) + list(mk.values()))
             if c[0] == 'quit':
-                stop.set(); [j.kill() for j in jobs.values()]; return
-            if c[0] == 'scan' and len(c) > 1 and not any(j.stage != 'done' for j in jobs.values()):
+                stop.set(); [j.kill() for j in list(jobs.values()) + list(mk.values())]; return
+            if c[0] == 'make' and len(c) >= 3 and c[1] in [r[0] for r in ROUTES] and not busy:
+                region = c[2] if len(c) > 3 and c[2] in REGIONS and c[1] in REGION_ROUTES else ''
+                try: cores = max(1, int(c[-1]))
+                except ValueError: cores = os.cpu_count() or 4
+                stop.clear(); mk[c[1]] = j = MakeJob(c[1], region)
+                threading.Thread(target=j.run, args=(state['folder'], cores, stop), daemon=True).start()
+                note(f'make {c[1]}' + (f' ({region})' if region else ''))
+            elif c[0] == 'reveal' and len(c) > 1:
+                if not reveal(' '.join(c[1:])): note('not found: ' + ' '.join(c[1:]))
+            elif c[0] == 'scan' and len(c) > 1 and not busy:
                 f = os.path.expanduser(' '.join(c[1:]))
                 if os.path.isdir(f): threading.Thread(target=rescan, args=(os.path.abspath(f),), daemon=True).start()
                 else: note(f'no folder {f}')
-            elif c[0] == 'start' and len(c) >= 4 and not any(j.stage != 'done' for j in jobs.values()):
+            elif c[0] == 'start' and len(c) >= 4 and not busy:
                 threading.Thread(target=start, args=(int(c[1]), int(c[2]), c[3] == '1' and not NATIVE_ONLY, c[4:]), daemon=True).start()
             elif c[0] == 'play' and len(c) == 2 and c[1] in [t for t, _, _ in T]:
                 log = open(os.path.join(ROOT, 'games', c[1], 'play.log'), 'w')
@@ -455,10 +548,10 @@ def engine():
                                  env=dict(os.environ, PS_PAD_SETUP='1', PS_POLL_RECORD=os.devnull))   # NUL on Windows
                 note('controller setup')
             elif c[0] == 'stop':
-                stop.set(); [j.kill() for j in jobs.values()]; note('stopped')
+                stop.set(); [j.kill() for j in list(jobs.values()) + list(mk.values())]; note('stopped')
         except queue.Empty:
             pass
-        running = any(j.stage != 'done' for j in jobs.values())
+        running = any(j.stage != 'done' for j in list(jobs.values()) + list(mk.values()))
         out = [f'S|{state["folder"]}|{int(running)}|{int(state["scanning"])}|{os.cpu_count() or 4}|{int(NATIVE_ONLY)}']
         for t, code, name in T:
             st, d = state['plan'].get(t, ('missing', ''))
@@ -467,12 +560,61 @@ def engine():
             out.append('|'.join(['T', t, code, name, st, os.path.basename(str(d).split('::')[-1]),
                                  (j.stage if j else ''), str(j.n if j else 0), str(j.m if j else 0), str(el), (j.result if j else ''),
                                  str(built(t))]))
+        for tgt, label, what in ROUTES:
+            j = mk.get(tgt)
+            el = int(((j.t1 or time.time()) - j.t0) if j else 0)
+            out.append('|'.join(['R', tgt, label, what, str(int(tgt in REGION_ROUTES)), j.stage if j else '', str(el),
+                                 j.result if j else '', (j.outputs[-1] if j and j.outputs else ''), (j.last if j else '').replace('|', '/'),
+                                 j.log if j else '']))
+        out.append('G|' + ' '.join(state['regions']))
         out += [f'N|{n}' for n in notes] + ['E']
         try: sys.stdout.write('\n'.join(x.replace('\n', ' ') for x in out) + '\n'); sys.stdout.flush()
         except BrokenPipeError: stop.set(); [j.kill() for j in jobs.values()]; return
 
 
 # ------------------------------------------------------------------ the screen
+def more_screen(scr, folder, cores):
+    """x on the build screen: the Makefile's routes (ROUTES); Enter builds one, left/right the disc's region, o shows
+    what it made, q back"""
+    cur, region, job, stop = 0, 'US', None, threading.Event()
+    regions = shcd_regions(folder)
+    while True:
+        h, w = scr.getmaxyx(); scr.erase()
+        def put(y, x, t, a=0):
+            if 0 <= y < h and x < w: scr.addstr(y, x, t[:max(0, w - x - 1)], a)
+        put(0, 0, 'PixelSorcery - more builds (made discs and ROMs are copied to Documents/PixelSorcery; for you only)', curses.A_BOLD)
+        put(1, 0, f'ROM folder {folder}   SHCD discs found: {" ".join(regions) or "none"}')
+        for i, (tgt, label, what) in enumerate(ROUTES):
+            extra = f' < {region} >' if tgt in REGION_ROUTES else ''
+            put(3 + i, 0, f' {label + extra:40} {what}', curses.A_REVERSE if i == cur else 0)
+        y = 4 + len(ROUTES)
+        if job:
+            el = int((job.t1 or time.time()) - job.t0)
+            put(y, 0, f'make {job.target}{" " + job.region if job.region else ""}: {job.result or "running"}  {el // 60}:{el % 60:02d}', curses.A_BOLD); y += 1
+            if job.outputs: put(y, 0, 'made: ' + job.outputs[-1] + '   (o: show it)'); y += 1
+            try: tail = open(job.log, errors='replace').read().splitlines()[-max(1, h - y - 2):]
+            except OSError: tail = []
+            for l in tail: put(y, 2, l); y += 1
+        put(h - 1, 0, 'up/down move  left/right region  Enter build  o show what it made  s stop  q back')
+        scr.refresh()
+        k = scr.getch()
+        if k == -1: time.sleep(0.2); continue
+        busy = job and job.stage != 'done'
+        if k == ord('q'):
+            if busy: stop.set(); job.kill()
+            return
+        if k in (curses.KEY_UP, ord('k')): cur = (cur - 1) % len(ROUTES)
+        elif k in (curses.KEY_DOWN, ord('j')): cur = (cur + 1) % len(ROUTES)
+        elif k in (curses.KEY_LEFT, curses.KEY_RIGHT) and ROUTES[cur][0] in REGION_ROUTES:
+            region = REGIONS[(REGIONS.index(region) + (1 if k == curses.KEY_RIGHT else -1)) % len(REGIONS)]
+        elif k == ord('s') and busy: stop.set(); job.kill()
+        elif k == ord('o') and job and job.outputs: reveal(job.outputs[-1])
+        elif k in (10, 13, curses.KEY_ENTER) and not busy:
+            tgt = ROUTES[cur][0]; stop.clear()
+            job = MakeJob(tgt, region if tgt in REGION_ROUTES else '')
+            threading.Thread(target=job.run, args=(folder, cores, stop), daemon=True).start()
+
+
 def main(scr):
     curses.curs_set(0); scr.nodelay(True); curses.use_default_colors()
     for i, c in enumerate((curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED, curses.COLOR_CYAN, curses.COLOR_BLUE), 1):
@@ -582,7 +724,7 @@ def main(scr):
             except OSError: tail = []
             for l in tail: put(y, 2, l); y += 1
         for n in notes: put(h - 3 + notes.index(n) - len(notes) + 2, 0, n, BLUE)
-        put(h - 1, 0, 'up/down move  left/right change setting  space choose  a all  s sh shelf  d dc shelf  n none  r rescan  Enter START  q quit')
+        put(h - 1, 0, 'up/down move  left/right change setting  space choose  a all  s sh shelf  d dc shelf  n none  r rescan  x more builds (disc, ROMs)  Enter START  q quit')
         scr.refresh()
         k = scr.getch()
         if k == -1: time.sleep(0.15); continue
@@ -621,6 +763,7 @@ def main(scr):
         elif k == ord('-'): cores = max(1, cores - 1)
         elif k == ord('m'): check = not check; par = suggest()
         elif k == ord('r'): rescan(); chosen = {t for t, _, _ in T if usable(t)}
+        elif k == ord('x'): more_screen(scr, folder, cores)
         elif k in (10, 13, curses.KEY_ENTER): jobs.clear(); start()
         try:
             os.makedirs(os.path.dirname(PREFS), exist_ok=True)

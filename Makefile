@@ -14,9 +14,25 @@ SONICCD_DISC ?= $(ROMS)/cd/shcd/shcd.cue
 # EU: 50 Hz (every game runs and plays its music slower); JP: 60 Hz, not working yet (the Japanese BIOS stops
 # SH2's load partway). Its SHCD card plays that disc's music.
 COMPILATION_REGION ?= US
-COMPILATION_DISC ?= $(eval COMPILATION_DISC := $(shell for d in "$(ROMS)" "$(ROM_DIR)"; do python3 engine/tools/megacd/find_disc.py "$$d" $(COMPILATION_REGION) 2>/dev/null; done | head -1))$(COMPILATION_DISC)
-MENU_IMAGE ?= $(or $(shell for f in "$(ROM_DIR)/menu.png" "$(ROM_DIR)/menu.bin" "$(ROMS)/menu.png" "$(ROMS)/menu.bin"; do [ -f "$$f" ] && echo "$$f" && break; done),-)
-SONIC_COMPILATION_OUT ?= $(CURDIR)/build/ultimate-sh-$(COMPILATION_REGION)
+# These three come from the make command line only (make sh-compilation COMPILATION_DISC=...): a variable left
+# exported in a shell would otherwise pick another disc than COMPILATION_REGION's without a word.
+ifneq ($(origin COMPILATION_DISC),command line)
+  COMPILATION_DISC = $(eval COMPILATION_DISC := $(shell for d in "$(ROMS)" "$(ROM_DIR)"; do python3 engine/tools/megacd/find_disc.py "$$d" $(COMPILATION_REGION) 2>/dev/null; done | head -1))$(COMPILATION_DISC)
+endif
+ifneq ($(origin MENU_IMAGE),command line)
+  MENU_IMAGE = $(or $(shell for f in "$(ROM_DIR)/menu.png" "$(ROM_DIR)/menu.bin" "$(ROMS)/menu.png" "$(ROMS)/menu.bin"; do [ -f "$$f" ] && echo "$$f" && break; done),-)
+endif
+ifneq ($(origin SONIC_COMPILATION_OUT),command line)
+  SONIC_COMPILATION_OUT = $(CURDIR)/build/ultimate-sh-$(COMPILATION_REGION)
+endif
+# EXPORT_DIR: where finished builds made from your dumps are copied for you to open (the disc's .cue and tracks,
+# the lock-on ROMs): Documents/PixelSorcery by default; EXPORT_DIR=- keeps them only in the build folders.
+ifeq ($(strip $(MSYSTEM)),)
+  EXPORT_DIR ?= $(HOME)/Documents/PixelSorcery
+else
+  EXPORT_DIR ?= $(USERPROFILE)/Documents/PixelSorcery
+endif
+export_to = [ "$(EXPORT_DIR)" = - ] || engine/.venv/bin/python engine/tools/export_build.py "$(1)" "$(EXPORT_DIR)/$(2)"
 # ROM_DIR: where your dumps are (any names, sub-folders, zips); prepare-roms finds them by content and puts
 # them under their expected names in ROMS (../roms, beside the checkout), where every build reads them.
 ROM_DIR ?= ../roms
@@ -60,7 +76,9 @@ help:
 	  '' \
 	  'Inputs: ROM_DIR = your dumps (any names, sub-folders, zips; default ../roms); ROMS = the prepared folder (../roms).' \
 	  'Found by content: every cartridge, the SHCD discs, the Mega CD BIOS; optional ROM_DIR/menu.png (compilation).' \
-	  'Overrides: DISC / SONICCD_DISC, COMPILATION_REGION, COMPILATION_DISC, MENU_IMAGE (- = plain menu), SONIC_COMPILATION_OUT, CORES.'
+	  'Overrides: DISC / SONICCD_DISC, COMPILATION_REGION, COMPILATION_DISC, MENU_IMAGE (- = plain menu), SONIC_COMPILATION_OUT, CORES.' \
+  'Finished discs and made ROMs are copied to EXPORT_DIR (default ~/Documents/PixelSorcery; - = no copy): open the .cue there.' \
+  'The build screen (engine/tools/build_all.sh --tui, or the PixelSorcery app) runs every route above under "More builds".'
 
 # Python tools in engine/.venv; the system tools are checked, not installed (TUTORIAL.md section 7 lists them).
 PIP_PACKAGES = capstone numpy pillow librosa
@@ -115,11 +133,13 @@ shcd-reference:
 # Find owned dumps, link recognized inputs into ../roms, and construct the lock-on titles from them.
 prepare-roms: setup
 	engine/.venv/bin/python engine/tools/build_ui.py --prepare "$(ROM_DIR)"
+	@for f in menu.png menu.bin; do [ ! -f "$(ROM_DIR)/$$f" ] || [ "$(ROM_DIR)/$$f" -ef "$(ROMS)/$$f" ] || cp "$(ROM_DIR)/$$f" "$(ROMS)/$$f"; done   # the compilation's menu picture
 
 # SHBS is the SHK + SH1 lock-on; it is a launcher title, not a separate recompilation.
 shbs-rom:
 	@test -f "$(ROMS)/shk.bin" -a -f "$(ROMS)/sh1.bin" || { echo "Need $(ROMS)/shk.bin and sh1.bin" >&2; exit 1; }
 	engine/.venv/bin/python engine/tools/lockon.py "$(ROMS)/shk.bin" "$(ROMS)/sh1.bin" "$(ROMS)/shk_sh1.bin"
+	@$(call export_to,$(ROMS)/shk_sh1.bin,)
 
 shbs-rom-if-available:
 	@if [ -f "$(ROMS)/shk_sh1.bin" ]; then \
@@ -133,6 +153,7 @@ shk1-rom:
 	./games/shk1/tools/ensure_rom.sh "$(ROMS)"
 	@test -f "$(ROMS)/shk1.bin" || { echo "Need $(ROMS)/sh1.bin and shk_sh2.bin" >&2; exit 1; }
 	@echo "Genesis ROM: $(ROMS)/shk1.bin"
+	@$(call export_to,$(ROMS)/shk1.bin,)
 
 shk1-rom-if-available:
 	@if [ -f "$(ROMS)/sh1.bin" ] && [ -f "$(ROMS)/shk_sh2.bin" ]; then \
@@ -149,6 +170,7 @@ sh-compilation:
 	ROM="$(ROMS)/sh1.bin" ROM2="$(ROMS)/sh2.bin" ROM3="$(ROMS)/sh3.bin" \
 	  ROM4="$(ROMS)/shk.bin" ROM5="$(ROMS)/shk_sh1.bin" ROM7="$(ROMS)/sh3k.bin" \
 	  ./engine/tools/megacd/ultimate_sh.sh "$(COMPILATION_DISC)" "$(MENU_IMAGE)" "$(SONIC_COMPILATION_OUT)"
+	@$(call export_to,$(SONIC_COMPILATION_OUT)/ultimate.cue,Ultimate SH ($(COMPILATION_REGION)))
 
 sh-compilation-if-available:
 	@if [ -n "$(COMPILATION_DISC)" ] && [ -f "$(COMPILATION_DISC)" ] && \
@@ -174,6 +196,7 @@ derived-all: shk1-rom-if-available shbs-rom-if-available sh-compilation-if-avail
 launcher-macos:
 	@$(call only_on,Darwin,macOS)
 	./engine/tools/make_launcher.sh launchers/sh.txt
+	@echo "OUTPUT: $(CURDIR)/launchers/build"
 
 launcher-linux:
 	@$(call only_on,Linux,Linux)
@@ -186,10 +209,13 @@ launcher-windows:
 package-macos:
 	@$(call only_on,Darwin,macOS)
 	./engine/tools/macapp/make_dmg.sh $(if $(VERSION),--version $(VERSION))
+	@echo "OUTPUT: $(CURDIR)/build/dmg"
 
 package-linux:
 	./engine/tools/linux/make_deb.sh $(if $(VERSION),--version $(VERSION))
+	@echo "OUTPUT: $(CURDIR)/build/deb"
 
 package-windows:
 	@$(call only_on,MINGW,MSYS2 MinGW64)
 	./engine/tools/windows/make_zip.sh $(if $(VERSION),--version $(VERSION))
+	@echo "OUTPUT: $(CURDIR)/build/win"

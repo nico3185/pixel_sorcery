@@ -71,6 +71,7 @@ $py $here/code_refs.py $rom $work/refs.txt $work/evz/*/*.bin
 ( cd $g && $py $here/relocate.py $rom recomp.json $work/probe $ex --all-code \
     --map 000000-100000=200000 --targets-out $work/targets.txt >/dev/null 2>&1 )
 print "3/4 helpers"
+m68k-elf-as -m68000 -o $work/home.o $here/games/home.s && m68k-elf-ld -Ttext=0x200200 --oformat=binary -o $work/home.bin $work/home.o   # A+B+C+Start: the menu
 m68k-elf-as -m68000 --defsym ABSORB=${S2_ABSORB:-1} --defsym LOADSCREEN=1 -o $work/sw.o $here/swap.s; m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $work/swap.bin $work/sw.o
 # the images: NAME GROUP USE... (zonepack --use values); zones and modes -> group, for the switch tables
 names=(front ehz mtz wfz htz ooz mcz cnz cpz dez arz scz ss)
@@ -146,7 +147,7 @@ v=int(sys.argv[1],16); print('%X' % next((new+v-lo for lo,hi,new in m if lo<=v<h
   m68k-elf-as -m68000 -I $work --defsym TABLE=0x$(at 3A2) --defsym LEVELREST=0x$(at 3ECA) --defsym FAR1=0x$(at BFBC) --defsym FAR2=0x$(at 4F52) -o $work/z.o $here/games/sh2_zone.s
   m68k-elf-ld -Ttext=0x200510 --oformat=binary -o $work/zone_$name.bin $work/z.o
   snd=$(at EC000)
-  m68k-elf-as -m68000 --defsym SNDLOAD=0x$snd --defsym ZB1D=0x45 --defsym ZB1E=0x46 --defsym ZB1F=0x47 \
+  m68k-elf-as -m68000 -I $here/games --defsym SNDLOAD=0x$snd --defsym ZB1D=0x45 --defsym ZB1E=0x46 --defsym ZB1F=0x47 \
     -o $work/h.o $here/games/sh2_helpers.s
   m68k-elf-ld -Ttext=0x200700 -o $work/h.elf $work/h.o; m68k-elf-objcopy -O binary $work/h.elf $work/h_$name.bin
   (( $(wc -c < $work/h_$name.bin) <= 0x200 )) || { print -u2 "sh2_helpers.s: over 512 bytes (the cnz lists start at \$200900)"; exit 1; }
@@ -166,7 +167,7 @@ v=int(sys.argv[1],16); print('%X' % next((new+v-lo for lo,hi,new in m if lo<=v<h
       --patch 3FB2A=00040004 --patch 3FBA0=00080010 --patch 3FC00=00060008 --patch 3FC36=0008000C \
       --patch 346=4E714E71 --patch 362=0080 --patch 37A=3F3F --patch 17B0A=003E \
       --patch 394=4EB9002005104E714E714E71 --patch 3EC4=4EF900200514 --patch 411A=4EB9002005184E71 \
-      --patch 130C=4EF9$sl --patch 14AC=4EF9$dq --blob 200700=$work/h_$name.bin \
+      --patch 130C=4EF9$sl --patch 14AC=4EF9$dq --blob 200700=$work/h_$name.bin --patch 111C=4EF900200200 --blob 200200=$work/home.bin \
       --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin $cnzl | head -1 )
   print "  $name: $(tail -1 $work/pack_$name.txt)"
   [[ $name == front ]] && args+=(--game 2:$out.front) || args+=(--image $grp[$name]:$out.$name)
