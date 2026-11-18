@@ -1442,9 +1442,9 @@ int main(int argc, char **argv) {
                 continue;
             }
             char mv[1300], log[1300], aud[1200], frames[32];
-            snprintf(mv, sizeof mv, "GENRECOMP_MOVIE=%s", movie);
-            snprintf(log, sizeof log, "%shome-test-%s.log", pref, g->id);
-            snprintf(aud, sizeof aud, "PS_CD_AUDIO=%s", g->audio_path);
+            if (snprintf(mv, sizeof mv, "GENRECOMP_MOVIE=%s", movie) >= (int)sizeof mv ||       /* too long: skipped */
+                snprintf(log, sizeof log, "%shome-test-%s.log", pref, g->id) >= (int)sizeof log ||
+                snprintf(aud, sizeof aud, "PS_CD_AUDIO=%s", g->audio_path) >= (int)sizeof aud) { bad++; continue; }
             snprintf(frames, sizeof frames, "%ld", at + 600);
             const char *env[] = { mv, "PS_HOME=1", "PS_RENDERER=native", "PS_Z80=recomp", aud, NULL };
             const char *args[] = { "--headless", "--frames", frames, NULL };
