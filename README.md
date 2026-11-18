@@ -16,6 +16,17 @@ the original game running in Genesis Plus GX until the two agree at every contro
 graphics, sound, recordings or disc images). Bring your own dumps; every tool reads them on
 your machine at build time.
 
+**Status: playable.** Twelve cartridge builds play start to finish as native ports on
+**Windows, macOS and Linux**: every title in the table below except `shcd`. The release app
+builds each one on all three systems from your own dump, with a launcher and player features
+the original never had (widescreen up to 32:9, save states, cheats, controller mapping, session
+replay). This is not a demo that boots a title screen: **210 recorded runs, full games
+included, are identical to the original at every controller poll, every night.** Also:
+- `shk1`, our own Knuckles in Sonic 1 (beta);
+- Ultimate SH, every SH title in one program behind a Mega CD-style game-select screen;
+- a Mega CD compilation disc built from your cartridges;
+- native `shcd`, in progress.
+
 ## Games covered
 
 In the code, folders and scripts each game goes by a codename. This table is the only place
@@ -97,7 +108,7 @@ Genesis Plus GX is linked only into the *oracle* builds (`<code>_oracle`, `genre
 `genrecomp_ref`): it runs the original game so each port can be compared with it. It is never
 part of what a player runs.
 
-**Enhancements** on top of the original: widescreen up to 21:9 with the extra columns really
+**Enhancements** on top of the original: widescreen up to 32:9 with the extra columns really
 drawn, instant save states, a settings menu with controller mapping, cheats, modern water,
 recorded sessions, collection launchers.
 
