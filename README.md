@@ -16,6 +16,17 @@ the original game running in Genesis Plus GX until the two agree at every contro
 graphics, sound, recordings or disc images). Bring your own dumps; every tool reads them on
 your machine at build time.
 
+**Status: playable.** Twelve cartridge builds play start to finish as native ports on
+**Windows, macOS and Linux**: every title in the table below except `shcd`. The release app
+builds each one on all three systems from your own dump, with a launcher and player features
+the original never had (widescreen up to 32:9, save states, cheats, controller mapping, session
+replay). This is not a demo that boots a title screen: **210 recorded runs, full games
+included, are identical to the original at every controller poll, every night.** Also:
+- `shk1`, our own Knuckles in Sonic 1 (beta);
+- Ultimate SH, every SH title in one program behind a Mega CD-style game-select screen;
+- a Mega CD compilation disc built from your cartridges;
+- native `shcd`, in progress.
+
 ## Games covered
 
 In the code, folders and scripts each game goes by a codename. This table is the only place
@@ -97,7 +108,7 @@ Genesis Plus GX is linked only into the *oracle* builds (`<code>_oracle`, `genre
 `genrecomp_ref`): it runs the original game so each port can be compared with it. It is never
 part of what a player runs.
 
-**Enhancements** on top of the original: widescreen up to 21:9 with the extra columns really
+**Enhancements** on top of the original: widescreen up to 32:9 with the extra columns really
 drawn, instant save states, a settings menu with controller mapping, cheats, modern water,
 recorded sessions, collection launchers.
 
@@ -209,3 +220,9 @@ recompiling, verifying side by side, the Mega CD disc builder and relocator.
   apps and discs contain code translated from your ROMs: play them yourself, never share or
   sell them.
 - Third-party components, credits and trademarks: `NOTICE`.
+
+---
+
+[![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/1220-castle-of-illusion-starring-mickey-mouse/)
+
+Our games on PlayPorted: [sh1](https://playported.com/ports/1216-sonic-the-hedgehog/) · [sh2](https://playported.com/ports/1217-sonic-the-hedgehog-2/) · [sh3](https://playported.com/ports/1218-sonic-the-hedgehog-3/) · [shk](https://playported.com/ports/1219-sonic-knuckles/) · [coi](https://playported.com/ports/1220-castle-of-illusion-starring-mickey-mouse/) · [qs](https://playported.com/ports/1221-quackshot-starring-donald-duck/) · [woi](https://playported.com/ports/1222-world-of-illusion-starring-mickey-mouse-and-donald-duck/).
