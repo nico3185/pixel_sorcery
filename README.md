@@ -2,8 +2,6 @@
 
 ![PixelSorcery](img/sorpix.png)
 
-[![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/1220-castle-of-illusion-starring-mickey-mouse/)
-
 **A hobbyist project.** PixelSorcery is made for fun and for preservation research in spare
 time, with no company and no commercial aim behind it. It is not
 affiliated with or endorsed by Sega, Disney or any other rights holder. Its own code is free
@@ -222,3 +220,7 @@ recompiling, verifying side by side, the Mega CD disc builder and relocator.
   apps and discs contain code translated from your ROMs: play them yourself, never share or
   sell them.
 - Third-party components, credits and trademarks: `NOTICE`.
+
+---
+
+Listed on PlayPorted: [![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/1220-castle-of-illusion-starring-mickey-mouse/)
