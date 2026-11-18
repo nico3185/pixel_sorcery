@@ -6,7 +6,8 @@
 // ~/Library/Application Support/PixelSorcery/workspace by Resources/setup_workspace.sh (Python
 // tools from the bundled wheels, SDL2 bundled); games are built and ROMs kept beside it.
 // Engine protocol (build_ui.py): commands "scan FOLDER", "start CORES PROCS CHECK TITLE...",
-// "play TITLE", "stop", "quit"; state lines S|folder|running|scanning|cpus, T|...per title..., N|note, E.
+// "play TITLE", "make TARGET [REGION] CORES" (More builds: the Makefile's routes), "reveal PATH", "stop", "quit";
+// state lines S|folder|running|scanning|cpus, T|...per title..., R|...per route..., G|regions, N|note, E.
 import SwiftUI
 import AppKit
 import Combine
@@ -18,9 +19,18 @@ struct Title: Identifiable, Equatable {
     var usable: Bool { ["ready", "link", "make"].contains(rom) }
 }
 
+// a Makefile route (build_ui.py ROUTES): the compilation disc, the ROMs made from dumps, packages...
+struct Route: Identifiable, Equatable {
+    var id: String            // make target
+    var label = "", what = "", stage = "", result = "", output = "", last = "", log = ""
+    var region = false, seconds = 0
+}
+
 @MainActor
 final class Engine: ObservableObject {
     @Published var titles: [Title] = []
+    @Published var routes: [Route] = []
+    @Published var regions: [String] = []  // the SHCD discs found, by region
     @Published var folder = ""
     @Published var running = false
     @Published var scanning = true
@@ -51,7 +61,8 @@ final class Engine: ObservableObject {
         let ws = NSHomeDirectory() + "/Library/Application Support/PixelSorcery/workspace"
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         repo = ws
-        env["PATH"] = ws + "/engine/.venv/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        env["PATH"] = ws + "/engine/.venv/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"   // last: tools the
+        // player installed (More builds: the Mega CD disc needs the m68k-elf binutils, brew install m68k-elf-binutils)
         env["CMAKE_PREFIX_PATH"] = ws + "/engine/ext/sdl2"
         env["PS_VERSION"] = version
         setup = "Setting up…"
@@ -108,7 +119,7 @@ final class Engine: ObservableObject {
     }
 
     private func apply(_ lines: [String]) {
-        var ts: [Title] = [], ns: [String] = []
+        var ts: [Title] = [], ns: [String] = [], rs: [Route] = []
         for l in lines {
             let f = l.components(separatedBy: "|")
             switch f.first {
@@ -119,11 +130,16 @@ final class Engine: ObservableObject {
                 ts.append(Title(id: f[1], code: f[2], name: f[3], rom: f[4], romDetail: f[5], stage: f[6],
                                 result: f[10], done: Int(f[7]) ?? 0, total: Int(f[8]) ?? 0, seconds: Int(f[9]) ?? 0,
                                 built: f.count > 11 ? Int(f[11]) ?? 0 : 0))
+            case "R" where f.count >= 11:
+                rs.append(Route(id: f[1], label: f[2], what: f[3], stage: f[5], result: f[7], output: f[8], last: f[9],
+                                log: f[10], region: f[4] == "1", seconds: Int(f[6]) ?? 0))
+            case "G": let g = f.count > 1 ? f[1].split(separator: " ").map(String.init) : []; if g != regions { regions = g }
             case "N": ns.append(f.dropFirst().joined(separator: "|"))
             default: break
             }
         }
         if ts != titles { titles = ts }
+        if rs != routes { routes = rs }
         notes = ns
     }
 }
@@ -139,6 +155,8 @@ struct ContentView: View {
     @State var log = ""
     @State var screen: Int? = nil                  // 1 library, 0 build; nil: the library once a game is built
     @State var sharing: Title? = nil               // the game whose last session the consent sheet is about
+    @State var buildTab = 0                        // 0 games, 1 more builds (the Makefile's routes)
+    @AppStorage("region") var region = "US"        // the compilation disc's base: US 60 Hz
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var available: [Title] { engine.titles.filter(\.usable) }
@@ -152,6 +170,13 @@ struct ContentView: View {
     // install (the setup line), choose and build (the build screen), then the library: the games to play
     var body: some View {
         Group { if showLibrary { library } else { buildScreen } }
+            .onAppear {                                // PS_SCREEN=build | more: open on that screen (checks, screenshots)
+                switch ProcessInfo.processInfo.environment["PS_SCREEN"] {
+                case "build": screen = 0
+                case "more": screen = 0; buildTab = 1
+                default: break
+                }
+            }
             .padding(16)
             .frame(minWidth: 900, minHeight: 680)
             .onChange(of: engine.running) { was, now in if was && !now && !built.isEmpty { screen = 1 } }   // a build done: play
@@ -263,6 +288,33 @@ struct ContentView: View {
             Text("\(perProcess) cores per process · suggested \(suggested) processes for \(check ? "self-check (mostly one core per title)" : "a build (one generating while one compiles)")")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
+            Picker("", selection: $buildTab) {
+                Text("Games").tag(0); Text("More builds — Mega CD disc, ROMs, packages").tag(1)
+            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 520)
+            if buildTab == 1 { moreBuilds } else { gamesTable }
+            HStack {
+                ForEach(engine.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+                Spacer()
+                if engine.running {
+                    Button("Stop") { engine.send("stop") }.keyboardShortcut(.cancelAction)
+                } else if buildTab == 0 {
+                    Button("Start") {
+                        let order = engine.titles.map(\.id).filter { chosen.contains($0) }
+                        engine.send("start \(effCores) \(processes) \(check ? 1 : 0) " + order.joined(separator: " "))
+                    }.keyboardShortcut(.defaultAction).disabled(chosen.isEmpty || engine.scanning)
+                }
+            }
+        }
+        .onChange(of: engine.titles) { _, ts in        // after each scan: everything found, chosen
+            let avail = Set(ts.filter(\.usable).map(\.id))
+            if !chosenInit || !chosen.isSubset(of: avail) { chosen = avail; chosenInit = !avail.isEmpty }
+        }
+        .onReceive(timer) { _ in readLog() }
+        .onChange(of: selection) { _, _ in readLog() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in engine.quit() }
+    }
+
+    @ViewBuilder var gamesTable: some View {
             Toggle(isOn: Binding(get: { !available.isEmpty && available.allSatisfy { chosen.contains($0.id) } },
                                  set: { on in chosen = on ? Set(available.map(\.id)) : [] })) {
                 Text("All found in the ROM folder (\(available.count) of \(engine.titles.count) titles, \(chosen.count) chosen)").bold()
@@ -286,26 +338,41 @@ struct ContentView: View {
                 ScrollView { Text(log).font(.system(size: 11, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
                     .frame(height: 110)
             }
-            HStack {
-                ForEach(engine.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
-                Spacer()
-                if engine.running {
-                    Button("Stop") { engine.send("stop") }.keyboardShortcut(.cancelAction)
-                } else {
-                    Button("Start") {
-                        let order = engine.titles.map(\.id).filter { chosen.contains($0) }
-                        engine.send("start \(effCores) \(processes) \(check ? 1 : 0) " + order.joined(separator: " "))
-                    }.keyboardShortcut(.defaultAction).disabled(chosen.isEmpty || engine.scanning)
-                }
-            }
+    }
+
+    // More builds: every Makefile route with the ROM folder above; what it makes is copied to Documents/PixelSorcery
+    var moreBuilds: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Discs and ROMs made from your dumps are copied to Documents/PixelSorcery - open the .cue there in your emulator. They are for you only: do not share them.")
+                .font(.caption).foregroundStyle(.secondary)
+            List(engine.routes) { r in
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(r.label).bold()
+                        Text(r.what).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        if r.stage == "running" {
+                            HStack { ProgressView().controlSize(.small); Text(r.last).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle) }
+                        } else if !r.result.isEmpty {
+                            let ok = r.result == "OK"
+                            Label(r.result + (r.seconds > 0 ? String(format: "  %d:%02d", r.seconds / 60, r.seconds % 60) : "") + (ok ? "" : " — " + r.last),
+                                  systemImage: ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .font(.caption).foregroundStyle(ok ? .green : .orange).lineLimit(2)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    if r.region {
+                        Picker("", selection: $region) {
+                            ForEach(["US", "EU", "JP"], id: \.self) { g in
+                                Text(g + (engine.regions.contains(g) ? "" : " (no disc)")).tag(g)
+                            }
+                        }.labelsHidden().frame(width: 120).help("The SHCD disc it is built on: US 60 Hz (as the cartridges), EU 50 Hz, JP not working yet")
+                    }
+                    if !r.output.isEmpty { Button("Show in Finder") { engine.send("reveal " + r.output) } }
+                    if !r.log.isEmpty { Button("Log") { engine.send("reveal " + r.log) }.controlSize(.small) }
+                    Button("Build") { engine.send("make \(r.id) " + (r.region ? region + " " : "") + "\(effCores)") }
+                        .disabled(engine.running || engine.scanning)
+                }.padding(.vertical, 3)
+            }.frame(minHeight: 420)
         }
-        .onChange(of: engine.titles) { _, ts in        // after each scan: everything found, chosen
-            let avail = Set(ts.filter(\.usable).map(\.id))
-            if !chosenInit || !chosen.isSubset(of: avail) { chosen = avail; chosenInit = !avail.isEmpty }
-        }
-        .onReceive(timer) { _ in readLog() }
-        .onChange(of: selection) { _, _ in readLog() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in engine.quit() }
     }
 
     // Play: the last build (play.sh rebuilds it first only if the code changed); Rebuild: this title alone

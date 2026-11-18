@@ -5,10 +5,15 @@
 | which loads group N; then the sub CPU is halted (program RAM bank at $020000 for the main CPU),
 | the game's VBlank/HBlank/external handlers go into the BIOS's jump slots, its stack is set and
 | its entry point called. It stays in work RAM while the menu's word RAM is replaced.
+| home (offset 2): A+B+C+Start in a game (games/home.s) has group 0 loaded - the menu and a copy of this IP,
+| which build_disc.py stores in it at $23F000 - copies the IP to work RAM and enters here: the menu again.
 	.text
 	.globl	_start
 _start:
-	move.w	#0x2700, %sr
+	bra.s	boot
+home:	lea	launch(%pc), %a5
+	jmp	0x200000
+boot:	move.w	#0x2700, %sr
 0:	cmp.b	#0x10, 0xA1200F                 | sub flag $10: word RAM is in 2M mode
 	bne.s	0b
 	bsr.s	togive

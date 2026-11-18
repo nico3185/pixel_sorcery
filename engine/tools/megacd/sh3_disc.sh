@@ -3,7 +3,7 @@
 # sh2_disc.sh's method on s3engine_disc.sh's layout. Writes OUTPREFIX.front (card 3: SEGA, title, menus,
 # level select, the special and bonus stages), OUTPREFIX.<zone or act> and OUTPREFIX.args (build_disc.py's
 # --game 3:... --image G:... arguments, groups 36-47).
-# Evidence: the level-select starts (games/sh3/recordings/start-*.polls) replayed on the tracer, split by
+# Evidence: the level-select starts (games/sh3/recordings/start-*.polls) and front paths (front-*.polls) replayed on the tracer, split by
 # reader (PS_ROMUSE_CPUONLY / DMAONLY / Z80ONLY): keyed by zone/act ($FFFE10) while a level runs
 # (PS_ROMUSE_LEVEL), and by game mode ($FFF600) for the front. SH3 reads no checksum at boot: from frame 0.
 # Layout, every image:
@@ -19,9 +19,29 @@ py=$root/engine/.venv/bin/python; g=$root/games/sh3
 work=${out:h}/s3work; [[ -n ${S3_KEEP_EV:-} ]] || rm -rf $work; mkdir -p $work/cpu $work/dma $work/z80 $work/mcpu $work/mdma
 ninja -C $g/build-trace >/dev/null
 tr=$g/build-trace/genrecomp_build/genrecomp_trace
-print "1/4 evidence: $(ls $g/recordings/start-*.polls | wc -l | tr -d ' ') level-select starts"
+# + the front's own paths the level select skips (recordings/front-*.polls, made on the cartridge): the attract
+# demos (title left alone: AIZ's intro, HCZ) and data select -> No save -> AIZ1 - without them data select hung
+# (black screen) and the demos showed a blank screen on the disc. Made here when missing: a movie (one pad byte a
+# frame) played on the tracer, its polls recorded
+mkdir -p $g/recordings
+mv_front() {  # NAME FRAMES PRESSES: "frame:value[:frames]" each
+  [[ -f $g/recordings/front-$1.polls ]] && return
+  python3 -c "
+import sys
+m = {}
+for p in sys.argv[2:]:
+    f = p.split(':'); a, v, n = int(f[0]), int(f[1], 16), int(f[2]) if len(f) > 2 else 4
+    for i in range(a, a + n): m[i] = v
+open('$work/front-$1.mv', 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(int(sys.argv[1]))))" ${@:2}
+  GENRECOMP_MOVIE=$work/front-$1.mv PS_POLL_RECORD=$g/recordings/front-$1.polls $tr --headless --frames $2 \
+    --trace-out /dev/null $rom >/dev/null 2>&1
+}
+mv_front demo 6000                                 # the title left alone: the AIZ and HCZ demos
+ds=(600:80 900:80); for f in $(seq 2600 4199); do (( (f % 90) < 6 )) && ds+=($f:48:1) || ds+=($f:08:1); done
+mv_front dataselect 4400 $ds                       # Start, Start (No save), right with a jump every 90 frames
+print "1/4 evidence: $(ls $g/recordings/start-*.polls | wc -l | tr -d ' ') level-select starts, ${#${(f)"$(print -l $g/recordings/front-*.polls(N))"}} front paths"
 i=0
-for p in $g/recordings/start-*.polls; do
+for p in $g/recordings/start-*.polls $g/recordings/front-*.polls(N); do
   b=${p:t:r}
   [[ -n ${S3_KEEP_EV:-} && -n "$(print -l $work/cpu/$b/*.bin(N))" ]] && continue
   n=$(wc -l < $p); fr=$((n * 2 + 600))
@@ -73,13 +93,18 @@ plcp = {int(l, 16) for l in open(sys.argv[2])}   # in the PLC lists only plc.py'
 # a target below 0x7700 (the boot and engine code) is never a data pointer in SH3 - of 178 such entries only
 # the vectors were real (relocate.py moves those anyway): water levels (0x5324: level, x word pairs), palette
 # words and x/y pairs whose low word is an executed instruction start had been rewritten (Hydrocity's water)
-low = lambda a: a >= 0x100 and 0x200 <= (L(a) & 0xFFFFFF) < 0x7700
+# except the SEGA intro's frame table (0x3BF0, 11 entries of art, art, palette): its palettes (0x3D28-0x3E88) lie
+# among the engine's code, and unrelocated they were read from the Mega CD's BIOS ROM there (the intro's colours garbled)
+intro = {0x3BF8 + 12 * k for k in range(11)}
+low = lambda a: a >= 0x100 and 0x200 <= (L(a) & 0xFFFFFF) < 0x7700 and a not in intro
+out |= intro
 sys.stdout.writelines('%06X\n' % a for a in sorted(out) if not bad(a) and not low(a) and (not plc(a) or a in plcp))" $rom $work/plc_ptrs.txt > $work/ptrs.txt
 ex=(); for f in $work/cpu/*/*.bin(N) $work/mcpu/*/*.bin(N); do ex+=(--exec $f); done
 ( cd $g && $py $here/relocate.py $rom recomp.json $work/probe $ex --all-code \
     --map 000000-200000=400000 --targets-out $work/targets.txt >/dev/null 2>&1 )
 print "3/4 helpers"
 m68k-elf-as -m68000 --defsym QBASE=0xFB00 --defsym QEND=0xFBFC --defsym ART2LO=0x100000 --defsym ART2HI=0x120000 --defsym ART3LO=0x120000 --defsym ART3HI=0x140000 -o $work/dq.o $here/games/dmaqueue_map.s
+m68k-elf-as -m68000 -o $work/home.o $here/games/home.s && m68k-elf-ld -Ttext=0x200300 --oformat=binary -o $work/home.bin $work/home.o   # A+B+C+Start: the menu ($200300: at $200200 SH3 faulted on its first instruction, not understood yet)
 m68k-elf-ld -Ttext=0x200B00 -o $work/dq.elf $work/dq.o; m68k-elf-objcopy -O binary $work/dq.elf $work/dq.bin
 (( $(wc -c < $work/dq.bin) <= 0x200 )) || { print -u2 "dmaqueue_map.s: over 512 bytes (images start at \$200D00)"; exit 1; }
 m68k-elf-as -m68000 --defsym ABSORB=1 --defsym LOADSCREEN=1 -o $work/sw.o $here/swap.s
@@ -181,7 +206,7 @@ Z
       --map $(cat $work/map_$name.txt) \
       --patch 314=70024E71 --patch B63C=4E714E714E714E71 --patch 6F8=0080 --patch 714=3F3F \
       --patch 734=4EB9002005104E714E714E714E71 --patch 46B0=4EF900200514 --patch 1812=4EF900200B00 $zp \
-      --blob 200B00=$work/dq.bin --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin \
+      --blob 200B00=$work/dq.bin --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin --patch 1372=4EF900200300 --blob 200300=$work/home.bin \
       --blob 200700=$work/zf_$name.bin | head -1 )
   print "  $name: $(tail -1 $work/pack_$name.txt)"
   [[ $name == front ]] && args+=(--game 3:$out.front) || args+=(--image $grp[$name]:$out.$name)

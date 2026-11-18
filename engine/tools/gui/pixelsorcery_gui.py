@@ -7,8 +7,10 @@
                    does, + optional self-check against the original), Stop; '‹ Your games' back
 It opens on Your games once a game is built and returns there after a build.
 A client of build_ui.py --engine: state lines S|folder|running|scanning|cpus|native only,
-T|folder|code|name|rom state|rom detail|stage|done|total|seconds|result|built, N|note, E;
-commands scan FOLDER | start CORES PROCS CHECK TITLE... | play TITLE | pad TITLE | stop | quit.
+T|folder|code|name|rom state|rom detail|stage|done|total|seconds|result|built, R|...a make route..., G|regions, N|note, E;
+commands scan FOLDER | start CORES PROCS CHECK TITLE... | play TITLE | pad TITLE | make TARGET [REGION] CORES |
+reveal PATH | stop | quit. More builds... (the build screen): every Makefile route - the Mega CD compilation disc,
+the ROMs made from your dumps, the shelf, the package - and Show for what it made (Documents/PixelSorcery).
 --selftest FOLDER: the engine's view of FOLDER printed, no window."""
 import json, os, queue, subprocess, sys, threading
 import tkinter as tk
@@ -68,6 +70,7 @@ def collections():
 class App:
     def __init__(self, root):
         self.root, self.rows, self.q, self.running = root, {}, queue.Queue(), False
+        self.routes, self.regions, self.more = {}, [], None
         self.page, self.cards, self.tiles = None, (), []
         try: self.pref = json.load(open(PREFS))
         except (OSError, ValueError): self.pref = {}
@@ -156,6 +159,7 @@ class App:
         self.b_build = tk.Button(bar, text='Start', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN,
                                  activeforeground='white', relief='flat', padx=18, pady=4, cursor='hand2', command=self.start_stop)
         self.b_build.pack(side='right')
+        ttk.Button(bar, text='More builds… (Mega CD disc, ROMs, packages)', command=self.more_builds).pack(side='left')
         self.root.bind('<Return>', lambda e: self.page == 'build' and not self.running and self.start())
         self.root.bind('<Escape>', lambda e: self.running and self.send('stop'))
         self.hint()
@@ -247,7 +251,12 @@ class App:
                         f'{s // 60}:{s % 60:02d}' if s else '')
                 if self.tree.exists(t): self.tree.item(t, values=vals, tags=(tag,))
                 else: self.tree.insert('', 'end', iid=t, values=vals, tags=(tag,))
+            elif f[0] == 'R' and len(f) >= 11:
+                self.routes[f[1]] = dict(label=f[2], what=f[3], region=f[4] == '1', stage=f[5], sec=int(f[6] or 0), result=f[7],
+                                         output=f[8], last=f[9], log=f[10])
+            elif f[0] == 'G': self.regions = f[1].split() if len(f) > 1 else []
             elif f[0] == 'N': notes.append(f[1])
+        self.show_more()
         avail = {t for t, r in self.rows.items() if r['rom'] in READY}
         if avail and (not self.pref.get('selected_init') or not self.sel <= avail):   # after a scan: everything found
             self.sel = set(avail); self.pref['selected_init'] = True; self.save(); self.repick()
@@ -262,6 +271,55 @@ class App:
         self.hint(); self.picked(); self.show_cards(); self.update_back()
         if self.page is None and self.rows: self.go('games' if built else 'build')
         elif was and not self.running and built: self.go('games')        # a build ended: your games
+
+    # ---------------------------------------------------------------- more builds: the Makefile's routes
+    def more_builds(self):
+        if self.more and self.more.winfo_exists(): self.more.lift(); return
+        w = self.more = tk.Toplevel(self.root); w.title('More builds'); w.geometry('900x460'); w.configure(bg=BG)
+        f = ttk.Frame(w, padding=12); f.pack(fill='both', expand=True)
+        ttk.Label(f, text='Discs and ROMs made from your dumps are copied to Documents/PixelSorcery - open the .cue there in '
+                          'your emulator. They are for you only: do not share them.', foreground=GREY, font=CAPTION,
+                  wraplength=860).pack(anchor='w', pady=(0, 6))
+        cols = ('label', 'state', 'what')
+        t = self.more_tree = ttk.Treeview(f, columns=cols, show='headings', selectmode='browse', height=11)
+        for c, wd, h in (('label', 240, 'Build'), ('state', 200, 'State'), ('what', 420, 'What it makes')):
+            t.heading(c, text=h); t.column(c, width=wd, anchor='w', stretch=c == 'what')
+        t.pack(fill='both', expand=True)
+        bar = ttk.Frame(f); bar.pack(fill='x', pady=(8, 0))
+        ttk.Label(bar, text='SHCD disc region').pack(side='left')
+        self.region = tk.StringVar(value=self.pref.get('region', 'US'))
+        ttk.Combobox(bar, textvariable=self.region, values=('US', 'EU', 'JP'), width=5, state='readonly').pack(side='left', padx=(4, 4))
+        self.l_regions = ttk.Label(bar, foreground=GREY, font=CAPTION); self.l_regions.pack(side='left', padx=(0, 12))
+        def picked(): return t.selection()[0] if t.selection() else None
+        def build():
+            r = picked()
+            if not r or self.running: return
+            self.pref['region'] = self.region.get(); self.save()
+            reg = self.region.get() + ' ' if self.routes[r]['region'] else ''
+            self.send(f'make {r} {reg}{self.num(self.cores, self.cpus)}')
+        def reveal(key):
+            r = picked()
+            if r and self.routes[r][key]: self.send('reveal ' + self.routes[r][key])
+        tk.Button(bar, text='Build', font=BOLD, bg=ACCENT, fg='white', activebackground=ACCENT_DOWN, activeforeground='white',
+                  relief='flat', padx=14, command=build).pack(side='right')
+        ttk.Button(bar, text='Log', command=lambda: reveal('log')).pack(side='right', padx=6)
+        ttk.Button(bar, text='Show what it made', command=lambda: reveal('output')).pack(side='right')
+        self.more_last = ttk.Label(f, foreground=GREY, font=CAPTION); self.more_last.pack(anchor='w', pady=(6, 0))
+        self.show_more()
+
+    def show_more(self):
+        if not (self.more and self.more.winfo_exists()): return
+        t = self.more_tree
+        for k, r in self.routes.items():
+            st = ('running… ' + r['last'][:40]) if r['stage'] == 'running' else \
+                 (('✓ ' if r['result'] == 'OK' else '✗ ') + r['result'] + (f"  {r['sec'] // 60}:{r['sec'] % 60:02d}" if r['sec'] else '')) if r['result'] else ''
+            vals = (r['label'], st, r['what'])
+            if t.exists(k): t.item(k, values=vals)
+            else: t.insert('', 'end', iid=k, values=vals)
+        self.l_regions.configure(text='found: ' + (' '.join(self.regions) or 'none'))
+        sel = t.selection()
+        r = self.routes.get(sel[0]) if sel else None
+        self.more_last.configure(text=(r['output'] and 'Made: ' + r['output']) or (r and r['last']) or '' if r else '')
 
     # ---------------------------------------------------------------- actions
     def click(self, e):

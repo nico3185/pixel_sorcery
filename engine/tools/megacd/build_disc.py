@@ -121,6 +121,15 @@ def main():
             audio.append((os.path.join(cdir, fn), lines[li + 1:nxt]))
         if mode == 2:
             groups[0] = [(bytes(menu), 0x080000)]
+    g_ = ip.find(b'GAMEVEC!') + 8              # the IP's game table, before group 0 takes a copy of it
+    ip[g_] = mode
+    for n_, e in entries.items():
+        o_ = g_ + 2 + (n_ - 1) * 22
+        ip[o_:o_ + 22] = e
+    if mode == 2:                                 # A+B+C+Start (games/home.s): the menu comes back with the IP
+        if len(groups[0][0][0]) > 0x3F000:
+            sys.exit('menu over $3F000 bytes: the IP copy for A+B+C+Start goes at $23F000')
+        groups[0].append((bytes(ip), 0x080000 + 0x3F000))   # beside it, main $23F000
     images = [im for g in groups for im in g]
     gamevec = entries or None
     ipsz, spsz = 0x800, (len(sp) + 0x7FF) & ~0x7FF
@@ -145,11 +154,6 @@ def main():
             l_, c_ = placed[key]
             o_ = t + gi * (6 * 12 + 4) + 12 * k
             sp[o_:o_ + 12] = l_.to_bytes(4, 'big') + c_.to_bytes(4, 'big') + dest.to_bytes(4, 'big')
-    g_ = ip.find(b'GAMEVEC!') + 8
-    ip[g_] = mode
-    for n_, e in entries.items():
-        o_ = g_ + 2 + (n_ - 1) * 22
-        ip[o_:o_ + 22] = e
     disc = disc[:lba * 2048]
     payload = b''.join(i for i, _ in images)
     print(f'groups: ' + ', '.join(f'{i}:{len(g)}' for i, g in enumerate(groups) if g) + f'; mode {mode}')
