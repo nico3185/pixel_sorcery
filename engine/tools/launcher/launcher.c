@@ -48,7 +48,9 @@ extern char **environ;
 #define mkdir(p, m) _mkdir(p)
 #endif
 
-#define W 480                                     /* logical screen: 16:9, x4 = 1080p */
+#define WMAX 960                                  /* logical screen: 270 high; the shelf 16:9 (480, x4 = 1080p), */
+static int s_W = 480;                             /* the disc look as wide as the aspect ratio chosen (360-960) */
+#define W s_W
 #define H 270
 #define CW 150                                    /* cartridge */
 #define CH 150
@@ -67,6 +69,11 @@ typedef struct {
     volatile int demo_state;                      /* 0 none, 1 captured (load it), 2 loaded, 3 failed */
     SDL_Texture *cart, *clip;
     char resume[1200];                            /* PS_RESUME for the next start (continue, a slot) */
+    char port[64];                                /* the title run (--game PORT in one executable) */
+    int soon;                                     /* 1: a COMING SOON card; 2: another program (app[]) */
+    char app[1024];
+    char audio[256], audio_path[1100];            /* the disc whose audio tracks it plays (PS_CD_AUDIO) */
+    SDL_Texture *labeltex;                        /* the disc look: the label alone */
 } Game;
 
 static Game G[MAXG];
@@ -77,6 +84,8 @@ static float s_vpos[MAXG];                          /* each column's version, an
 static char s_stack[MAXG][256]; static int s_nstack;
 static char s_name[128] = "PixelSorcery", s_header[64] = "COLLECTION", s_gamesdir[1024], s_romdir[1024];
 static uint32_t s_accent = 0xE0201C;
+static int s_disc;                                /* "look disc": the Mega CD compilation's game-select screen */
+static char s_bgfile[1100], s_self[1100];          /* its picture (BMP); "@self" games dir: this executable */
 static SDL_Renderer *R;
 static SDL_Window *Win;
 static SDL_AudioDeviceID s_audio;
@@ -273,18 +282,44 @@ static int load_config(const char *path) {
         if (!strncmp(line, "name ", 5)) { snprintf(s_name, sizeof s_name, "%.*s", (int)sizeof s_name - 1, line + 5);   /* a display title: cut to fit */ trim(s_name); }
         else if (!strncmp(line, "header ", 7)) { snprintf(s_header, sizeof s_header, "%.*s", (int)sizeof s_header - 1, line + 7); trim(s_header); }
         else if (!strncmp(line, "accent ", 7)) s_accent = (uint32_t)strtoul(line + 7, NULL, 16);
+        else if (!strcmp(line, "look disc")) s_disc = 1;
+        else if (!strncmp(line, "background ", 11)) {          /* beside the config unless absolute */
+            const char *b = line + 11, *sl = strrchr(path, '/');
+            if (*b == '/' || !sl) snprintf(s_bgfile, sizeof s_bgfile, "%s", b);
+            else snprintf(s_bgfile, sizeof s_bgfile, "%.*s/%s", (int)(sl - path), path, b);
+        }
+        else if ((!strncmp(line, "soon ", 5) || !strncmp(line, "app ", 4)) && NG < MAXG) {
+            /* soon ID|NAME|YEAR: shown, not startable; app ID|NAME|YEAR|PATH;PATH...: another program,
+             * started when one of the paths exists (~ = home), else COMING SOON */
+            Game *g = &G[NG]; char *f[4] = { 0 }; int n = 0, app = *line == 'a';
+            for (char *tok = strtok(line + (app ? 4 : 5), "|"); tok && n < 4; tok = strtok(NULL, "|")) { trim(tok); f[n++] = tok; }
+            if (n < 3) continue;
+            memset(g, 0, sizeof *g);
+            snprintf(g->id, sizeof g->id, "%s", f[0]); snprintf(g->name, sizeof g->name, "%s", f[1]);
+            snprintf(g->year, sizeof g->year, "%s", f[2]); snprintf(g->players, sizeof g->players, "1");
+            snprintf(g->port, sizeof g->port, "%s", f[0]); snprintf(g->settings, sizeof g->settings, "%s", f[0]);
+            g->soon = 1;
+            for (char *c = app && n > 3 ? strtok(f[3], ";") : NULL; c; c = strtok(NULL, ";")) {
+                char p2[1024]; trim(c);
+                if (*c == '~' && getenv("HOME")) snprintf(p2, sizeof p2, "%s%s", getenv("HOME"), c + 1); else snprintf(p2, sizeof p2, "%s", c);
+                if (exists(p2)) { snprintf(g->app, sizeof g->app, "%s", p2); g->soon = 2; g->have_rom = 1; break; }
+            }
+            NG++;
+        }
         else if (!strncmp(line, "stack ", 6) && s_nstack < MAXG) {   /* an overlong line is skipped */
             if (snprintf(s_stack[s_nstack], sizeof s_stack[0], "%s", line + 6) < (int)sizeof s_stack[0]) s_nstack++;
         }
         else if (!strncmp(line, "game ", 5) && NG < MAXG) {
-            Game *g = &G[NG]; char *f[9] = { 0 }; int n = 0;
-            for (char *tok = strtok(line + 5, "|"); tok && n < 9; tok = strtok(NULL, "|")) { trim(tok); f[n++] = tok; }
+            Game *g = &G[NG]; char *f[10] = { 0 }; int n = 0;
+            for (char *tok = strtok(line + 5, "|"); tok && n < 10; tok = strtok(NULL, "|")) { trim(tok); f[n++] = tok; }
             if (n < 7) continue;
             snprintf(g->settings, sizeof g->settings, "%s", n >= 9 && *f[8] ? f[8] : n >= 8 && *f[7] ? f[7] : f[0]);
             snprintf(g->id, sizeof g->id, "%s", f[0]); snprintf(g->name, sizeof g->name, "%s", f[1]);
             snprintf(g->year, sizeof g->year, "%s", f[2]); snprintf(g->players, sizeof g->players, "%s", f[3]);
             g->frame = atol(f[4]); g->demo = atol(f[5]);
             snprintf(g->romname, sizeof g->romname, "%s", f[6]);
+            snprintf(g->port, sizeof g->port, "%s", n >= 8 && *f[7] ? f[7] : f[0]);
+            snprintf(g->audio, sizeof g->audio, "%s", n >= 10 ? f[9] : "");   /* AUDIO: another disc's soundtrack */
             NG++;
         }
     }
@@ -310,6 +345,13 @@ static int load_config(const char *path) {
 }
 
 static void find_rom(Game *g) {
+    if (g->soon) return;
+    *g->audio_path = 0;
+    if (*g->audio) {                                /* the soundtrack's disc: kept beside, or in --roms */
+        char p[1100];
+        if (snprintf(p, sizeof p, "%s/%s", g->store, g->audio) < (int)sizeof p && exists(p)) snprintf(g->audio_path, sizeof g->audio_path, "%s", p);
+        else if (*s_romdir && snprintf(p, sizeof p, "%s/%s", s_romdir, g->audio) < (int)sizeof p && exists(p)) snprintf(g->audio_path, sizeof g->audio_path, "%s", p);
+    }
     snprintf(g->rom, sizeof g->rom, "%s/%s", g->store, g->romname);
     g->have_rom = exists(g->rom);
     if (!g->have_rom && *s_romdir) {
@@ -320,7 +362,8 @@ static void find_rom(Game *g) {
 
 /* ------------------------------------------------------------------ shelf settings */
 static const char *k_aspects[] = { "4:3", "16:10", "16:9", "21:9", "32:9" };    /* as ps_menu.c's */
-static struct { int aspect, objects, water, fullscreen, latency, volume, metal, music; } SET = { 2, 1, 1, 0, 1, 100, 0, 1 };
+static struct { int aspect, objects, water, fullscreen, latency, volume, metal, music, style; } SET = { 2, 1, 1, 0, 1, 100, 0, 1, 0 };
+static const char *k_styles[] = { "PIXEL", "MODERN" };   /* the disc look's home screen: the Mega CD's, or a modern landing */
 static char s_pref[1024], s_setpath[1100];
 static void settings_load(void) {
     FILE *f = fopen(s_setpath, "r"); if (!f) return;
@@ -335,13 +378,14 @@ static void settings_load(void) {
         else if (sscanf(l, "volume=%d", &v) == 1 && v >= 0 && v <= 100) SET.volume = v;
         else if (sscanf(l, "metal=%d", &v) == 1) SET.metal = !!v;
         else if (sscanf(l, "music=%d", &v) == 1) SET.music = !!v;
+        else if (sscanf(l, "style=%d", &v) == 1 && v >= 0 && v < 2) SET.style = v;
     }
     fclose(f);
 }
 static void settings_save(void) {
     FILE *f = fopen(s_setpath, "w"); if (!f) return;
-    fprintf(f, "aspect=%d\nwide_objects=%d\nwater=%d\nfullscreen=%d\nlow_latency=%d\nvolume=%d\nmetal=%d\nmusic=%d\n",
-            SET.aspect, SET.objects, SET.water, SET.fullscreen, SET.latency, SET.volume, SET.metal, SET.music);
+    fprintf(f, "aspect=%d\nwide_objects=%d\nwater=%d\nfullscreen=%d\nlow_latency=%d\nvolume=%d\nmetal=%d\nmusic=%d\nstyle=%d\n",
+            SET.aspect, SET.objects, SET.water, SET.fullscreen, SET.latency, SET.volume, SET.metal, SET.music, SET.style);
     s_music_on = SET.music; s_music_vol = SET.volume;
     fclose(f);
 }
@@ -387,10 +431,24 @@ static void pad_save(void) {
 /* runs GAMESDIR/ID with argv/env additions; waits; stderr to `log` when given */
 static int run_game(Game *g, const char **args, const char **env, const char *log) {
     char exe[1200]; snprintf(exe, sizeof exe, "%s/%s", s_gamesdir, g->id);
-    const char *argv[16]; int n = 0;
-    argv[n++] = exe;
-    for (; args && *args && n < 14; args++) argv[n++] = *args;
-    argv[n++] = g->rom; argv[n] = NULL;
+    const char *argv[20]; int n = 0;
+    if (g->soon == 2) {                               /* another program (SHM): the player's own copy */
+#ifdef __APPLE__
+        snprintf(exe, sizeof exe, "/usr/bin/open");
+        argv[n++] = exe; argv[n++] = "-W"; argv[n++] = "-a"; argv[n++] = g->app; argv[n] = NULL;
+#else
+        snprintf(exe, sizeof exe, "%s", g->app);
+        argv[n++] = exe; argv[n] = NULL;
+#endif
+        args = NULL;
+    } else if (!strcmp(s_gamesdir, "@self")) {        /* one executable: PROGRAM --game PORT [options] ROM */
+        snprintf(exe, sizeof exe, "%s", s_self);
+        argv[n++] = exe; argv[n++] = "--game"; argv[n++] = g->port;
+    } else argv[n++] = exe;
+    if (g->soon != 2) {
+        for (; args && *args && n < 17; args++) argv[n++] = *args;
+        argv[n++] = g->rom; argv[n] = NULL;
+    }
 #ifndef _WIN32
     int ne = 0; while (environ[ne]) ne++;
     const char **envp = calloc((size_t)ne + 16, sizeof *envp);
@@ -469,13 +527,13 @@ static int SDLCALL label_thread(void *u) {
     (void)u;
     for (int i = 0; i < NG; i++) {
         Game *g = &G[i];
-        if (g->label_state != 0 || !g->have_rom) continue;
+        if (g->label_state != 0 || !g->have_rom || g->soon) continue;
         char label[1100]; snprintf(label, sizeof label, "%s/label.bmp", g->store);
         g->label_state = exists(label) || capture_label(g) ? 1 : 3;
     }
     for (int i = 0; i < NG; i++) {                    /* then the demo clips */
         Game *g = &G[i];
-        if (g->demo_state != 0 || !g->have_rom || g->demo <= 0) continue;
+        if (g->demo_state != 0 || !g->have_rom || g->demo <= 0 || g->soon) continue;
         char demo[1100]; snprintf(demo, sizeof demo, "%s/demo.bmp", g->store);
         g->demo_state = exists(demo) || capture_demo(g) ? 1 : 3;
     }
@@ -501,7 +559,9 @@ static int SDLCALL play_thread(void *u) {
     char crash_path[1200]; snprintf(crash_path, sizeof crash_path, "%s/%s.crash", sess, stamp);
     FILE *crash_file = fopen(crash_path, "w"); if (crash_file) fclose(crash_file);
     char res[1300]; snprintf(res, sizeof res, "PS_RESUME=%s", g->resume);
-    const char *env[] = { rec, crash, "PS_RENDERER=native", "PS_Z80=recomp", "PS_LAUNCHER=1", *g->resume ? res : NULL, NULL };
+    char aud[1200]; snprintf(aud, sizeof aud, "PS_CD_AUDIO=%s", g->audio_path);
+    const char *env[] = { rec, crash, "PS_RENDERER=native", "PS_Z80=recomp", "PS_LAUNCHER=1", "PS_HOME=1",
+                          *g->audio_path ? aud : "PS_CD_AUDIO=", *g->resume ? res : NULL, NULL };
     const char *full[] = { "--fullscreen", NULL };
     settings_apply(g);
     run_game(g, SET.fullscreen ? full : NULL, env, log);
@@ -549,8 +609,9 @@ static int ask_rom(Game *g) { (void)g; return 0; }
 /* ------------------------------------------------------------------ continue / save slots */
 /* START on a cartridge with a last session or saves opens a chooser: NEW GAME, CONTINUE (the
  * last session, replayed to its end), SLOT 1-4 (the title's save states, PREF/<settings>/saves) */
-typedef struct { char label[48]; char resume[1200]; } Choice;
+typedef struct { char label[128]; char resume[1200]; int game; } Choice;
 static Choice s_ch[8]; static int s_nch, s_choose = -1;
+static int s_vchoose;                               /* the disc look: the chooser lists a card's versions */
 static long count_lines(const char *p) {
     FILE *f = fopen(p, "r"); if (!f) return -1;
     long n = 0; int c; while ((c = fgetc(f)) != EOF) n += c == '\n';
@@ -586,8 +647,8 @@ static void draw_choices(Buf *b, Game *g) {
     int pw = 220, ph = 26 + s_nch * 15, px0 = (W - pw) / 2, py0 = 70;
     rect_a(b, 0, 43, W, H - 61, 0x000000, 150);
     rect(b, px0, py0, pw, ph, rgb(18, 18, 22));
-    rect(b, px0, py0, pw, 12, rgb(200, 24, 22));
-    s_italic = 1; text(b, px0 + 6, py0 + 3, g->name, 1, 0xFFFFFF, 0xFFD8D8, 0); s_italic = 0;
+    rect(b, px0, py0, pw, 12, s_disc ? rgb(255, 224, 0) : rgb(200, 24, 22));     /* the disc look: its yellow */
+    s_italic = 1; text(b, px0 + 6, py0 + 3, g->name, 1, s_disc ? 0x101010 : 0xFFFFFF, s_disc ? 0x101010 : 0xFFD8D8, 0); s_italic = 0;
     for (int i = 0; i < s_nch; i++) {
         int y = py0 + 18 + i * 15;
         if (i == s_choose) { rect(b, px0 + 4, y - 4, pw - 8, 15, rgb(40, 40, 52)); text(b, px0 + 10, y, ">", 1, s_accent, s_accent, 0); }
@@ -691,7 +752,7 @@ static void build_cart(Game *g) {
 }
 
 /* ------------------------------------------------------------------ screen */
-static uint32_t bgpix[W * H], fgpix[W * H];
+static uint32_t bgpix[WMAX * H], fgpix[WMAX * H];
 static float s_clip_fade, s_clip_t;                 /* the selected cartridge's clip: opacity, time */
 static SDL_Texture *bgtex, *fgtex;
 
@@ -745,7 +806,7 @@ static void draw_bg(float pos, float t) {
 }
 
 static int s_panel = -1;                            /* settings panel: selected row, -1 closed */
-#define PANEL_ROWS 10
+#define PANEL_ROWS (s_disc ? 11 : 10)              /* the disc look: + its home screen's style */
 static void panel_row(int i, char *out, size_t n) {
     switch (i) {
     case 0: snprintf(out, n, "ASPECT RATIO          < %s >", k_aspects[SET.aspect]); break;
@@ -757,6 +818,8 @@ static void panel_row(int i, char *out, size_t n) {
     case 6: snprintf(out, n, "RENDERER              %s", SET.metal ? "METAL" : "OPENGL"); break;
     case 7: snprintf(out, n, "CONTROLLER SETUP      %s", s_pad ? "" : "(NO GAMEPAD)"); break;
     case 8: snprintf(out, n, "SHELF MUSIC           %s", SET.music ? "ON" : "OFF"); break;
+    case 9: if (s_disc) { snprintf(out, n, "HOME SCREEN           < %s >", k_styles[SET.style]); break; }
+            /* fall through */
     default: snprintf(out, n, "BACK"); break;
     }
 }
@@ -772,6 +835,8 @@ static void panel_change(int d) {
     case 6: SET.metal ^= 1; break;
     case 7: if (s_pad && d > 0) { s_cap = 0; for (int i = 0; i < 8; i++) s_cap_map[i] = -1; } break;
     case 8: SET.music ^= 1; break;
+    case 9: if (s_disc) { SET.style ^= 1; break; }
+            s_panel = -1; break;
     default: s_panel = -1; break;
     }
     settings_save();
@@ -837,7 +902,376 @@ static void draw_fg(int sel, float t, const char *msg) {
     if (s_choose >= 0) draw_choices(&b, g);
 }
 
+
+/* ------------------------------------------------------------------ the disc look */
+/* "look disc" (Ultimate SH, BACKLOG 0.7.5): the Mega CD compilation's game-select screen. The
+ * player's menu picture fills the screen, which is as wide as the aspect ratio chosen in the settings
+ * (4:3 to 32:9, 270 lines); the cards (one per column of the config: a game and its versions) sit in
+ * rows of four with the game's title screen as their picture, the selected one in a yellow frame
+ * playing its attract clip. START on a card with versions asks which (SH1 / SHK1,
+ * the soundtrack of SHCD...); a COMING SOON card is shown and not started. */
+static SDL_Surface *s_bgsurf; static int s_bgw = -1;
+static const int k_anum[] = { 4, 16, 16, 21, 32 }, k_aden[] = { 3, 10, 9, 9, 9 };
+static int disc_width(void) {
+    int a = SET.aspect < 0 || SET.aspect > 4 ? 2 : SET.aspect;
+    if (getenv("PS_LAUNCHER_ASPECT")) a = atoi(getenv("PS_LAUNCHER_ASPECT")) % 5;   /* tests */
+    int w = (H * k_anum[a] / k_aden[a] + 1) & ~1;
+    return w > WMAX ? WMAX : w;
+}
+static void disc_aspect(void) {
+    int w = disc_width();
+    if (w == W && bgtex) return;
+    W = w;
+    if (bgtex) SDL_DestroyTexture(bgtex);
+    if (fgtex) SDL_DestroyTexture(fgtex);
+    bgtex = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, W, H);
+    fgtex = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, W, H);
+    SDL_SetTextureBlendMode(fgtex, SDL_BLENDMODE_BLEND);
+    SDL_RenderSetLogicalSize(R, W, H);
+    s_bgw = -1;
+}
+static void disc_bg(void) {                          /* the picture, scaled to cover the screen, dimmed */
+    if (s_bgw == W) return;
+    s_bgw = W;
+    if (!s_bgsurf && *s_bgfile) {
+        SDL_Surface *l = SDL_LoadBMP(s_bgfile);
+        if (l) { s_bgsurf = SDL_ConvertSurfaceFormat(l, SDL_PIXELFORMAT_ARGB8888, 0); SDL_FreeSurface(l); }
+        if (!s_bgsurf) *s_bgfile = 0;
+    }
+    if (s_bgsurf) {
+        const uint32_t *sp = s_bgsurf->pixels; int pitch = s_bgsurf->pitch / 4, sw = s_bgsurf->w, sh = s_bgsurf->h;
+        float k = (float)W / sw > (float)H / sh ? (float)W / sw : (float)H / sh;      /* cover */
+        float ox = (sw * k - W) / 2, oy = (sh * k - H) / 2;
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) {
+                int sx = (int)((x + ox) / k), sy = (int)((y + oy) / k);
+                if (sx >= sw) sx = sw - 1;
+                if (sy >= sh) sy = sh - 1;
+                bgpix[y * W + x] = sp[sy * pitch + sx];
+            }
+        /* a backdrop: blurred (the picture's own drawing - the disc's cards - stays behind ours) and dimmed */
+        uint32_t *tmp = malloc((size_t)W * H * 4);
+        for (int pass = 0; pass < 3 && tmp; pass++)
+            for (int dir = 0; dir < 2; dir++) {
+                uint32_t *src = dir ? tmp : bgpix, *dst = dir ? bgpix : tmp;
+                for (int y = 0; y < H; y++)
+                    for (int x = 0; x < W; x++) {
+                        int r = 0, gg = 0, bb = 0, n = 0;
+                        for (int k = -3; k <= 3; k++) {
+                            int xx = dir ? x : x + k, yy = dir ? y + k : y;
+                            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                            uint32_t c = src[yy * W + xx]; r += c >> 16 & 255; gg += c >> 8 & 255; bb += c & 255; n++;
+                        }
+                        dst[y * W + x] = rgb(r / n, gg / n, bb / n);
+                    }
+            }
+        free(tmp);
+        for (int i = 0; i < W * H; i++) {
+            uint32_t c = bgpix[i];
+            bgpix[i] = rgb((c >> 16 & 255) * 3 / 8, (c >> 8 & 255) * 3 / 8, (c & 255) * 3 / 8 + 6);
+        }
+    } else
+        for (int y = 0; y < H; y++)                  /* no picture: the plain menu's night blue */
+            for (int x = 0; x < W; x++) {
+                int glow = 40 - abs(x - W / 2) * 40 / (W / 2);
+                bgpix[y * W + x] = rgb(12 + glow / 4, 18 + glow / 3, 52 + y / 6 + glow / 2);
+            }
+}
+static int disc_rows(void) { return (s_ncol + 3) / 4; }
+static void disc_card(int c, SDL_FRect *r) {         /* column c's card */
+    int rows = disc_rows();
+    float gap = 10, top = 44, bottom = 44, name = W < 440 ? 21 : 12;   /* narrow: names on two lines */
+    float cw = (W - 32 - 3 * gap) / 4, ch = cw * LH / LW;
+    float maxh = (H - top - bottom - (rows - 1) * gap) / rows - name;
+    if (ch > maxh) { ch = maxh; cw = ch * LW / LH; }
+    float x0 = (W - (4 * cw + 3 * gap)) / 2, y0 = top + (H - top - bottom - rows * (ch + name) - (rows - 1) * gap) / 2;
+    r->x = x0 + (c % 4) * (cw + gap); r->y = y0 + (c / 4) * (ch + name + gap); r->w = cw; r->h = ch;
+}
+static void disc_label(Game *g) {                    /* the title screen as a texture, once captured */
+    if (g->labeltex || g->label_state != 2) return;
+    char label[1100]; snprintf(label, sizeof label, "%s/label.bmp", g->store);
+    SDL_Surface *s = SDL_LoadBMP(label);
+    if (!s) return;
+    g->labeltex = SDL_CreateTextureFromSurface(R, s);
+    if (g->labeltex) SDL_SetTextureScaleMode(g->labeltex, SDL_ScaleModeLinear);
+    SDL_FreeSurface(s);
+}
+static void fit_text(Buf *b, int cx, int y, const char *s, int maxw, uint32_t c) {   /* one line, cut to fit */
+    char t[160]; snprintf(t, sizeof t, "%s", s);
+    while (strlen(t) > 1 && text_w(t, 1) > maxw) t[strlen(t) - 1] = 0;
+    text_c(b, cx, y, t, 1, c, c, 1);
+}
+static int fit_text2(Buf *b, int cx, int y, const char *s, int maxw, uint32_t c) {  /* two lines at most */
+    if (text_w(s, 1) <= maxw) { text_c(b, cx, y, s, 1, c, c, 1); return 1; }
+    char t[160]; snprintf(t, sizeof t, "%s", s);
+    char *cut = NULL;
+    for (char *p = t; *p; p++) if (*p == ' ') { *p = 0; if (text_w(t, 1) <= maxw) cut = p; *p = ' '; }
+    if (!cut) { fit_text(b, cx, y, s, maxw, c); return 1; }
+    *cut = 0;
+    text_c(b, cx, y, t, 1, c, c, 1);
+    fit_text(b, cx, y + 9, cut + 1, maxw, c);
+    return 2;
+}
+/* a soft backdrop at the window's resolution: the picture averaged down to a few dozen pixels, drawn back
+ * up with linear filtering (a blur for free); NULL when there is no picture */
+static SDL_Texture *soft_tex(SDL_Surface *src, int w, int h) {
+    SDL_Surface *t = src ? SDL_ConvertSurfaceFormat(src, SDL_PIXELFORMAT_ARGB8888, 0) : NULL;
+    if (!t) return NULL;
+    uint32_t *o = malloc((size_t)w * h * 4);
+    const uint32_t *sp = t->pixels; int pitch = t->pitch / 4;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int ax = x * t->w / w, bx = (x + 1) * t->w / w, ay = y * t->h / h, by = (y + 1) * t->h / h, r = 0, g2 = 0, b = 0, n = 0;
+            for (int j = ay; j < by; j++) for (int i = ax; i < bx; i++) { uint32_t c = sp[j * pitch + i]; r += c >> 16 & 255; g2 += c >> 8 & 255; b += c & 255; n++; }
+            o[y * w + x] = n ? rgb(r / n, g2 / n, b / n) : 0xFF000000u;
+        }
+    SDL_Texture *tx = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
+    if (tx) { SDL_UpdateTexture(tx, NULL, o, w * 4); SDL_SetTextureScaleMode(tx, SDL_ScaleModeLinear); }
+    free(o); SDL_FreeSurface(t);
+    return tx;
+}
+static void cover(SDL_Texture *tx, int lw, int lh, Uint8 mod) {   /* the texture filling lw x lh, cropped */
+    int tw, th; SDL_QueryTexture(tx, NULL, NULL, &tw, &th);
+    float k = (float)lw / tw > (float)lh / th ? (float)lw / tw : (float)lh / th;
+    SDL_FRect d = { (lw - tw * k) / 2, (lh - th * k) / 2, tw * k, th * k };
+    SDL_SetTextureColorMod(tx, mod, mod, mod);
+    SDL_RenderCopyF(R, tx, NULL, &d);
+}
+static SDL_Texture *s_menusoft;
+static int s_menusoft_tried;
+static SDL_Texture *menu_soft(void) {
+    if (!s_menusoft_tried) {
+        s_menusoft_tried = 1;
+        SDL_Surface *l = *s_bgfile ? SDL_LoadBMP(s_bgfile) : NULL;
+        if (l) { s_menusoft = soft_tex(l, 64, 45); SDL_FreeSurface(l); }
+    }
+    return s_menusoft;
+}
+static void present_modern(float pos, float t, int sel, const char *msg);
+static void present_disc(float t, int sel, const char *msg) {
+    disc_aspect(); disc_bg();
+    Buf b = { fgpix, W, H };
+    memset(fgpix, 0, sizeof fgpix);
+    int sc = text_w(s_header, 3) > W - 40 ? 2 : 3;      /* the heading, yellow as the disc's frame */
+    text_c(&b, W / 2, 22 - 7 * sc / 2, s_header, sc, 0xFFFFFF, 0xFFE000, 1);
+    int selc = s_colof[sel];
+    for (int c = 0; c < s_ncol; c++) {
+        Game *g = &G[s_cell[c][0]];
+        SDL_FRect r; disc_card(c, &r);
+        int x = (int)r.x, y = (int)r.y, w = (int)r.w, h = (int)r.h;
+        if (!g->labeltex) {                          /* no picture: the name on the card */
+            uint32_t top = g->soon == 1 ? rgb(34, 34, 40) : rgb(30, 54, 130), bot = g->soon == 1 ? rgb(18, 18, 22) : rgb(16, 28, 80);
+            for (int j = 0; j < h; j++) rect(&b, x, y + j, w, 1, j < h / 2 ? top : bot);
+            rect(&b, x, y, w, 1, g->soon == 1 ? rgb(70, 70, 80) : rgb(90, 140, 230));
+            const char *m = g->soon == 1 ? "COMING SOON" : g->soon == 2 ? "YOUR COPY" : !g->have_rom ? "INSERT ROM" : g->label_state == 3 ? "" : "PREPARING...";
+            fit_text2(&b, x + w / 2, y + h / 2 - 12, g->name, w - 6, g->soon == 1 ? 0x8A8A96 : 0xFFFFFF);
+            fit_text(&b, x + w / 2, y + h / 2 + 8, m, w - 6, g->soon == 1 ? 0xC8A040 : s_accent);
+        }
+        if (s_nrow[c] > 1) {                         /* a card with versions: how many */
+            char v[16]; snprintf(v, sizeof v, "x%d", s_nrow[c]);
+            int vw = text_w(v, 1) + 6;
+            rect(&b, x + w - vw - 2, y + 2, vw, 11, rgb(255, 224, 0));
+            text(&b, x + w - vw + 1, y + 4, v, 1, 0x101010, 0x101010, 0);
+        }
+        fit_text2(&b, x + w / 2, y + h + 3, g->name, w + 8, c == selc ? 0xFFE000 : g->soon == 1 ? 0x8A8A96 : 0xE0E4F0);
+        if (c == selc) {                             /* the yellow frame */
+            int p = 200 + (int)(55 * sinf(t * 5.0f));
+            uint32_t yc = rgb(p, p * 224 / 255, 0);
+            for (int e = 1; e <= 3; e++) {
+                rect(&b, x - e, y - e, w + 2 * e, 1, yc); rect(&b, x - e, y + h + e - 1, w + 2 * e, 1, yc);
+                rect(&b, x - e, y - e, 1, h + 2 * e, yc); rect(&b, x + w + e - 1, y - e, 1, h + 2 * e, yc);
+            }
+        }
+    }
+    Game *g = &G[sel];                               /* footer: the selection, the keys */
+    rect_a(&b, 0, H - 30, W, 30, 0x000000, 150);
+    char info[128]; snprintf(info, sizeof info, "%s  %s", g->name, g->year);
+    fit_text(&b, W / 2, H - 27, info, W - 20, 0xFFFFFF);
+    const char *act = g->soon == 1 ? "COMING SOON" : !g->have_rom ? "START  CHOOSE ROM" : s_nrow[selc] > 1 ? "START  CHOOSE VERSION" : "START  PLAY";
+    if (msg && *msg) text_c(&b, W / 2, H - 13, msg, 1, s_accent, s_accent, 0);
+    else if (W >= 440) {
+        text(&b, 8, H - 13, "ARROWS  SELECT", 1, 0xB0B4C0, 0xB0B4C0, 0);
+        text_c(&b, W / 2, H - 13, act, 1, ((int)(t * 2) & 1) ? 0xFFFFFF : 0xFFE000, ((int)(t * 2) & 1) ? 0xFFFFFF : 0xFFE000, 0);
+        text(&b, W - 8 - text_w("TAB  SETTINGS  ESC  QUIT", 1), H - 13, "TAB  SETTINGS  ESC  QUIT", 1, 0xB0B4C0, 0xB0B4C0, 0);
+    } else text_c(&b, W / 2, H - 13, act, 1, 0xFFE000, 0xFFE000, 0);
+    if (s_panel >= 0) draw_panel(&b);
+    if (s_choose >= 0) draw_choices(&b, g);
+    SDL_UpdateTexture(bgtex, NULL, bgpix, W * 4);
+    SDL_UpdateTexture(fgtex, NULL, fgpix, W * 4);
+    SDL_SetRenderDrawColor(R, 0, 0, 0, 255);
+    SDL_RenderClear(R);
+    if (menu_soft()) cover(menu_soft(), W, H, 100);  /* the picture, soft, at the window's resolution */
+    else SDL_RenderCopy(R, bgtex, NULL, NULL);
+    for (int c = 0; c < s_ncol; c++) {               /* the pictures */
+        Game *cg = &G[s_cell[c][0]];
+        SDL_FRect r; disc_card(c, &r);
+        SDL_SetRenderDrawColor(R, 0, 0, 0, 160);     /* a shadow */
+        SDL_FRect sh = { r.x + 3, r.y + 4, r.w, r.h }; SDL_RenderFillRectF(R, &sh);
+        if (!cg->labeltex) continue;
+        int tw, th; SDL_QueryTexture(cg->labeltex, NULL, NULL, &tw, &th);
+        SDL_Rect src = { tw > 320 ? (tw - 320) / 2 : 0, 0, tw > 320 ? 320 : tw, th };     /* a wide dump: its 4:3 middle */
+        Uint8 m = c == selc ? 255 : 210;
+        SDL_SetTextureColorMod(cg->labeltex, m, m, m);
+        SDL_RenderCopyF(R, cg->labeltex, &src, &r);
+        if (c == selc && G[sel].clip && s_clip_fade > 0) {   /* the attract clip over it */
+            int f = (int)(s_clip_t * 15.0f) % DEMO_N;
+            SDL_Rect cs = { 0, f * LH, LW, LH };
+            SDL_SetTextureAlphaMod(G[sel].clip, (Uint8)(255 * s_clip_fade));
+            SDL_RenderCopyF(R, G[sel].clip, &cs, &r);
+        }
+    }
+    SDL_RenderCopy(R, fgtex, NULL, NULL);
+    if (!s_noflip) SDL_RenderPresent(R);
+}
+
+
+/* the chooser's lines for the disc look: column c's versions that can start */
+static int disc_versions(int c) {
+    s_nch = 0;
+    for (int r = 0; r < s_nrow[c] && s_nch < 8; r++) {
+        Game *v = &G[s_cell[c][r]];
+        if (*v->audio && !*v->audio_path) continue;            /* that soundtrack's disc is not there */
+        int other = 0;                      /* beside another disc's soundtrack: this one's own */
+        for (int k = 0; k < s_nrow[c]; k++) other |= *G[s_cell[c][k]].audio != 0;
+        snprintf(s_ch[s_nch].label, sizeof s_ch[0].label, "%s%s", v->name, other && !*v->audio ? " - JP/EU soundtrack" : "");
+        *s_ch[s_nch].resume = 0;
+        s_ch[s_nch++].game = s_cell[c][r];
+    }
+    return s_nch;
+}
+
+/* ------------------------------------------------------------------ the disc look, MODERN */
+/* the home screen as a modern landing (the settings' HOME SCREEN): drawn at twice the lines (540), the games
+ * in a carousel - the selected title screen large in the middle, the others smaller and dimmed beside it -,
+ * the selected game's art behind, soft; its name large under it. The keys and choosers are the same. */
+static uint32_t *s_hipix; static SDL_Texture *s_hitex; static int s_hiw;
+static void modern_card(int c, float pos, SDL_FRect *r, float *dim) {
+    int W2 = W * 2;
+    float d = c - pos, ad = fabsf(d) < 3 ? fabsf(d) : 3;
+    float h = 250 * (1.0f - ad * 0.2f), w = h * LW / LH;
+    float spread = W2 < 900 ? 200 : 300;
+    float cx = W2 / 2 + d * spread - (d > 0 ? 1 : -1) * (ad > 1 ? (ad - 1) * spread * 0.25f : 0);
+    r->w = w; r->h = h; r->x = cx - w / 2; r->y = 228 - h / 2;
+    *dim = 1.0f - (ad < 1.5f ? ad : 1.5f) * 0.4f;
+}
+static SDL_Texture *s_soft[MAXG]; static int s_soft_tried[MAXG];
+static void present_modern(float pos, float t, int sel, const char *msg) {
+    disc_aspect();
+    int W2 = W * 2, H2 = H * 2;
+    if (s_hiw != W2 || !s_hipix) {
+        free(s_hipix); s_hipix = malloc((size_t)W2 * H2 * 4); s_hiw = W2;
+        if (s_hitex) SDL_DestroyTexture(s_hitex);
+        s_hitex = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, W2, H2);
+        SDL_SetTextureBlendMode(s_hitex, SDL_BLENDMODE_BLEND);
+    }
+    SDL_RenderSetLogicalSize(R, W2, H2);
+    SDL_SetRenderDrawColor(R, 6, 10, 28, 255);
+    SDL_RenderClear(R);
+    /* behind: the selected game's art, soft (its title screen), else the menu picture, else night blue */
+    int gi = s_cell[s_colof[sel]][0];
+    if (!s_soft_tried[gi] && G[gi].label_state == 2) {
+        s_soft_tried[gi] = 1;
+        char label[1100]; snprintf(label, sizeof label, "%s/label.bmp", G[gi].store);
+        SDL_Surface *ls = SDL_LoadBMP(label);
+        if (ls) { s_soft[gi] = soft_tex(ls, 32, 22); SDL_FreeSurface(ls); }
+    }
+    SDL_Texture *back = s_soft[gi] ? s_soft[gi] : menu_soft();
+    if (back) cover(back, W2, H2, 120);
+    SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_BLEND);
+    for (int y = 0; y < H2; y += 6) {               /* darker towards the bottom, where the text is */
+        float k = y / (float)H2;
+        SDL_SetRenderDrawColor(R, 4, 6, 18, (Uint8)(60 + 170 * k * k));
+        SDL_FRect band = { 0, (float)y, (float)W2, 6 }; SDL_RenderFillRectF(R, &band);
+    }
+    Buf b = { s_hipix, W2, H2 };
+    memset(s_hipix, 0, (size_t)W2 * H2 * 4);
+    /* the cards, far ones first */
+    int order[MAXG], n = 0;
+    for (int c = 0; c < s_ncol; c++) order[n++] = c;
+    for (int a = 0; a < n; a++) for (int z = a + 1; z < n; z++)
+        if (fabsf(order[z] - pos) > fabsf(order[a] - pos)) { int x = order[a]; order[a] = order[z]; order[z] = x; }
+    int selc = s_colof[sel];
+    for (int k = 0; k < n; k++) {
+        int c = order[k]; Game *g = &G[s_cell[c][0]];
+        SDL_FRect r; float dim; modern_card(c, pos, &r, &dim);
+        if (r.x > W2 || r.x + r.w < 0) continue;
+        SDL_SetRenderDrawColor(R, 0, 0, 0, 120);
+        SDL_FRect sh = { r.x + 6, r.y + 10, r.w, r.h }; SDL_RenderFillRectF(R, &sh);
+        if (c == selc && fabsf(c - pos) < 0.3f) {     /* the selection: a glow, a white edge */
+            float p = 0.6f + 0.4f * sinf(t * 3.0f);
+            for (int e = 10; e >= 1; e--) {
+                SDL_SetRenderDrawColor(R, 255, 224, 0, (Uint8)(p * 10 * (11 - e)));
+                SDL_FRect o = { r.x - e - 3, r.y - e - 3, r.w + 2 * (e + 3), r.h + 2 * (e + 3) };
+                SDL_RenderDrawRectF(R, &o);
+            }
+            SDL_SetRenderDrawColor(R, 255, 255, 255, 255);
+            for (int e = 1; e <= 3; e++) { SDL_FRect o = { r.x - e, r.y - e, r.w + 2 * e, r.h + 2 * e }; SDL_RenderDrawRectF(R, &o); }
+        }
+        if (g->labeltex) {
+            int tw, th; SDL_QueryTexture(g->labeltex, NULL, NULL, &tw, &th);
+            SDL_Rect src = { tw > 320 ? (tw - 320) / 2 : 0, 0, tw > 320 ? 320 : tw, th };
+            Uint8 m = (Uint8)(255 * dim * (g->soon == 1 ? 0.5f : 1));
+            SDL_SetTextureColorMod(g->labeltex, m, m, m);
+            SDL_RenderCopyF(R, g->labeltex, &src, &r);
+            if (c == selc && G[sel].clip && s_clip_fade > 0) {
+                int f = (int)(s_clip_t * 15.0f) % DEMO_N;
+                SDL_Rect cs = { 0, f * LH, LW, LH };
+                SDL_SetTextureAlphaMod(G[sel].clip, (Uint8)(255 * s_clip_fade));
+                SDL_RenderCopyF(R, G[sel].clip, &cs, &r);
+            }
+        } else {                                     /* no picture: a panel with the name */
+            Uint8 m = (Uint8)(dim * (g->soon == 1 ? 40 : 70));
+            SDL_SetRenderDrawColor(R, m / 2, m / 2, (Uint8)(g->soon == 1 ? m : m * 2), 235);
+            SDL_RenderFillRectF(R, &r);
+            uint32_t col = g->soon == 1 ? 0x9A9AA6 : 0xFFFFFF;
+            int sc = r.h > 200 ? 3 : 2;
+            if (text_w(g->name, sc) > r.w - 16) sc = 2;
+            if (text_w(g->name, sc) > r.w - 16) sc = 1;
+            text_c(&b, (int)(r.x + r.w / 2), (int)(r.y + r.h / 2 - 7 * sc), g->name, sc, col, col, 1);
+            const char *m2 = g->soon == 1 ? "COMING SOON" : g->soon == 2 ? "YOUR COPY" : !g->have_rom ? "INSERT ROM" : "PREPARING...";
+            text_c(&b, (int)(r.x + r.w / 2), (int)(r.y + r.h / 2 + 6 * sc), m2, sc > 1 ? sc - 1 : 1, 0xFFC840, 0xFFC840, 1);
+        }
+    }
+    /* text: the collection, the selected game, the keys */
+    s_italic = 1; text(&b, 28, 22, s_header, 3, 0xFFFFFF, 0xFFE000, 1); s_italic = 0;
+    Game *g = &G[sel];
+    int sc = text_w(g->name, 5) > W2 - 40 ? 3 : 5;
+    text_c(&b, W2 / 2, 382, g->name, sc, 0xFFFFFF, 0xD8DCE8, 1);
+    char info[96];
+    int nv = s_nrow[selc];
+    if (g->soon == 1) snprintf(info, sizeof info, "%s   COMING SOON", g->year);
+    else snprintf(info, sizeof info, "%s   %s %s%s", g->year, g->players, strcmp(g->players, "1") ? "PLAYERS" : "PLAYER",
+                  nv > 1 ? (nv == 2 ? "   2 VERSIONS" : "   VERSIONS") : "");
+    text_c(&b, W2 / 2, 382 + 8 * sc + 10, info, 2, 0xB8C0D8, 0xB8C0D8, 1);
+    for (int c = 0; c < s_ncol; c++) {               /* where we are */
+        int x = W2 / 2 - s_ncol * 9 + c * 18 + 4;
+        rect(&b, x, 462, 10, 4, c == selc ? 0xFFFFE000u : rgb(90, 96, 120));
+    }
+    const char *act = g->soon == 1 ? "COMING SOON" : !g->have_rom ? "START  CHOOSE ROM" : nv > 1 ? "START  CHOOSE VERSION" : "START  PLAY";
+    if (msg && *msg) text_c(&b, W2 / 2, H2 - 36, msg, 2, 0xFFE000, 0xFFE000, 1);
+    else {
+        text_c(&b, W2 / 2, H2 - 36, act, 2, ((int)(t * 2) & 1) ? 0xFFFFFF : 0xFFE000, ((int)(t * 2) & 1) ? 0xFFFFFF : 0xFFE000, 1);
+        if (W2 >= 880) {
+            text(&b, 28, H2 - 36, "< >  SELECT", 2, 0xB0B4C0, 0xB0B4C0, 1);
+            text(&b, W2 - 28 - text_w("TAB  SETTINGS", 2), H2 - 36, "TAB  SETTINGS", 2, 0xB0B4C0, 0xB0B4C0, 1);
+        }
+    }
+    SDL_UpdateTexture(s_hitex, NULL, s_hipix, W2 * 4);
+    SDL_RenderCopy(R, s_hitex, NULL, NULL);
+    if (s_panel >= 0 || s_choose >= 0) {             /* the panels: as the pixel look's, over everything */
+        Buf p = { fgpix, W, H };
+        memset(fgpix, 0, sizeof fgpix);
+        if (s_panel >= 0) draw_panel(&p);
+        if (s_choose >= 0) draw_choices(&p, g);
+        SDL_UpdateTexture(fgtex, NULL, fgpix, W * 4);
+        SDL_RenderCopy(R, fgtex, NULL, NULL);
+    }
+    if (!s_noflip) SDL_RenderPresent(R);
+}
+static int disc_style(void) { return getenv("PS_LAUNCHER_STYLE") ? atoi(getenv("PS_LAUNCHER_STYLE")) & 1 : SET.style; }
 static void present(float pos, float t, int sel, const char *msg) {
+    if (s_disc && disc_style()) { present_modern(pos, t, sel, msg); return; }
+    if (s_disc) { SDL_RenderSetLogicalSize(R, W, H); present_disc(t, sel, msg); return; }
     draw_bg(pos, t); draw_fg(sel, t, msg);
     SDL_UpdateTexture(bgtex, NULL, bgpix, W * 4);
     SDL_UpdateTexture(fgtex, NULL, fgpix, W * 4);
@@ -887,12 +1321,23 @@ static void present(float pos, float t, int sel, const char *msg) {
 }
 
 int main(int argc, char **argv) {
+#ifdef SDL_MAIN_HANDLED
+    SDL_SetMainReady();                              /* inside another program's main (tools/ultimate) */
+#endif
     const char *cfg = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--roms") && i + 1 < argc) snprintf(s_romdir, sizeof s_romdir, "%s", argv[++i]);
         else if (!strcmp(argv[i], "--fullscreen")) s_fullscreen = 1;
         else if (!cfg) cfg = argv[i];
         else snprintf(s_gamesdir, sizeof s_gamesdir, "%s", argv[i]);
+    }
+    {   /* this executable (GAMESDIR "@self": the games are in it, --game ID) */
+#ifdef _WIN32
+        char *rp = _fullpath(NULL, argv[0], 0);
+#else
+        char *rp = realpath(argv[0], NULL);
+#endif
+        snprintf(s_self, sizeof s_self, "%s", rp ? rp : argv[0]); free(rp);
     }
     if (!cfg || !*s_gamesdir || !load_config(cfg)) {
         fprintf(stderr, "usage: ps_launcher CONFIG GAMESDIR [--roms DIR] [--fullscreen]\n");
@@ -909,10 +1354,12 @@ int main(int argc, char **argv) {
         if (SET.fullscreen) s_fullscreen = 1;
     }
     for (int i = 0; i < NG; i++) {
-        snprintf(G[i].store, sizeof G[i].store, "%s%s", pref, G[i].id);
+        /* a version playing another disc's soundtrack keeps the disc of the title it runs */
+        snprintf(G[i].store, sizeof G[i].store, "%s%s", pref, *G[i].audio ? G[i].port : G[i].id);
         mkdirs(G[i].store);
         find_rom(&G[i]);
     }
+    if (s_disc) W = disc_width();
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     /* fullscreen as a borderless window over the screen, not a macOS Space of its own: the launcher and the
      * games it starts then cover each other in place, without the Space switch (no leaving fullscreen) */
@@ -964,13 +1411,13 @@ int main(int argc, char **argv) {
     }
     if (getenv("PS_LAUNCHER_SHOT")) {               /* tests: draw the shelf once, save it, quit */
         SDL_WaitThread(s_labels, NULL); s_labels = NULL;
-        for (int i = 0; i < NG; i++) { build_cart(&G[i]); if (G[i].demo_state == 1) load_clip(&G[i]); }
+        for (int i = 0; i < NG; i++) { build_cart(&G[i]); disc_label(&G[i]); if (G[i].demo_state == 1) load_clip(&G[i]); }
         if (getenv("PS_LAUNCHER_CLIP")) { s_clip_fade = 1; s_clip_t = (float)atof(getenv("PS_LAUNCHER_CLIP")); }
         sel = getenv("PS_LAUNCHER_SEL") ? atoi(getenv("PS_LAUNCHER_SEL")) : 0;
         if (sel < 0 || sel >= NG) sel = 0;
         s_cur[s_colof[sel]] = s_rowof[sel]; s_vpos[s_colof[sel]] = (float)s_rowof[sel]; pos = (float)s_colof[sel];
         if (getenv("PS_LAUNCHER_PANEL")) s_panel = atoi(getenv("PS_LAUNCHER_PANEL"));
-        if (getenv("PS_LAUNCHER_CHOOSE") && build_choices(&G[sel]) > 1) s_choose = 0;
+        if (getenv("PS_LAUNCHER_CHOOSE") && (s_disc ? disc_versions(s_colof[sel]) : build_choices(&G[sel])) > 1) s_choose = 0;
         s_noflip = 1; present(pos, 0.3f, sel, "");
         int ow, oh; SDL_GetRendererOutputSize(R, &ow, &oh);
         SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, ow, oh, 32, SDL_PIXELFORMAT_RGB888);
@@ -978,6 +1425,39 @@ int main(int argc, char **argv) {
         SDL_RenderReadPixels(R, NULL, SDL_PIXELFORMAT_RGB888, s->pixels, s->pitch);
         SDL_SaveBMP(s, getenv("PS_LAUNCHER_SHOT"));
         return 0;
+    }
+    if (getenv("PS_LAUNCHER_TEST")) {               /* tests: every version started, A+B+C+Start back */
+        long at = atol(getenv("PS_LAUNCHER_TEST")); if (at < 60) at = 600;
+        char movie[1200]; snprintf(movie, sizeof movie, "%shome-test.movie", pref);
+        FILE *mf = fopen(movie, "w");
+        if (!mf) return 1;
+        for (long f = 0; f < at + 30; f++) fputs(f < at ? "00\n" : "F0\n", mf);
+        fclose(mf);
+        int bad = 0;
+        for (int i = 0; i < NG; i++) {
+            Game *g = &G[i];
+            if (g->soon || !g->have_rom || (*g->audio && !*g->audio_path)) {
+                if (g->soon == 2) printf("%-12s %-36s found, starts %s\n", g->id, g->name, g->app);
+                else printf("%-12s skipped (%s)\n", g->id, g->soon ? "coming soon" : !g->have_rom ? "no ROM" : "no soundtrack disc");
+                continue;
+            }
+            char mv[1300], log[1300], aud[1200], frames[32];
+            snprintf(mv, sizeof mv, "GENRECOMP_MOVIE=%s", movie);
+            snprintf(log, sizeof log, "%shome-test-%s.log", pref, g->id);
+            snprintf(aud, sizeof aud, "PS_CD_AUDIO=%s", g->audio_path);
+            snprintf(frames, sizeof frames, "%ld", at + 600);
+            const char *env[] = { mv, "PS_HOME=1", "PS_RENDERER=native", "PS_Z80=recomp", aud, NULL };
+            const char *args[] = { "--headless", "--frames", frames, NULL };
+            Uint32 t0 = SDL_GetTicks();
+            run_game(g, args, env, log);
+            char line[512]; int home = 0; FILE *lf = fopen(log, "r");
+            while (lf && fgets(line, sizeof line, lf)) home |= strstr(line, "home: A+B+C+Start") != NULL;
+            if (lf) fclose(lf);
+            printf("%-12s %-36s %s (%.1f s)%s\n", g->id, g->name, home ? "started, back with A+B+C+Start" : "FAILED", (SDL_GetTicks() - t0) / 1000.0,
+                   *g->audio_path ? "  [soundtrack from another disc]" : "");
+            bad += !home;
+        }
+        return bad ? 1 : 0;
     }
     while (!quit) {
         SDL_Event e; int move = 0, vmove = 0, go = 0, click = -1;
@@ -1003,7 +1483,7 @@ int main(int argc, char **argv) {
                     case SDLK_UP: s_choose = (s_choose + s_nch - 1) % s_nch; snd_move(); break;
                     case SDLK_DOWN: s_choose = (s_choose + 1) % s_nch; snd_move(); break;
                     case SDLK_RETURN: case SDLK_SPACE: case SDLK_z: case SDLK_KP_ENTER: if (!e.key.repeat) go = 2; break;
-                    case SDLK_ESCAPE: case SDLK_BACKSPACE: s_choose = -1; snd_nope(); break;
+                    case SDLK_ESCAPE: case SDLK_BACKSPACE: s_choose = -1; s_vchoose = 0; snd_nope(); break;
                     }
                     break;
                 }
@@ -1043,7 +1523,7 @@ int main(int argc, char **argv) {
                     if (b == SDL_CONTROLLER_BUTTON_DPAD_UP) { s_choose = (s_choose + s_nch - 1) % s_nch; snd_move(); }
                     else if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN) { s_choose = (s_choose + 1) % s_nch; snd_move(); }
                     else if (b == SDL_CONTROLLER_BUTTON_A || b == SDL_CONTROLLER_BUTTON_START) go = 2;
-                    else if (b == SDL_CONTROLLER_BUTTON_B) { s_choose = -1; snd_nope(); }
+                    else if (b == SDL_CONTROLLER_BUTTON_B) { s_choose = -1; s_vchoose = 0; snd_nope(); }
                     break;
                 }
                 if (s_panel >= 0) {
@@ -1079,7 +1559,14 @@ int main(int argc, char **argv) {
                 break;
             case SDL_MOUSEWHEEL: move = e.wheel.y > 0 || e.wheel.x < 0 ? -1 : e.wheel.y < 0 || e.wheel.x > 0 ? 1 : 0; break;
             case SDL_MOUSEBUTTONDOWN:
-                if (e.button.button == SDL_BUTTON_LEFT) {
+                if (e.button.button == SDL_BUTTON_LEFT && s_disc) {
+                    float lx, ly; SDL_RenderWindowToLogical(R, e.button.x, e.button.y, &lx, &ly);
+                    for (int c = 0; c < s_ncol; c++) {
+                        SDL_FRect r; float dm;
+                        if (disc_style()) modern_card(c, pos, &r, &dm); else disc_card(c, &r);
+                        if (lx >= r.x && lx < r.x + r.w && ly >= r.y && ly < r.y + r.h) click = s_cell[c][0];
+                    }
+                } else if (e.button.button == SDL_BUTTON_LEFT) {
                     for (int i = 0; i < NG; i++) {
                         SDL_FRect r; float dim; cart_place(i, pos, t, sel, &r, &dim);
                         if (e.button.x >= r.x && e.button.x < r.x + r.w && e.button.y >= r.y && e.button.y < r.y + r.h &&
@@ -1093,6 +1580,21 @@ int main(int argc, char **argv) {
         if (!running && hold && SDL_GetTicks() > hold_t) { move = hold; hold_t = SDL_GetTicks() + 140; }
         if (click >= 0) { if (click == sel) go = 1; else { sel = click; s_cur[s_colof[sel]] = s_rowof[sel]; snd_move(); } }
         if (s_panel >= 0 || s_choose >= 0) move = vmove = 0;
+        if (s_disc && (move || vmove)) {                /* the disc look: a grid of cards, four a row */
+            int c = s_colof[sel] + move + (disc_style() ? 0 : vmove * 4);   /* MODERN: one row */
+            if (c >= 0 && c < s_ncol) { sel = s_cell[c][0]; snd_move(); } else snd_nope();
+            move = vmove = 0;
+        }
+        if (s_disc && go == 1 && !running && s_panel < 0 && s_choose < 0) {
+            int c = s_colof[sel];
+            if (G[sel].soon == 1) { snd_nope(); snprintf(msg, sizeof msg, "%s: COMING SOON", G[sel].name); msg_until = SDL_GetTicks() + 3000; go = 0; }
+            else {                                      /* which version: only those that can start */
+                disc_versions(c);
+                if (s_nch > 1) { s_vchoose = 1; s_choose = 0; snd_move(); go = 0; }
+                else if (s_nch == 1) sel = s_ch[0].game;
+            }
+        }
+        if (go == 2 && s_vchoose) { sel = s_ch[s_choose].game; s_vchoose = 0; s_choose = -1; go = 1; }
         if (move) {                                     /* another game: the version shown in its column */
             int c = s_colof[sel] + move;
             if (c >= 0 && c < s_ncol) { sel = s_cell[c][s_cur[c]]; snd_move(); } else snd_nope();
@@ -1102,7 +1604,7 @@ int main(int argc, char **argv) {
             if (r >= 0 && r < s_nrow[c]) { s_cur[c] = r; sel = s_cell[c][r]; snd_move(); } else snd_nope();
         }
         if (go == 1 && !running && s_panel < 0 && s_choose < 0 && G[sel].have_rom && build_choices(&G[sel]) > 1) {
-            s_choose = 0; snd_move(); go = 0;            /* continue or a save: ask first */
+            s_choose = 0; s_vchoose = 0; snd_move(); go = 0;            /* continue or a save: ask first */
         }
         if (go == 2) { snprintf(G[sel].resume, sizeof G[sel].resume, "%s", s_ch[s_choose].resume); s_choose = -1; go = 1; }
         else if (go == 1) *G[sel].resume = 0;
@@ -1144,6 +1646,7 @@ int main(int argc, char **argv) {
             if (G[i].label_state == 1 || (G[i].label_state == 3 && G[i].cart)) {
                 int st = G[i].label_state; build_cart(&G[i]); if (st == 3) G[i].label_state = 4;
             }
+        if (s_disc) for (int i = 0; i < NG; i++) disc_label(&G[i]);
         for (int i = 0; i < NG; i++) if (G[i].demo_state == 1) load_clip(&G[i]);
         Uint32 now = SDL_GetTicks(); float dt = (now - last) / 1000.0f; last = now;
         if (dt > 0.1f) dt = 0.1f;

@@ -3,7 +3,7 @@
         prepare-roms shbs-rom shbs-rom-if-available \
         shcd-if-available shk1-rom-if-available sh-compilation \
         sh-compilation-if-available sh-compilation-all derived-all require-title \
-        launcher-macos launcher-linux launcher-windows package-macos package-linux package-windows setup
+        ultimate-native launcher-macos launcher-linux launcher-windows package-macos package-linux package-windows setup
 
 TITLE ?=
 DISC ?=
@@ -71,6 +71,7 @@ help:
 	  '  make shcd-reference       The same plus the emulator-core reference build' \
 	  '  make sh-compilation       Ultimate SH Mega CD disc on your SHCD (COMPILATION_REGION=US|EU|JP, US default: 60 Hz)' \
 	  '  make sh-compilation-all   the same for every region of SHCD you have' \
+	  'make ultimate-native           Ultimate SH: ONE app, every built Sonic port, the compilation'"'"'s game-select screen' \
 	  'make launcher-macos|linux|windows   SH Collection shelf from the built ports (on that OS)' \
 	  'make package-macos|linux|windows    PixelSorcery app: DMG / DEB / Windows ZIP+EXE (on that OS; VERSION=x.y.z)' \
 	  '' \
@@ -192,6 +193,13 @@ sh-compilation-all:
 	   SONIC_COMPILATION_OUT="$(CURDIR)/build/ultimate-sh-$$r" MENU_IMAGE="$(MENU_IMAGE)" || exit 1; done
 
 derived-all: shk1-rom-if-available shbs-rom-if-available sh-compilation-if-available shcd-if-available
+
+# Ultimate SH, native (BACKLOG 0.7.5): one executable holding every generated Sonic port and the Mega CD
+# compilation's game-select screen at the chosen aspect ratio; copied to EXPORT_DIR
+ULTIMATE_APP = $(CURDIR)/launchers/build/$(if $(filter Darwin,$(shell uname -s)),Ultimate SH.app,$(if $(MSYSTEM),windows,linux)/Ultimate SH)
+ultimate-native:
+	./engine/tools/ultimate/make_ultimate.sh "$(ROMS)"
+	@$(call export_to,$(ULTIMATE_APP),)
 
 launcher-macos:
 	@$(call only_on,Darwin,macOS)

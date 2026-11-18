@@ -13,7 +13,11 @@ out=${1:-$root/build/win}; mkdir -p $out; out=$(cd $out && pwd)   # not :A (mang
 [[ -n $version ]] || { version=$(git -C $root describe --tags --always $rev); version=${version#[rv]}; }
 name=PixelSorcery-$version-windows; tmp=$(mktemp -d); pay=$tmp/$name
 print "PixelSorcery $version (Windows)"
-$root/engine/.venv/bin/python $root/engine/tools/public_export.py --rev $rev --out $pay > /dev/null
+if [[ -f $root/engine/tools/public_export.py ]]; then         # the private tree: its public snapshot
+  $root/engine/.venv/bin/python $root/engine/tools/public_export.py --rev $rev --out $pay > /dev/null
+else                                                          # the public repo (CI, a tag): already the snapshot
+  mkdir -p $pay; git -C $root archive $rev | tar -x -C $pay
+fi
 rm -rf $pay/engine/ext/Genesis-Plus-GX $pay/engine/patches/genesis-plus-gx.patch   # no core code
 $root/engine/.venv/bin/python -c "import sys; sys.path.insert(0, sys.argv[1]); import generate as g
 v = g.CYCLES; open(sys.argv[2], 'w', newline='\n').write(''.join(' '.join(map(str, v[i:i + 16])) + '\n' for i in range(0, len(v), 16)))" \

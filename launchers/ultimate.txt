@@ -1,0 +1,26 @@
+# Ultimate SH: the Mega CD compilation's game-select screen for the native ports, one executable
+# (engine/tools/ultimate, BACKLOG 0.7.5). "look disc": cards in rows of four over the player's menu picture
+# (background: menu.bmp beside this file, made from ROM_DIR/menu.png by the build; none: the plain blue);
+# a column's versions (stack) are chosen when the card starts. Fields as launchers/sh.txt; a 10th field
+# AUDIO: the disc whose audio tracks it plays (PS_CD_AUDIO), the version shown only when that disc is there.
+name Ultimate SH
+header ULTIMATE SH
+accent FFE000
+look disc
+background menu.bmp
+game sh1|SH1|1991|1|600|1300|sh1.bin
+game shk1|SHK1|1991|1|600|1300|shk1.bin
+game sh2|SH2|1992|1-2|960|1500|sh2.bin
+game shk2|SHK2|1994|1|900|1250|shk_sh2.bin
+game sh3|SH3|1994|1-2|720|2100|sh3.bin
+game sh3k|SH3K|1994|1-2|720|2100|sh3k.bin
+game shk|SHK|1994|1|900|1920|shk.bin
+game shbs|SHBS|1994|1|300|200|shk_sh1.bin|shk
+game shcd|SHCD|1993|1|2300|1100|cd/SH1 CD (Japan)/SH1 CD (Japan).cue
+game shcd-us|SHCD - US soundtrack|1993|1|2300|1100|cd/SH1 CD (Japan)/SH1 CD (Japan).cue|shcd|shcd|cd/SHCD (USA)/SHCD (USA).cue
+soon kc32x|SHKC|1995
+app rsdkv5|SHM|2017|/Applications/SHM.app;~/Applications/SHM.app;/Applications/RSDKv5.app;~/Applications/RSDKv5.app;~/RSDKv5-Decompilation/bin/RSDKv5U;~/RSDKv5-Decompilation/build/RSDKv5U;C:/Program Files (x86)/Steam/steamapps/common/SHM/SHM.exe
+stack sh1 shk1
+stack sh2 shk2
+stack sh3 sh3k
+stack shcd shcd-us

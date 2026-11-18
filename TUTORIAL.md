@@ -181,6 +181,7 @@ Every later step reads `ROMS` only, so `make all` can be re-run any time; it reb
 | `make sh-compilation-all` | one disc per region of SHCD you have | SHCD discs |
 | `make derived-all` | the four rows above, each when its inputs are there | |
 | `make all` | setup, prepare-roms, build-all, derived-all | |
+| `make ultimate-native` | `~/Documents/PixelSorcery/Ultimate SH.app` (Linux, Windows: an `Ultimate SH` folder): ONE program holding every built Sonic port behind the Mega CD compilation's game-select screen, at the aspect ratio of its settings; START on SH1, 2, 3 or SHCD asks which version (SHK1 / 2, SH3K, SHCD's JP/EU or US soundtrack); **A+B+C+Start** in a game comes back to the screen | the generated Sonic ports (`make build TITLE=...`), your `menu.png` for its picture |
 | `make launcher-macos` / `-linux` / `-windows` | the SH Collection shelf of the built ports | built ports, on that OS |
 | `make package-macos` / `-linux` / `-windows` | the PixelSorcery app: DMG / .deb / Windows zip + exe (`VERSION=x.y.z`) | on that OS (MSYS2 for Windows) |
 
