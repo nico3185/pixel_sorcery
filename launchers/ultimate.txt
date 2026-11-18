@@ -16,8 +16,8 @@ game sh3|SH3|1994|1-2|720|2100|sh3.bin
 game sh3k|SH3K|1994|1-2|720|2100|sh3k.bin
 game shk|SHK|1994|1|900|1920|shk.bin
 game shbs|SHBS|1994|1|300|200|shk_sh1.bin|shk
-game shcd|SHCD|1993|1|2300|1100|cd/SH1 CD (Japan)/SH1 CD (Japan).cue
-game shcd-us|SHCD - US soundtrack|1993|1|2300|1100|cd/SH1 CD (Japan)/SH1 CD (Japan).cue|shcd|shcd|cd/SHCD (USA)/SHCD (USA).cue
+game shcd|SHCD|1993|1|2300|1100|cd/shcd/shcd.cue
+game shcd-us|SHCD - US soundtrack|1993|1|2300|1100|cd/shcd/shcd.cue|shcd|shcd|cd/SHCD (USA)/SHCD (USA).cue
 soon kc32x|SHKC|1995
 app rsdkv5|SHM|2017|/Applications/SHM.app;~/Applications/SHM.app;/Applications/RSDKv5.app;~/Applications/RSDKv5.app;~/RSDKv5-Decompilation/bin/RSDKv5U;~/RSDKv5-Decompilation/build/RSDKv5U;C:/Program Files (x86)/Steam/steamapps/common/SHM/SHM.exe
 stack sh1 shk1
