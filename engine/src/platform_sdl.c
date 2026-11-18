@@ -91,7 +91,7 @@ static void ps_crash_signal(int sig) {
                        sig == SIGBUS ? "signal=SIGBUS\n" : sig == SIGFPE ? "signal=SIGFPE\n" :
                        sig == SIGILL ? "signal=SIGILL\n" : "signal=UNKNOWN\n";
     size_t len = sig == SIGSEGV ? 15 : sig == SIGABRT ? 15 : sig == SIGBUS ? 14 : sig == SIGFPE ? 14 : sig == SIGILL ? 14 : 15;
-    if (s_crash_fd >= 0) (void)write(s_crash_fd, name, len);
+    if (s_crash_fd >= 0 && write(s_crash_fd, name, len) < 0) { /* nothing more a signal handler can do */ }
     struct sigaction sa = {0}; sa.sa_handler = SIG_DFL; sigemptyset(&sa.sa_mask);
     (void)sigaction(sig, &sa, NULL);
     (void)raise(sig);
