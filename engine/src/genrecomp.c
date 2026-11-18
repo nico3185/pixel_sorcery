@@ -187,6 +187,7 @@ bool genrecomp_load_rom(const char *path) {
     return true;
 }
 
+bool g_ps_home;                                  /* A+B+C+Start: back to the game-select screen (input.c) */
 bool genrecomp_begin_frame(void) {
     /* Poll SDL events */
     if (!platform_poll_events()) {
@@ -196,8 +197,10 @@ bool genrecomp_begin_frame(void) {
     /* Update input and feed into GenPlusGX's input system */
     recomp_input_update();
     { extern void ps_menu_load(void), ps_menu_frame_pokes(void); ps_menu_load(); ps_menu_frame_pokes(); }
-
-
+    if (g_ps_home) {                             /* the title's main shuts down and exits */
+        fprintf(stderr, "home: A+B+C+Start at frame %ld\n", platform_frame_number());
+        return false;
+    }
     return true;
 }
 

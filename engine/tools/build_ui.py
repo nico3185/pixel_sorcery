@@ -380,6 +380,7 @@ ROUTES = [   # (make target, label, what it does); "region": takes COMPILATION_R
     ('all', 'Everything', 'setup, prepare the ROMs, every port, every ROM and disc'),
     ('prepare-roms', 'Prepare the ROMs', 'find your dumps by content and put them where the builds read them'),
     ('setup', 'Check the tools', 'Python tools, cmake, ninja, SDL2, and the m68k binutils the disc needs'),
+    ('ultimate-native', 'Ultimate SH (native)', 'one app: every built Sonic port behind the compilation\'s game-select screen'),
     ('launcher-' + HOST, 'SH Collection shelf', 'one app holding the built Sonic ports'),
     ('package-' + HOST, 'PixelSorcery package', {'macos': 'the DMG', 'linux': 'the .deb', 'windows': 'the zip and installer'}[HOST]),
 ]

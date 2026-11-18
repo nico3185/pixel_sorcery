@@ -147,7 +147,9 @@ static void (*s_driver)(PsZ80 *) = NULL;
  * its recompiled driver (tools/z80recomp --name game). NULL = GPGX Z80.
  * MSVC has no __attribute__((weak)); /alternatename falls back to the default below only
  * when no strong ps_z80_game_driver is linked in. */
-#if defined(_MSC_VER)
+#if defined(PS_MULTI)
+extern void (*ps_z80_game_driver)(PsZ80 *);
+#elif defined(_MSC_VER)
 extern void (*ps_z80_game_driver)(PsZ80 *);
 void (*ps_z80_game_driver_ps_default)(PsZ80 *) = NULL;
 PS_ALTNAME(ps_z80_game_driver, ps_z80_game_driver_ps_default)
@@ -243,7 +245,10 @@ void ps_audio_frame(long frame) { s_frame = frame; ps_synth_dbg = getenv("PS_SYN
  * recompiled equivalent. We start at the first /RESET release whose RAM matches the
  * image the driver was recompiled from (ps_z80_game_image, written by recomp.sh). */
 static int s_started;
-#if defined(_MSC_VER)
+#if defined(PS_MULTI)
+extern const unsigned char *ps_z80_game_image;
+extern unsigned int ps_z80_game_image_len;
+#elif defined(_MSC_VER)
 extern const unsigned char *ps_z80_game_image;
 const unsigned char *ps_z80_game_image_ps_default = NULL;
 PS_ALTNAME(ps_z80_game_image, ps_z80_game_image_ps_default)

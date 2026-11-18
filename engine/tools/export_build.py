@@ -3,7 +3,8 @@
 Documents/PixelSorcery), and print "OUTPUT: <path>" for the build screen's "Show" button.
 
 SRC a .cue: the disc - the .cue and every file it names - into the folder DEST (emulators open the .cue);
-SRC any other file (a ROM made from your dumps): copied to DEST, a folder or a file name.
+SRC any other file (a ROM made from your dumps): copied to DEST, a folder or a file name;
+SRC a folder (an app: Ultimate SH.app, its Linux/Windows folder): copied whole into the folder DEST.
 On macOS the copy is an APFS clone (no extra space until one side changes). Nothing leaves this machine:
 the outputs hold data from your own dumps and are for you only."""
 import os, re, shutil, subprocess, sys
@@ -20,6 +21,14 @@ def main():
     if len(sys.argv) != 3: sys.exit(__doc__)
     folder = sys.argv[2].endswith(('/', os.sep))          # DEST/ : a folder, the file keeps its name
     src, dst = os.path.abspath(sys.argv[1]), os.path.abspath(os.path.expanduser(sys.argv[2]))
+    if os.path.isdir(src):                                # an app or a folder: replaced whole
+        out = os.path.join(dst, os.path.basename(src.rstrip(os.sep)))
+        os.makedirs(dst, exist_ok=True)
+        if os.path.exists(out): shutil.rmtree(out)
+        if not (sys.platform == 'darwin' and subprocess.run(['cp', '-c', '-R', src, out], capture_output=True).returncode == 0):
+            shutil.copytree(src, out, symlinks=True)
+        print(f'OUTPUT: {out}')
+        return
     if not os.path.isfile(src): sys.exit(f'export_build.py: no {src}')
     if src.lower().endswith('.cue'):
         os.makedirs(dst, exist_ok=True)

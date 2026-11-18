@@ -62,7 +62,11 @@ static struct {
 } S = { 2, 1, 1, 100, 0, 0, 0, 1 };
 
 /* weak defaults: a title's generated recomp_cheats.c provides the real table */
-#if defined(_MSC_VER)
+#if defined(PS_MULTI)
+extern const char **ps_cheat_names_p;
+#define ps_cheat_names ps_cheat_names_p
+extern int ps_cheat_count;
+#elif defined(_MSC_VER)
 extern const char *ps_cheat_names[];
 const char *ps_cheat_names_ps_default[] = { 0 };
 PS_ALTNAME(ps_cheat_names, ps_cheat_names_ps_default)

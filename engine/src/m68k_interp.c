@@ -28,14 +28,23 @@
 #include <string.h>
 
 #include "ps_portable.h"
+#ifdef PS_MULTI
+/* one executable for several titles (engine/tools/ultimate): the title's tables are bound when it
+ * starts (multi_bind.c, ps_multi_bind), not by the linker */
+extern const uint16_t *ps_m68k_cycles_p;
+#define ps_m68k_cycles ps_m68k_cycles_p
+#endif
 #ifdef PS_SUBCPU
+#ifndef PS_MULTI
 extern const uint16_t ps_m68k_cycles[0x10000];
+#endif
 #define ps_m68k_nhooks 0
 static uint32_t run_hook(uint32_t pc) { (void)pc; return 0; }
 #else
 /* generated per title (recomp_cycles.c); tools without generated code (the reference
  * runner, tests) get this empty default and never interpret */
-#if defined(_MSC_VER)
+#if defined(PS_MULTI)
+#elif defined(_MSC_VER)
 extern const uint16_t ps_m68k_cycles[0x10000];
 const uint16_t ps_m68k_cycles_ps_default[0x10000] = { 0 };
 PS_ALTNAME(ps_m68k_cycles, ps_m68k_cycles_ps_default)
@@ -49,7 +58,9 @@ __attribute__((weak)) const uint16_t ps_m68k_cycles[0x10000] = { 0 };
 #endif
 /* title hooks (recomp.json "hooks"), generated per title (recomp_hooks.c, sorted by pc): each
  * returns where to go on, 0 = run the instruction. Weak empty default as above. */
-#if defined(_MSC_VER)
+#if defined(PS_MULTI)
+extern const uint32_t *ps_m68k_hook_pc; extern uint32_t (*const *ps_m68k_hook_fn)(void); extern int ps_m68k_nhooks;
+#elif defined(_MSC_VER)
 extern const uint32_t *ps_m68k_hook_pc; extern uint32_t (*const *ps_m68k_hook_fn)(void); extern int ps_m68k_nhooks;
 const uint32_t *ps_m68k_hook_pc_ps_default = NULL; uint32_t (*const *ps_m68k_hook_fn_ps_default)(void) = NULL;
 int ps_m68k_nhooks_ps_default = 0;

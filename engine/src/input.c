@@ -179,6 +179,13 @@ void recomp_input_update(void) {
     long frame = platform_frame_number();
     s_pad_state[0] = buttons | movie_buttons(frame, 0);
     s_pad_state[1] = movie_buttons(frame, 1);
+    {   /* started from a game-select screen (PS_HOME set: Ultimate SH, the shelf): A+B+C+Start held on
+         * pad 1 ends the game, back to that screen (genrecomp_begin_frame) - as the Mega CD compilation */
+        static int home = -1;
+        const uint16_t k = GEN_BTN_A | GEN_BTN_B | GEN_BTN_C | GEN_BTN_START;
+        if (home < 0) home = getenv("PS_HOME") != NULL;
+        if (home && (s_pad_state[0] & k) == k) { extern bool g_ps_home; g_ps_home = true; }
+    }
     movie_watch(frame);
     movie_record(frame, s_pad_state[0], s_pad_state[1]);
 

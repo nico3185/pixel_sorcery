@@ -79,6 +79,16 @@ if(APPLE)
     target_link_libraries(genrecomp_native PUBLIC "-framework Metal" "-framework QuartzCore" "-framework AppKit")
     target_link_libraries(genrecomp_native PUBLIC objc)
 endif()
+# genrecomp_multi: the same runtime for one executable holding several titles (tools/ultimate):
+# the per-title tables bound at start (PS_MULTI, multi_bind.c) instead of by the linker
+get_target_property(_ps_native_sources genrecomp_native SOURCES)
+add_library(genrecomp_multi STATIC EXCLUDE_FROM_ALL ${_ps_native_sources} src/multi_bind.c)
+target_include_directories(genrecomp_multi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+                           PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(genrecomp_multi PRIVATE PS_NATIVE PS_MULTI)
+get_target_property(_ps_native_libs genrecomp_native LINK_LIBRARIES)
+list(REMOVE_ITEM _ps_native_libs ps_defaults)
+target_link_libraries(genrecomp_multi PUBLIC ${_ps_native_libs})
 
 # --- Launcher: a shelf of cartridges for a family of titles (tools/make_launcher.sh) ---
 add_executable(ps_launcher tools/launcher/launcher.c)

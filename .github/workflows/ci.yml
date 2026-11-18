@@ -9,6 +9,9 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:    # windows-package again for a tag (input tag)
+    inputs:
+      tag: { description: 'release tag (v0.7.5)', required: true }
 jobs:
   unix:
     strategy:
@@ -34,6 +37,14 @@ jobs:
         run: |
           ctest --test-dir build --output-on-failure
           .venv/bin/python engine/tools/recompiler/test_analyze.py
+      - name: one executable for several titles (Ultimate SH's build, two stand-in titles with the same names)
+        run: |
+          cmake -S engine/tools/ultimate -B build-u -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-Werror \
+            -DULTIMATE_GAMES_DIR=$PWD/engine/tools/ultimate/tests "-DULTIMATE_TITLES=ta;tb"
+          cmake --build build-u --target ultimate_sh
+          r=0; ./build-u/ultimate_sh --game ta x || r=$?; test $r = 1
+          r=0; ./build-u/ultimate_sh --game tb x || r=$?; test $r = 2
+          ./build-u/ultimate_sh --list
   windows:
     if: ${{ !github.event.repository.private }}
     runs-on: windows-2022
@@ -57,3 +68,47 @@ jobs:
         run: |
           ctest --test-dir build --output-on-failure   # native-only: the instruction edge cases
           python engine/tools/recompiler/test_analyze.py
+      - name: one executable for several titles (Ultimate SH's build, two stand-in titles with the same names)
+        run: |
+          cmake -S engine/tools/ultimate -B build-u -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-Werror \
+            -DULTIMATE_GAMES_DIR=$PWD/engine/tools/ultimate/tests "-DULTIMATE_TITLES=ta;tb"
+          cmake --build build-u --target ultimate_sh
+          r=0; ./build-u/ultimate_sh.exe --game ta x || r=$?; test $r = 1
+          r=0; ./build-u/ultimate_sh.exe --game tb x || r=$?; test $r = 2
+          ./build-u/ultimate_sh.exe --list
+  # the Windows download for a release (the zip and the single-file exe, make_zip.sh), built on Windows and
+  # attached to the tag's GitHub release: a release made on a Mac gets its Windows files without a Windows PC
+  windows-package:
+    if: ${{ !github.event.repository.private && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true              # the core's cycle table for m68k_cycles.txt (the core itself is left out)
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit            # powershell (the icon) and gh from Windows
+          install: >-
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-python mingw-w64-x86_64-python-capstone
+            mingw-w64-x86_64-binutils zip zsh git
+      - name: package
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          python -m venv --system-site-packages engine/.venv
+          zsh ./engine/tools/windows/make_zip.sh --version "${tag#v}" build/win
+          ls -l build/win
+      - name: attach to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          gh release upload $tag (Get-ChildItem build/win/* | ForEach-Object FullName) --clobber -R $env:GITHUB_REPOSITORY
