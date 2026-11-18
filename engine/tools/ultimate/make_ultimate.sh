@@ -20,7 +20,7 @@ done
 b=$root/build/ultimate
 print "1/3 one executable: ${titles[*]}"
 cmake -S $root/engine/tools/ultimate -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release "-DULTIMATE_TITLES=${(j:;:)titles}" >/dev/null
-ninja -C $b ultimate_sh | grep -v "^\[" || true
+ninja -C $b -j ${CORES:-4} ultimate_sh | grep -v "^\[" || true   # CORES: parallel jobs (the biggest generated files take GBs each)
 exe=$b/ultimate_sh; [[ -x $exe ]] || exe=$b/ultimate_sh.exe
 held=" ${(f)"$($exe --list)"} "; held=" ${held//$'\n'/ } "
 print "2/3 the screen: $(echo $held | wc -w | tr -d ' ') titles held"
