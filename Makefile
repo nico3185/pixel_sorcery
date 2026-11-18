@@ -198,7 +198,7 @@ derived-all: shk1-rom-if-available shbs-rom-if-available sh-compilation-if-avail
 # compilation's game-select screen at the chosen aspect ratio; copied to EXPORT_DIR
 ULTIMATE_APP = $(CURDIR)/launchers/build/$(if $(filter Darwin,$(shell uname -s)),Ultimate SH.app,$(if $(MSYSTEM),windows,linux)/Ultimate SH)
 ultimate-native:
-	./engine/tools/ultimate/make_ultimate.sh "$(ROMS)"
+	CORES=$(CORES) ./engine/tools/ultimate/make_ultimate.sh "$(ROMS)"
 	@$(call export_to,$(ULTIMATE_APP),)
 
 launcher-macos:
