@@ -226,3 +226,5 @@ recompiling, verifying side by side, the Mega CD disc builder and relocator.
 [![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/1220-castle-of-illusion-starring-mickey-mouse/)
 
 Our games on PlayPorted: [sh1](https://playported.com/ports/1216-sonic-the-hedgehog/) · [sh2](https://playported.com/ports/1217-sonic-the-hedgehog-2/) · [sh3](https://playported.com/ports/1218-sonic-the-hedgehog-3/) · [shk](https://playported.com/ports/1219-sonic-knuckles/) · [coi](https://playported.com/ports/1220-castle-of-illusion-starring-mickey-mouse/) · [qs](https://playported.com/ports/1221-quackshot-starring-donald-duck/) · [woi](https://playported.com/ports/1222-world-of-illusion-starring-mickey-mouse-and-donald-duck/).
+
+Watch the series on YouTube: [Pixel Sorcery](https://www.youtube.com/@nico3185) - how the native ports are made, game by game.
