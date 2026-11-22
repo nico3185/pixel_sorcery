@@ -15,7 +15,7 @@
  *                      the versions, stacked behind the cartridge. Games in no stack: a column each.
  *   (PORT: the games/ title whose executable make_launcher.sh bundles as ID, default ID;
  *   SETTINGS: the folder of the title's settings.ini - its ps_menu title - default PORT)
- * Shelf settings (Tab, or Y / Back on a pad): aspect ratio, widescreen enemies, modern water,
+ * Shelf settings (Tab, or Y / Back on a pad): aspect ratio, widescreen enemies, water (original/modern/see-through),
  * full screen, low latency, volume, renderer, controller setup - kept in PREF/<name>.ini and
  * written into each title's settings.ini (and the shared display.ini, input.ini) as it starts;
  * the title's own menu still changes them.
@@ -45,6 +45,10 @@ extern char **environ;
 #else
 #include <process.h>
 #include <direct.h>
+#include <io.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <stdint.h>
 #define mkdir(p, m) _mkdir(p)
 #endif
 
@@ -372,7 +376,7 @@ static void settings_load(void) {
         int v;
         if (sscanf(l, "aspect=%d", &v) == 1 && v >= 0 && v < 5) SET.aspect = v;
         else if (sscanf(l, "wide_objects=%d", &v) == 1) SET.objects = !!v;
-        else if (sscanf(l, "water=%d", &v) == 1) SET.water = !!v;
+        else if (sscanf(l, "water=%d", &v) == 1) SET.water = v >= 0 && v <= 2 ? v : 1;
         else if (sscanf(l, "fullscreen=%d", &v) == 1) SET.fullscreen = !!v;
         else if (sscanf(l, "low_latency=%d", &v) == 1) SET.latency = !!v;
         else if (sscanf(l, "volume=%d", &v) == 1 && v >= 0 && v <= 100) SET.volume = v;
@@ -472,8 +476,21 @@ static int run_game(Game *g, const char **args, const char **env, const char *lo
     return st == 0;
 #else
     for (const char **e = env; e && *e; e++) _putenv(*e);
-    (void)log;
-    return _spawnv(_P_WAIT, exe, argv) == 0;
+    /* _spawnv joins the arguments unquoted: "Ultimate SH\..." would reach the child split in two */
+    static char quoted[32][1300]; const char *qa[33]; int q = 0;
+    for (; argv[q] && q < 32; q++) {
+        if (strpbrk(argv[q], " \t")) { snprintf(quoted[q], sizeof quoted[q], "\"%s\"", argv[q]); qa[q] = quoted[q]; }
+        else qa[q] = argv[q];
+    }
+    qa[q] = NULL;
+    int saved = -1;                                   /* the child's stderr to the log, as posix_spawn above */
+    if (log) {
+        int fd = _open(log, _O_WRONLY | _O_CREAT | _O_TRUNC, _S_IREAD | _S_IWRITE);
+        if (fd >= 0) { fflush(stderr); saved = _dup(2); _dup2(fd, 2); _close(fd); }
+    }
+    intptr_t r = _spawnv(_P_WAIT, exe, qa);
+    if (saved >= 0) { fflush(stderr); _dup2(saved, 2); _close(saved); }
+    return r == 0;
 #endif
 }
 
@@ -811,7 +828,7 @@ static void panel_row(int i, char *out, size_t n) {
     switch (i) {
     case 0: snprintf(out, n, "ASPECT RATIO          < %s >", k_aspects[SET.aspect]); break;
     case 1: snprintf(out, n, "WIDESCREEN ENEMIES    %s", SET.objects ? "ON" : "OFF"); break;
-    case 2: snprintf(out, n, "MODERN WATER          %s", SET.water ? "ON" : "OFF"); break;
+    case 2: snprintf(out, n, "WATER                 %s", SET.water == 2 ? "SEE-THROUGH" : SET.water ? "MODERN" : "ORIGINAL"); break;
     case 3: snprintf(out, n, "FULL SCREEN           %s", SET.fullscreen ? "ON" : "OFF"); break;
     case 4: snprintf(out, n, "LOW LATENCY           %s", SET.latency ? "ON" : "OFF"); break;
     case 5: snprintf(out, n, "VOLUME                < %d%% >", SET.volume); break;
@@ -827,7 +844,7 @@ static void panel_change(int d) {
     switch (s_panel) {
     case 0: SET.aspect = (SET.aspect + d + 5) % 5; break;
     case 1: SET.objects ^= 1; break;
-    case 2: SET.water ^= 1; break;
+    case 2: SET.water = (SET.water + 1) % 3; break;   /* original, modern, see-through */
     case 3: SET.fullscreen ^= 1; s_fullscreen = SET.fullscreen;
             SDL_SetWindowFullscreen(Win, s_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); break;
     case 4: SET.latency ^= 1; break;

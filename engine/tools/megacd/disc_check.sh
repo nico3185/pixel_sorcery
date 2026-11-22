@@ -4,7 +4,7 @@
 # reference runner from both, the disc's own boot spliced in front (BIOS, CD-ROM, the menu's card CARD, up to the
 # game's title). Compared at every poll from the level's load: game mode, zone/act, the player's x ($FFF600,
 # $FFFE10, the player's x - $FFD008, SH2 $FFB008; PX=ADDR another). One line per start: identical, the first differing poll, or where the disc
-# stopped. PS_REF (default build/ci-mac/genrecomp_ref), ROM (default ../roms/GAME.bin). sh1_disc_check.sh is
+# stopped; and the picture (the frame, palette and video RAM hashed at each poll) until RAM differs. PS_REF (default build/ci-mac/genrecomp_ref), ROM (default ../roms/GAME.bin). sh1_disc_check.sh is
 # this for SH1 (card 1).
 set -eu
 game=${1:?usage: disc_check.sh GAME CARD DISC.cue OUTDIR}; card=${2:?}; cue=${3:?}; o=${4:?}
@@ -13,6 +13,9 @@ root=${0:A:h}/../../..; cd $root
 R=${PS_REF:-build/ci-mac/genrecomp_ref}; rom=${ROM:-$root/../roms/$game.bin}; rec=games/$game/recordings
 # the player's x: SH1 keeps the player object at $FFD000, SH2 at $FFB000 (its $D000 is another object)
 px=${PX:-$(case $game in sh2) print B008 ;; sh3|shk|sh3k) print B010 ;; *) print D008 ;; esac)}   # SH3 engine: x at +$10
+# the game's palettes in RAM (above water, under water): what it means to show. The VDP's colour RAM at a poll
+# depends on where in the frame the poll falls (a water level swaps palettes mid-frame), so it is only a hint
+pal=${PAL:-$(case $game in sh3|shk|sh3k) print FC00+64,FC40+64,F080+64,F0C0+64 ;; sh2|shk2) print FB00+64,FB40+64,F080+64,F0C0+64 ;; *) print FB00+64,FB40+64,FA80+64,FAC0+64 ;; esac)}   # 64 bytes a field at most
 starts=(${(f)"$(python3 -c "
 import json; d = json.load(open('games/$game/level_select.json'))   # items (a level select), or stages (SHK: RAM starts)
 print('\n'.join(d['items'].values()) if 'items' in d else '\n'.join(n for n, _ in d['stages']))")"})
@@ -46,24 +49,34 @@ i=0
 for n in $starts; do
   ( r=$rec/start-$n.polls; L=$(wc -l < $r)
     { head -$dt $o/boot.polls; tail -n +$((ct + 1)) $r; } > $o/$n.rp
-    PS_POLL_REPLAY=$r PS_WATCH=$o/$n.cart:F600,FE10+2,$px+2 $R --headless --frames $((L * 2 + 300)) $rom >/dev/null 2>&1
+    PS_WATCH_PIC=1 PS_POLL_REPLAY=$r PS_WATCH=$o/$n.cart:F600,FE10+2,$px+2,$pal $R --headless --frames $((L * 2 + 300)) $rom >/dev/null 2>&1
     pk=(); [[ -f $rec/start-$n.poke ]] && pk=(GENRECOMP_POKE="$(< $rec/start-$n.poke)")   # a RAM start (SHK: no level select of its own)
-    env $pk PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,$px+2 \
+    env $pk PS_WATCH_PIC=1 PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,$px+2,$pal \
       $R --headless --frames $((L * 2 + 3000)) $cue >/dev/null 2>&1 ) &
   i=$((i + 1)); (( i % 6 == 0 )) && wait
 done; wait
 python3 - $o $ct $dt $starts <<'P'
 import sys
 o, ct, dt, starts = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4:]
-rd = lambda p: [l.split() for l in open(p) if len(l.split()) == 5]
+rd = lambda p: [l.split() for l in open(p) if len(l.split()) == 12]   # poll frame mode zone x, 2 palettes in halves, P/V/F (PS_WATCH_PIC)
 ok = 0
 for n in starts:
     res = []
     for f, base in ((f'{o}/{n}.cart', ct), (f'{o}/{n}.disc', dt)):
         w = rd(f); want = '10' if n[:2] == 'SS' and n[2:3].isdigit() else '0C'   # a special stage (SS1); Sky Sanctuary (SSZ) is a level
         k = next((j for j, x in enumerate(w) if int(x[0]) > base and x[2] == want), None)
-        res.append(None if k is None else [x[2:] for x in w[k:]])
+        res.append(None if k is None else w[k:])
     c, d = res
+    if c and d:   # the picture apart, until RAM differs: the game's palettes in RAM are the verdict (Emerald Hill's
+        # cycle and Chemical Plant's colours, relocated as pointers, showed there); the VDP's colour RAM, video RAM
+        # and the frame are hints (a mid-frame palette swap or a colour cycle lands either side of a poll)
+        pm = min(len(c), len(d)); pd = next((j for j in range(pm) if c[j][2:5] != d[j][2:5]), pm)
+        first = lambda i: next((j for j in range(pd) if c[j][i] != d[j][i]), None)
+        jp = next((j for j in range(pd) if c[j][5:9] != d[j][5:9]), None)
+        hint = ', '.join(f'{nm} from poll {j}' for nm, j in (('colour RAM', first(9)), ('frame', first(11))) if j is not None)
+        print(n, 'palette:', 'identical while RAM is (%d polls)' % pd if jp is None else 'differs at poll %d' % jp,
+              '- hints: ' + hint if hint else '')
+    c = c and [x[2:5] for x in c]; d = d and [x[2:5] for x in d]
     if c is None: print(n, 'cartridge: never loads (recording)'); continue
     if d is None: print(n, 'disc: never loads'); continue
     m = min(len(c), len(d)); diff = next((j for j in range(m) if c[j] != d[j]), None)

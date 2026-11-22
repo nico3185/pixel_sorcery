@@ -63,7 +63,19 @@ for p in seen:
             w = L(q)
             if not (0x200 <= w < n and not w & 1 and abs(w - v) < 0x8000) or 0x42660 <= q < 0x43000 or 0x50000 <= q < 0x6FC00: break
             out.add(q); q += st
-sys.stdout.writelines('%06X\\n' % a for a in sorted(out) if not (0xC054 <= a < 0xC164 or 0x50000 <= a < 0x6FBE0))" $rom > $work/ptrs.txt
+# a longword in data naming low engine code that ran (< \$8000) is not a pointer: Emerald Hill's colour cycle
+# (\$2A66: 0000 0E86, two colours) read as one put 0003 8986 on the screen (disc_check's picture compare)
+import glob
+ran = set()
+for f in glob.glob(sys.argv[2] + '/evz/*/*.bin'):
+    raw = open(f, 'rb').read(); h = len(raw) // 2
+    ran |= {i * 8 + k for i, b in enumerate(raw[:h]) if b for k in range(8) if b >> k & 1}
+low_code = lambda a: a >= 0x100 and L(a) & 0xFFFFFF < 0x8000 and L(a) & 0xFFFFFF in ran   # a top-byte tag too (CPZ: 0C00 0800)
+# two colour words (0BGR, even nibbles) with a tag, in the engine's palette tables below \$8000: colours, not a
+# tagged pointer (Oil Ocean \$1F7A: 0804 0806 became 0821 D806; Chemical Plant 2 \$2EAA)
+colours = lambda a: 0x100 <= a < 0x8000 and L(a) >> 24 and not (L(a) & 0xF111F111)
+low_code_or_colours = lambda a: low_code(a) or colours(a)
+sys.stdout.writelines('%06X\\n' % a for a in sorted(out) if not (0xC054 <= a < 0xC164 or 0x50000 <= a < 0x6FBE0 or low_code_or_colours(a)))" $rom $work > $work/ptrs.txt
 force=(); for r in $(cat $work/plc_force.txt); do force+=(--force $r); done
 ex=(); for f in $work/evz/*/*.bin; do ex+=(--exec $f); done
 print "2/4 references (relative, fall-through) and named tables"
