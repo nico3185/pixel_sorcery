@@ -28,6 +28,10 @@ int main(int argc, char *argv[]) {
     ps_wide_set_game(&wide);
     ps_menu_set_pause_hook(sh_paused);
     ps_menu_set_title("sh2");
+    /* Chemical Plant, Aquatic Ruin, Hidden Palace: see-through water - Water_flag, Water_Level_1,
+     * Camera_Y_pos, Normal_palette */
+    { void ps_render_set_water_ram(uint16_t, uint16_t, uint16_t, uint16_t); ps_render_set_water_ram(0xF730, 0xF646, 0xEE04, 0xFB00); }
+    { void ps_render_allow_water(void); ps_render_allow_water(); }   /* Aquatic Ruin's waterfalls: screen door */
     g_m68k.a[7] = bus_read32(0);
     g_m68k.pc = bus_read32(4);
     m68k_set_sr(0x2700);

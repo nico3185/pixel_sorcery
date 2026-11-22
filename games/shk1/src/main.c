@@ -62,6 +62,9 @@ int main(int argc, char *argv[]) {
     ps_wide_set_game(&wide);
     ps_menu_set_pause_hook(sh_paused);
     ps_menu_set_title("shk1");
+    /* see-through water - SH1's water: f_water, v_waterpos1, camera y, v_pal_dry */
+    { void ps_render_set_water_ram(uint16_t, uint16_t, uint16_t, uint16_t); ps_render_set_water_ram(0xF64C, 0xF646, 0xF704, 0xFB00); }
+    { void ps_render_allow_water(void); ps_render_allow_water(); }   /* waterfalls drawn as screen doors, in water levels */
     kcol_init();                                                   /* extended colours by default */
     ps_menu_add_toggle("KNUCKLES 16 COLOURS", KCOL_ROM, 0, true);   /* the console's palette, nearest colours */
     ps_menu_add_toggle("KNUCKLES PALETTE SWAP", KCOL_ROM, 1, true); /* his colours in Sonic's slots, as on a console */

@@ -155,6 +155,13 @@ void ps_menu_set_title(const char *title) { s_title = title; sram_boot(); }
 void ps_menu_add_toggle(const char *name, uint32_t addr, uint16_t value, bool word) {
     if (s_ntoggles < 16) s_toggles[s_ntoggles++] = (Toggle){ name, addr, value, word, 0, 0, NULL };
 }
+/* a toggle read by the title's own C code (a new move, not a RAM code): no address is written */
+#define PS_TOGGLE_C 0xFFFFFFFFu
+void ps_menu_add_feature(const char *name) { ps_menu_add_toggle(name, PS_TOGGLE_C, 0, false); }
+bool ps_menu_toggle(const char *name) {
+    for (int i = 0; i < s_ntoggles; i++) if (!strcmp(s_toggles[i].name, name)) return (S.toggles >> i) & 1;
+    return false;
+}
 void ps_menu_set_toggle_gate(const char *name, bool (*gate)(void)) {
     for (int i = 0; i < s_ntoggles; i++) if (!strcmp(s_toggles[i].name, name)) s_toggles[i].gate = gate;
 }
@@ -171,7 +178,7 @@ static void apply(void) {
     platform_set_frame_delay(S.low_latency);
     platform_set_volume(S.volume);
     platform_set_fullscreen(S.fullscreen);
-    { void ps_render_set_water(bool on); if (!getenv("PS_WATER")) ps_render_set_water(S.water); }
+    { void ps_render_set_water(int mode); ps_render_set_water(S.water); }   /* the WATER row switches it live */
 }
 
 static void save(void) {
@@ -280,6 +287,8 @@ void ps_menu_load(void) {
         }
         fclose(f);
     }
+    { const char *w = getenv("PS_WATER");           /* PS_WATER=0|1|2: the starting water mode, shown in the menu */
+      if (w && *w >= '0' && *w <= '2') S.water = *w - '0'; }
     s_user_obj = S.wide_objects; s_user_cheats = S.cheats; s_user_toggles = S.toggles; s_user_aspect = S.aspect;
     if (s_forced) { S.wide_objects = s_ev[0].obj; S.cheats = s_ev[0].cheats; S.toggles = s_ev[0].toggles; S.aspect = s_ev[0].aspect; }
     else logic_log();
@@ -293,7 +302,7 @@ void ps_menu_frame_pokes(void) {
     sram_flush();
     for (int i = 0; i < s_ntoggles; i++) {
         Toggle *t = &s_toggles[i];
-        if (t->addr >= 0x400000) continue;
+        if (t->addr >= 0x400000) continue;                  /* RAM codes below; PS_TOGGLE_C: none */
         bool on = (S.toggles >> i & 1) && ps_frames >= 300;
         if (on != (t->applied != 0)) {
             extern uint16_t ps_hw_rom_patch16(uint32_t addr, uint16_t value);
@@ -303,7 +312,7 @@ void ps_menu_frame_pokes(void) {
         }
     }
     for (int i = 0; i < s_ntoggles; i++)
-        if ((S.toggles & (1u << i)) && s_toggles[i].addr >= 0x400000 && (!s_toggles[i].gate || s_toggles[i].gate())) {
+        if ((S.toggles & (1u << i)) && s_toggles[i].addr >= 0x400000 && s_toggles[i].addr != PS_TOGGLE_C && (!s_toggles[i].gate || s_toggles[i].gate())) {
             if (s_toggles[i].word) bus_write16(s_toggles[i].addr, s_toggles[i].value);
             else bus_write8(s_toggles[i].addr, (uint8_t)s_toggles[i].value);
         }
@@ -366,7 +375,8 @@ static void item_text(int i, char *out, size_t n) {
     else if (i == IT_VOL) snprintf(out, n, "VOLUME              < %d%% >", S.volume);
     else if (i == IT_FULL) snprintf(out, n, "FULLSCREEN          %s", S.fullscreen ? "ON" : "OFF");
     else if (i == IT_WATER) { bool ps_render_water_allowed(void);
-        snprintf(out, n, "MODERN WATER        %s", !ps_render_water_allowed() ? "N/A" : S.water ? "ON" : "OFF"); }
+        snprintf(out, n, "WATER               %s", !ps_render_water_allowed() ? "N/A"
+                 : S.water == 2 ? "SEE-THROUGH" : S.water ? "MODERN" : "ORIGINAL"); }
     else if (i == IT_REND) {
 #ifdef __APPLE__
         int pref = platform_renderer_pref();
@@ -411,7 +421,7 @@ static void change(int i, int dir) {
     else if (i == IT_LAT) S.low_latency ^= 1;
     else if (i == IT_VOL) { S.volume += dir * 10; if (S.volume < 0) S.volume = 0; if (S.volume > 100) S.volume = 100; }
     else if (i == IT_FULL) S.fullscreen ^= 1;
-    else if (i == IT_WATER) S.water ^= 1;
+    else if (i == IT_WATER) S.water = (S.water + dir + 3) % 3;   /* original, modern, see-through */
     else if (i == IT_REND) {
 #ifdef __APPLE__
         platform_set_renderer_pref(!platform_renderer_pref());

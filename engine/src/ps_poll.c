@@ -32,7 +32,7 @@
 static FILE *s_rec, *s_ck, *s_watch;
 /* PS_WATCH=FILE:ADDR[+LEN],...: those main RAM bytes (68000 addresses $FF0000+ADDR, hex) at every controller
  * poll, one line "poll frame hex hex ..." - zone, act, positions read numerically by the checks */
-static int s_nwatch, s_watch_a[32], s_watch_n[32];
+static int s_nwatch, s_watch_a[32], s_watch_n[32], s_watch_pic;
 static uint16_t (*s_play)[2];
 static uint16_t s_cur[2];          /* replay: pad value held until the next poll */
 static long s_play_n, s_poll, s_dump_at = -1, s_stop = -1;
@@ -116,6 +116,27 @@ static void on_poll(void)
             fputc(' ', s_watch);
             for (int i = 0; i < s_watch_n[w]; i++) fprintf(s_watch, "%02X", READ_BYTE(work_ram, (s_watch_a[w] + i) & 0xFFFF));
         }
+#ifndef PS_NATIVE
+        if (s_watch_pic) {   /* PS_WATCH_PIC=1: the picture - " P<palette> V<video RAM> F<frame>" (FNV-1a). Video RAM
+                              * also holds what is never drawn (a disc's boot leaves bytes there): the frame decides.
+                              * 2: + the raw palette; 3: + video RAM in 1 KB blocks; PS_WATCH_VRAM=ADDR+LEN: raw bytes */
+            uint32_t hp = 2166136261u, hv = 2166136261u, hf = 2166136261u;
+            for (int i = 0; i < 0x80; i++) hp = (hp ^ cram[i]) * 16777619u;
+            for (int i = 0; i < 0x10000; i++) hv = (hv ^ vram[i]) * 16777619u;
+            for (int y = 0; y < bitmap.viewport.h; y++) {
+                const uint32_t *row = (const uint32_t *)(bitmap.data + (y + bitmap.viewport.y) * bitmap.pitch) + bitmap.viewport.x;
+                for (int x = 0; x < bitmap.viewport.w; x++) hf = (hf ^ (row[x] & 0xFFFFFF)) * 16777619u;
+            }
+            fprintf(s_watch, " P%08X V%08X F%08X", hp, hv, hf);
+            if (s_watch_pic == 2) { fputs(" C", s_watch); for (int i = 0; i < 0x80; i++) fprintf(s_watch, "%02X", cram[i]); }
+            if (s_watch_pic == 3) for (int k = 0; k < 64; k++) {   /* 3: + video RAM in 1 KB blocks, where it differs */
+                uint32_t hb = 2166136261u; for (int i = k * 1024; i < k * 1024 + 1024; i++) hb = (hb ^ vram[i]) * 16777619u;
+                fprintf(s_watch, " %08X", hb); }
+            { static long va = -2, vn; if (va == -2) { const char *e = getenv("PS_WATCH_VRAM"); va = -1;   /* ADDR+LEN: raw */
+                  if (e && *e) { char *q; va = strtol(e, &q, 16); vn = *q == '+' ? strtol(q + 1, NULL, 16) : 0x100; } }
+              if (va >= 0) { fputs(" R", s_watch); for (long i = va; i < va + vn && i < 0x10000; i++) fprintf(s_watch, "%02X", vram[i]); } }
+        }
+#endif
         fputc('\n', s_watch);
     }
     if (s_ck) {
@@ -213,6 +234,7 @@ PS_INITIALIZER(ps_poll_init)
                 p = (*q == ',') ? q + 1 : q; if (*q != ',') break;
             }
             s_watch = fopen(path, "w");
+            s_watch_pic = getenv("PS_WATCH_PIC") ? atoi(getenv("PS_WATCH_PIC")) : 0;
         }
     }
     if ((e = getenv("PS_CHECKPOINT_DUMP")) && *e) {

@@ -5,6 +5,9 @@
 #include <stdint.h>
 void ps_menu_set_title(const char *title);                 /* settings folder name */
 void ps_menu_add_toggle(const char *name, uint32_t addr, uint16_t value, bool word);  /* RAM code */
+/* a switch read by the title's C code (a new move): ps_menu_toggle(name) says whether it is on */
+void ps_menu_add_feature(const char *name);
+bool ps_menu_toggle(const char *name);
 /* RAM toggle written only while gate() holds (e.g. a level is running), not every frame */
 void ps_menu_set_toggle_gate(const char *name, bool (*gate)(void));
 void ps_menu_load(void);

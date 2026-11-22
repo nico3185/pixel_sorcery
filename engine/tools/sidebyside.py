@@ -37,13 +37,18 @@ PY = next((p for p in (os.path.join(ENG, '.venv', 'bin', 'python'),
 
 
 def generated_stale(game):
-    """True when games/T/src/recomp is missing, or recomp.json or a recompiler source is newer
-    than its newest file (the C was generated before them)."""
+    """True when games/T/src/recomp is missing, or recomp.json or a recompiler source changed since it was
+    generated: by content (src/recomp/.inputs.sha1, written by generate.py), else by time (C from before it)."""
     out = os.path.join(game, 'src', 'recomp')
     gen = [os.path.join(out, f) for f in os.listdir(out)] if os.path.isdir(out) else []
     if not gen:
         return True
     rdir = os.path.join(ENG, 'tools', 'recompiler')
+    stamp = os.path.join(out, '.inputs.sha1')
+    if os.path.exists(stamp):                   # by content: what the generator recorded it was run from
+        sys.path.insert(0, rdir)
+        from inputs_hash import inputs_hash
+        return open(stamp).read().strip() != inputs_hash(os.path.join(game, 'recomp.json'))
     inputs = [os.path.join(game, 'recomp.json')] + [os.path.join(rdir, f) for f in os.listdir(rdir) if f.endswith('.py')]
     return max(os.path.getmtime(p) for p in inputs) > max(os.path.getmtime(p) for p in gen)
 

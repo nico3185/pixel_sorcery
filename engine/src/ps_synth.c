@@ -65,6 +65,10 @@ static void init_tables(void)
 /* ------------------------------------------------------------------ YM2612 state */
 enum { EG_ATT, EG_DEC, EG_SUS, EG_REL };
 
+/* PS_SOLO=mask (videos, debugging): only these channels are heard - bits 0-5 FM 1-6, bits 6-8 PSG tone 1-3,
+ * bit 9 PSG noise; default all. The chips run as always, only the mix leaves the others out. */
+static int s_solo = 0x3FF;
+
 typedef struct {
     /* registers */
     int dt, mul, tl, ks, ar, d1r, d2r, d1l, rr, am, ssg;
@@ -317,6 +321,7 @@ static void render_sample(void)
         /* 14-bit precision kept (the 9-bit DAC quantisation would only add noise). Discrete
          * YM2612 "ladder effect": +4 on non-negative outputs whether panned or not, -4 on
          * negative ones (-3 when panned), in 9-bit DAC units. */
+        if (!(s_solo >> c & 1)) continue;                      /* PS_SOLO: not heard */
         if (ch->pan_l) L += out;
         if (ch->pan_r) R += out;
         if (out >= 0) { L += 4 << 5; R += 4 << 5; }
@@ -457,9 +462,9 @@ static int psg_tick(void)
     int s = 0;
     for (int i = 0; i < 3; i++) {
         int on = (P.period[i] <= 1) ? 1 : P.tone_out[i];   /* period 0/1: constant level */
-        s += on ? s_psg_vol[P.vol[i]] : -s_psg_vol[P.vol[i]];
+        if (s_solo >> (6 + i) & 1) s += on ? s_psg_vol[P.vol[i]] : -s_psg_vol[P.vol[i]];
     }
-    s += (P.lfsr & 1) ? s_psg_vol[P.vol[3]] : -s_psg_vol[P.vol[3]];
+    if (s_solo >> 9 & 1) s += (P.lfsr & 1) ? s_psg_vol[P.vol[3]] : -s_psg_vol[P.vol[3]];
     return s;
 }
 
@@ -527,6 +532,7 @@ void ps_synth_init(int out_rate)
     const char *mu = getenv("PS_MUTE");          /* fm | psg: compare one chip at a time */
     if (mu && !strcmp(mu, "fm")) s_fm_gain = 0;
     if (mu && !strcmp(mu, "psg")) s_psg_gain = 0;
+    const char *so = getenv("PS_SOLO"); if (so && *so) s_solo = (int)strtol(so, NULL, 0);
 }
 
 void ps_synth_reset(unsigned int cycles)

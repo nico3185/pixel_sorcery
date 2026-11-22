@@ -19,7 +19,7 @@
 #include "genrecomp/ps_wide.h"
 #define ORG (32 + PS_WIDE_MAX + 16)  /* left margin: partial columns, sprites, widescreen */
 #define LINE_MAX (ORG + 512 + PS_WIDE_MAX + 64)
-static int s_water = -1;                 /* real transparency (PS_WATER, settings menu) */
+static int s_water = -1;                 /* PS_WATER / settings menu: 0 original dither, 1 modern, 2 see-through */
 static int s_extra;                  /* widescreen pixels each side for the frame being drawn */
 
 /* Priority tables, indexed [(back << 8) | front]. */
@@ -164,9 +164,15 @@ static uint16_t s_pal0[64];             /* the frame's palette at line 0 */
 static uint8_t s_wmask[256][1024];      /* modern water: 1 water, 2 sprite over it */
 static uint32_t s_wbehind[256][1024];   /* the sharp scene behind the water */
 static uint32_t s_wfront[256][1024];    /* the game's water colour at that pixel (0: a hole of the screen door) */
+static uint8_t s_wkind[256][1024];      /* see-through: 1 a hole, 3 a water pixel, 2 a water pixel a sprite covers */
+static uint32_t s_wbh[256][1024];       /* see-through: the scene drawn again without the water tiles */
+static uint8_t s_wpa[256][1024];        /* see-through: plane A's colour (0 none) and the drawn picture */
+static uint32_t s_wout[256][1024];
+static uint64_t s_wset;                 /* see-through: the colours the water tiles use this frame */
+static uint32_t s_wrgb[64]; static int s_nwrgb;   /* ... as drawn (RGB), for the stripes over ground tiles */
 static uint32_t s_wlight; static int s_wlight_lum = -1, s_wwidth;
 static int s_water_log;
-static double s_water_alpha = 0.65;
+static double s_water_alpha = 0.45;   /* owner: "transparency, not a mess": 0.65 hid Mickey behind COI's falls */
 static int s_water_min = 16;          /* colours changed mid-frame that make a water line (PS_WATER_MIN) */
 static long s_water_last = -1;
 static long ps_frame_no(void) { extern long ps_frames; return ps_frames; }
@@ -176,10 +182,36 @@ static long ps_frame_no(void) { extern long ps_frames; return ps_frames; }
 static bool comparing(void) { const char *r = getenv("PS_RENDERER"); return r && *r && strcmp(r, "native"); }
 /* Modern water is per title (ps_render_allow_water from the title's main): screen-door
  * dithering is also used for skies and decorations elsewhere (SH2's sky) */
-static bool s_water_allowed;
-void ps_render_allow_water(void) { s_water_allowed = true; }
+static bool s_water_allowed, s_sd_allowed;
+void ps_render_allow_water(void) { s_water_allowed = s_sd_allowed = true; }
+/* A title whose water is an underwater palette (SH1's Labyrinth) gives its above-water palette and
+ * the water line: fn fills dry[64] (CRAM format) and returns the first screen line under water, or -1.
+ * Only the palette water is enabled then - screen-door detection stays off for that title. */
+static int (*s_water_src)(uint16_t dry[64]);
+static uint16_t s_wsrc_dry[64]; static int s_wsrc_line = -1;
+void ps_render_set_water_source(int (*fn)(uint16_t dry[64])) { s_water_src = fn; s_water_allowed = true; }
+/* the common case, from four RAM addresses ($FFxxxx offsets): the water flag (its byte non-zero), the water
+ * height, the camera's y and the above-water palette (64 words) - the SH games' layout */
+static uint16_t s_wr_flag, s_wr_level, s_wr_camy, s_wr_dry;
+static bool s_wr_wet = true;           /* the level has water: screen doors are water only there */
+static int water_from_ram(uint16_t dry[64]) {
+    extern uint16_t bus_ram_read16(uint16_t offset);
+    s_wr_wet = (bus_ram_read16(s_wr_flag) >> 8) != 0;
+    if (!s_wr_wet) return -1;
+    int y = (int16_t)bus_ram_read16(s_wr_level) - (int16_t)bus_ram_read16(s_wr_camy);
+    if (y >= 224) return -1;
+    for (int i = 0; i < 64; i++) {
+        uint16_t w = bus_ram_read16((uint16_t)(s_wr_dry + 2 * i));
+        dry[i] = (uint16_t)(((w >> 1) & 7) | ((w >> 5) & 7) << 3 | ((w >> 9) & 7) << 6);
+    }
+    return y < 0 ? 0 : y;
+}
+void ps_render_set_water_ram(uint16_t flag, uint16_t level, uint16_t camy, uint16_t dry) {
+    s_wr_flag = flag; s_wr_level = level; s_wr_camy = camy; s_wr_dry = dry;
+    ps_render_set_water_source(water_from_ram);
+}
 bool ps_render_water_allowed(void) { return s_water_allowed; }
-void ps_render_set_water(bool on) { s_water = comparing() || !s_water_allowed ? 0 : on; }
+void ps_render_set_water(int mode) { s_water = comparing() || !s_water_allowed ? 0 : mode < 0 || mode > 2 ? 1 : mode; }
 
 uint32_t ps_render_color(int index, int intensity) {
     const PsVdp *d = s_vdp_override ? s_vdp_override : &g_ps_vdp;
@@ -261,7 +293,7 @@ static inline void draw_entry(uint8_t *dst, uint16_t e, int row) {
     ps_render_tile_row(e & 0x7FF, row, (e & 0x0800) != 0, (e & 0x1000) != 0, px);
     uint8_t atex = (uint8_t)((e >> 9) & 0x70);
     for (int i = 0; i < 8; i++) dst[i] = px[i] | atex;
-    if (s_water > 0 && s_sd_buf && tile_screen_door(e & 0x7FF)) {
+    if (s_water > 0 && s_sd_allowed && s_wr_wet && s_sd_buf && tile_screen_door(e & 0x7FF)) {
         long o = dst - s_sd_buf;
         for (int i = 0; i < 8; i++) if (o + i >= 0 && o + i < LINE_MAX) s_sd_mark[o + i] = 1;
     }
@@ -541,7 +573,7 @@ static void draw_plane_a_wide(uint8_t *buf, int line, int x0, int x1) {
             uint8_t *keep = s_sd_buf; s_sd_buf = NULL;     /* marks go to the line, below */
             draw_entry(px, e, row);
             s_sd_buf = keep;
-            door = s_water > 0 && buf == s_sd_buf && tile_screen_door(e & 0x7FF);
+            door = s_water > 0 && s_sd_allowed && s_wr_wet && buf == s_sd_buf && tile_screen_door(e & 0x7FF);
         }
         for (int i = fine; i < 8 && x < x1; i++, x++) { buf[ORG + x] = px[i]; if (door) s_sd_mark[ORG + x] = 1; }
     }
@@ -760,14 +792,18 @@ static void render_line(int line, uint32_t *out) {
      * laid over it at PS_WATER_ALPHA (0.5): the water is see-through. A swap is a mid-frame
      * change of at least 16 colours from the palette at line 0 (fades change between
      * frames). Picture only: the game's logic is untouched. */
-    if (line == 0) memcpy(s_pal0, d->cram, sizeof s_pal0);
-    else if (s_water) {
+    if (line == 0) {
+        memcpy(s_pal0, d->cram, sizeof s_pal0);
+        s_wsrc_line = s_water && s_water_src ? s_water_src(s_wsrc_dry) : -1;
+    }
+    if (s_water) {
         int changed = 0;
-        for (int i = 0; i < 64; i++) changed += d->cram[i] != s_pal0[i];
+        if (s_water_src) changed = s_wsrc_line >= 0 && line >= s_wsrc_line ? 64 : 0;   /* the title says where */
+        else if (line) for (int i = 0; i < 64; i++) changed += d->cram[i] != s_pal0[i];
         if (changed >= s_water_min) {
             if (s_water_log && s_water_last != ps_frame_no()) { s_water_last = ps_frame_no(); fprintf(stderr, "water: frame %ld from line %d (%d colours)\n", s_water_last, line, changed); }
-            PsVdp tmp = *d;                       /* above-water colours: the line-0 palette */
-            memcpy(tmp.cram, s_pal0, sizeof s_pal0);
+            PsVdp tmp = *d;                       /* above-water colours: the title's, else the line-0 palette */
+            memcpy(tmp.cram, s_water_src ? s_wsrc_dry : s_pal0, sizeof s_pal0);
             const PsVdp *keep = s_vdp_override; s_vdp_override = &tmp;
             uint32_t above[3][64];
             for (int k = 0; k < 3; k++) {
@@ -775,9 +811,15 @@ static void render_line(int line, uint32_t *out) {
                 above[k][0] = ps_render_color(border, k);
             }
             s_vdp_override = keep;
-            int a = (int)(s_water_alpha * 256);
+            /* a title that gives its above-water palette (the SH games): the scene in its own colours under one
+             * water colour - PS_WATER_TINT=RRGGBB (blue 1E64C8) at PS_WATER_TINT_ALPHA (0.40); mixing in the
+             * game's underwater palette instead only read as a recolour (owner: "not see through") */
+            static int tint_init; static uint32_t tint; static double tint_a = 0.40;
+            if (!tint_init) { tint_init = 1; const char *t = getenv("PS_WATER_TINT"); tint = t && *t ? (uint32_t)strtoul(t, NULL, 16) : 0x1E64C8;
+                              if (getenv("PS_WATER_TINT_ALPHA")) tint_a = atof(getenv("PS_WATER_TINT_ALPHA")); }
+            int a = (int)((s_water_src ? tint_a : s_water_alpha) * 256);
             for (int k = 0; k < 3; k++) for (int i = 0; i < 64; i++) {
-                uint32_t u = pal[k][i], o = above[k][i], r = 0xFF000000u;
+                uint32_t u = tint && s_water_src ? tint : pal[k][i], o = above[k][i], r = 0xFF000000u;
                 for (int sh2 = 0; sh2 < 24; sh2 += 8) {
                     int cu = (u >> sh2) & 0xFF, co = (o >> sh2) & 0xFF;
                     r |= (uint32_t)((co * (256 - a) + cu * a) >> 8) << sh2;
@@ -802,13 +844,49 @@ static void render_line(int line, uint32_t *out) {
     /* Modern water (PS_WATER), pass 1: record where the game draws a waterfall as a
      * "screen door" (plane A tiles marked by draw_entry) and the sharp colour behind it;
      * ps_render_water_frame() draws the water over the whole frame at its end. */
+    /* See-through: the layer behind the water is the line drawn again with the screen door's pixels taken out
+     * of plane A - the far background and every sprite the water covered, whole (the game never drew the
+     * pixels its water hid). The sprite pass's side effects (collision and overflow bits, side-sprite count,
+     * masking, extended colours) are put back: the game sees one pass. */
+    static uint32_t behind[1024 + 64];
+    if (s_water == 2 && line < 256 && !sh) {
+        static uint8_t bh[LINE_MAX]; static uint32_t xc_keep[sizeof s_xc / sizeof s_xc[0]];
+        for (int x = -E; x < width + E; x++) {
+            int o = ORG + x;
+            bh[o] = lut_bg[(pb[o] << 8) | (s_sd_mark[o] ? 0 : pa[o])];
+        }
+        uint16_t fl = g_ps_render_flags; long ss = g_ps_side_sprites; int ov = s_spr_ovr;
+        if (s_xc_n) memcpy(xc_keep, s_xc, sizeof s_xc);
+        draw_wall_sprites(bh, line, s_lut_bgobj);
+        draw_sprites(bh, line, s_lut_bgobj);
+        g_ps_render_flags = fl; g_ps_side_sprites = ss; s_spr_ovr = ov;
+        if (s_xc_n) memcpy(s_xc, xc_keep, sizeof s_xc);
+        for (int x = -E; x < width + E && x + E < 1024 + 64; x++) {
+            int idx = bh[ORG + x] & 0x3F;
+            behind[x + E] = pal[1][(idx & 0x0F) ? idx : 0];
+        }
+    } else if (s_water == 2 && line < 256)
+        for (int x = -E; x < width + E && x + E < 1024 + 64; x++) behind[x + E] = out[x + E];   /* shadow mode: as drawn */
     if (s_water && line < 256) {
         int n = width + 2 * E;
         for (int x = 0; x < n && x < 1024; x++) {
             int o = ORG - E + x;
             uint8_t m = 0;
             if (lb[o] != merged[o]) m = 2;                              /* a sprite: keep it */
-            else if (s_sd_mark[o]) {
+            if (s_water == 2) {                                         /* see-through: both layers, per pixel */
+                bool spr = ((lb[o] ^ merged[o]) & 0x3F) != 0;           /* a sprite shows (not only its mark) */
+                s_wpa[line][x] = (pa[o] & 15) ? (pa[o] & 0x3F) : 0; s_wout[line][x] = out[x];
+                if (s_sd_mark[o]) {
+                    s_wkind[line][x] = !(pa[o] & 15) ? 1 : spr ? 2 : 3; s_wbh[line][x] = behind[x];
+                    if (pa[o] & 15) {
+                        s_wset |= 1ull << (pa[o] & 0x3F); s_wfront[line][x] = pal[1][pa[o] & 0x3F];
+                        uint32_t v = out[x] & 0xFFFFFF; bool dup = false;
+                        for (int i = 0; i < s_nwrgb && !dup; i++) dup = s_wrgb[i] == v;
+                        if (!dup && s_nwrgb < 64 && !spr) s_wrgb[s_nwrgb++] = v;
+                    }
+                } else s_wkind[line][x] = 0;
+            }
+            if (!m && s_sd_mark[o]) {
                 m = 1;
                 s_wbehind[line][x] = pal[1][(pb[o] & 15) ? (pb[o] & 0x3F) : 0];
                 s_wfront[line][x] = (pa[o] & 15) ? pal[1][pa[o] & 0x3F] : 0;
@@ -826,6 +904,12 @@ static void render_line(int line, uint32_t *out) {
             if (s_wmask[line][x] != 1) { x++; continue; }
             int e = x; while (e < n && e < 1024 && s_wmask[line][e] == 1) e++;
             if (e - x < 24) memset(&s_wmask[line][x], 0, (size_t)(e - x));
+            x = e;
+        }
+        for (int x = 0; x < n && x < 1024; ) {                         /* the same for see-through, a sprite */
+            if (!s_wkind[line][x]) { x++; continue; }                   /* inside the run counting as water */
+            int e = x; while (e < n && e < 1024 && s_wkind[line][e]) e++;
+            if (e - x < 24) memset(&s_wkind[line][x], 0, (size_t)(e - x));
             x = e;
         }
         s_wwidth = n;
@@ -879,8 +963,106 @@ static void blend_px(uint32_t *px, float r, float g, float b, float A, uint32_t 
     int R = (int)(r * A + br * (1 - A)), G = (int)(g * A + bg * (1 - A)), B = (int)(b * A + bb * (1 - A));
     *px = 0xFF000000u | (uint32_t)(R > 255 ? 255 : R) << 16 | (uint32_t)(G > 255 ? 255 : G) << 8 | (uint32_t)(B > 255 ? 255 : B);
 }
+/* Mode 2, see-through: the water layer is the game's screen door made whole (a hole takes the water colour
+ * beside it); it is blended at PS_WATER_ALPHA over the scene drawn again without the water tiles (render_line:
+ * the far background and the sprites the water covered, whole). A sprite in front of the water stays as drawn. */
+static bool water_rgb(uint32_t v, const uint32_t *set, int n) {
+    for (int i = 0; i < n; i++) if (set[i] == v) return true;
+    return false;
+}
+static uint32_t water_nb(int y, int x, int n, int h) {           /* the water colour beside a hole */
+    static const int dy[6] = { -1, 1, 0, 0, -1, 1 }, dx[6] = { 0, 0, -1, 1, -1, 1 };
+    for (int i = 0; i < 6; i++) {
+        int yy = y + dy[i], xx = x + dx[i];
+        if (yy < 0 || yy >= h || xx < 0 || xx >= n) continue;
+        if (s_wkind[yy][xx] == 2) return 1;                          /* a sprite in front there: keep the hole */
+        if (s_wkind[yy][xx] == 3) return s_wfront[yy][xx];
+    }
+    return 0;
+}
+static void water_see_through(uint32_t *buf, int pitch, int n, int h) {
+    int A = (int)(s_water_alpha * 256);
+    /* where the cascade shares a tile with the ground or foliage (no holes: not a screen door), it goes on as
+     * far as the game draws its stripes, not a number of lines: in the waterfall's columns, from the water rows up
+     * and down, a row is still the waterfall while a third of those columns show the stripes (a pixel in the
+     * water's colours beside one that is not). There, a stripe pixel is water over the ground beside it; the ground is behind the water. */
+    /* the waterfall's colours as drawn (the stripes over ground tiles use the ground's palette line) */
+#define WIN(g, xx) water_rgb(s_wout[g][xx] & 0xFFFFFF, s_wrgb, s_nwrgb)
+#define STRIPE(g, xx) (WIN(g, xx) && (((xx) > 0 && !WIN(g, (xx) - 1)) || ((xx) + 1 < n && !WIN(g, (xx) + 1))))
+    {   /* the waterfall's columns (water rows in them), as bands; then rows up and down from the water rows */
+        static uint8_t col[1024];
+        for (int x = 0; x < n; x++) { col[x] = 0; for (int y = 0; y < h && !col[x]; y++) col[x] = s_wkind[y][x] == 3 || s_wkind[y][x] == 1; }
+        for (int x0 = 0; x0 < n; ) {
+            if (!col[x0]) { x0++; continue; }
+            int x1 = x0; while (x1 < n && col[x1]) x1++;
+            int wet[256] = { 0 };
+            for (int y = 0; y < h; y++) for (int x = x0; x < x1; x++) if (s_wkind[y][x] == 3 || s_wkind[y][x] == 1) { wet[y] = 1; break; }
+            /* in the water rows too: the splash tiles where the fall meets a ledge (COI 3.2: white drips over the
+             * stone, no holes, so not a screen door) are the water's colours beside the ground - water over it, not
+             * sharp drips over the soft fall (owner: "fix mickey waterfall over the stones") */
+            for (int y = 0; y < h; y++) if (wet[y]) for (int x = x0; x < x1; x++) if (!s_wkind[y][x] && STRIPE(y, x)) s_wkind[y][x] = 5;
+            for (int dir = -1; dir <= 1; dir += 2)
+                for (int y0 = 0; y0 < h; y0++) {
+                    if (!wet[y0] || y0 + dir < 0 || y0 + dir >= h || wet[y0 + dir]) continue;
+                    for (int g = y0 + dir; g >= 0 && g < h && !wet[g]; g += dir) {
+                        int k = 0;
+                        for (int x = x0; x < x1; x++) k += STRIPE(g, x);
+                        if (k * 3 < x1 - x0) break;                          /* the stripes stop: so does the fall */
+                        for (int x = x0; x < x1; x++) if (!s_wkind[g][x]) s_wkind[g][x] = STRIPE(g, x) ? 5 : 4;
+                        wet[g] = 2;
+                    }
+                }
+            x0 = x1;
+        }
+    }
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < n; x++) {
+            if (s_wkind[y][x] == 4) { s_wkind[y][x] = 1; s_wbh[y][x] = s_wout[y][x]; continue; }
+            if (s_wkind[y][x] != 5) continue;
+            s_wkind[y][x] = 3; s_wfront[y][x] = s_wout[y][x]; s_wbh[y][x] = 0;
+            for (int d = 1; d <= 3 && !s_wbh[y][x]; d++) {                  /* the ground beside it */
+                if (x >= d && !WIN(y, x - d)) s_wbh[y][x] = s_wout[y][x - d];
+                else if (x + d < n && !WIN(y, x + d)) s_wbh[y][x] = s_wout[y][x + d];
+            }
+            if (!s_wbh[y][x]) s_wkind[y][x] = 2;                            /* nothing beside: as drawn */
+        }
+#undef STRIPE
+#undef WIN
+    /* the water layer, whole (holes filled), then lightly softened: each water pixel blended with the water
+     * around it, 5 lines tall (weights 1-2-3-2-1) and 3 columns wide (1-4-1), so the game's zigzag steps become
+     * falling streaks and the streaks stay sharp */
+    static uint32_t wl[256][1024]; static uint8_t ok[256][1024];
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < n; x++) {
+            int k = s_wkind[y][x]; uint32_t f = k == 3 ? s_wfront[y][x] : k == 1 ? water_nb(y, x, n, h) : 0;
+            ok[y][x] = f > 1; wl[y][x] = f;
+        }
+    for (int y = 0; y < h; y++) {
+        uint32_t *row = buf + (long)y * pitch;
+        for (int x = 0; x < n; x++) {
+            int k = s_wkind[y][x];
+            if (!k || k == 2 || !ok[y][x]) continue;                    /* not water; a sprite in front */
+            int sr = 0, sg = 0, sb = 0, sw = 0;
+            for (int dy = -2; dy <= 2; dy++) {
+                int yy = y + dy; if (yy < 0 || yy >= h) continue;
+                for (int dx = -1; dx <= 1; dx++) {
+                    int xx = x + dx; if (xx < 0 || xx >= n || !ok[yy][xx]) continue;
+                    int w = (3 - (dy < 0 ? -dy : dy)) * (dx ? 1 : 4); uint32_t c = wl[yy][xx];
+                    sr += (int)((c >> 16) & 0xFF) * w; sg += (int)((c >> 8) & 0xFF) * w; sb += (int)(c & 0xFF) * w; sw += w;
+                }
+            }
+            uint32_t b = s_wbh[y][x];
+            int fr = sr / sw, fg = sg / sw, fb = sb / sw;
+            int r = fr * A + (int)((b >> 16) & 0xFF) * (256 - A);
+            int g = fg * A + (int)((b >> 8) & 0xFF) * (256 - A);
+            int bl = fb * A + (int)(b & 0xFF) * (256 - A);
+            row[x] = 0xFF000000u | (uint32_t)(r >> 8) << 16 | (uint32_t)(g >> 8) << 8 | (uint32_t)(bl >> 8);
+        }
+    }
+}
 void ps_render_water_frame(uint32_t *buf, int pitch, int height) {
     if (!s_water || s_wlight_lum < 0) { s_wlight_lum = -1; return; }
+    if (s_water == 2) { water_see_through(buf, pitch, s_wwidth, height < 256 ? height : 256); s_wset = 0; s_nwrgb = 0; s_wlight_lum = -1; return; }
     extern long ps_frames;
     int n = s_wwidth, h = height < 256 ? height : 256;
     static int top[1024], bot[1024], cnt[1024];
@@ -962,7 +1144,7 @@ void ps_render_water_frame(uint32_t *buf, int pitch, int height) {
 void ps_render_lines(int y0, int y1, uint32_t *dst, int pitch) {
     if (s_water < 0) {
         const char *w = getenv("PS_WATER");
-        s_water = comparing() || !s_water_allowed ? 0 : w ? *w != '0' : 1;   /* on unless PS_WATER=0; the menu sets it */
+        s_water = comparing() || !s_water_allowed ? 0 : w && *w ? (*w == '2' ? 2 : *w != '0') : 1;   /* PS_WATER=0|1|2; the menu sets it */
         s_water_log = getenv("PS_WATER_LOG") != NULL;
         if (s_water_log) s_water = 1;
         if (getenv("PS_WATER_ALPHA")) s_water_alpha = atof(getenv("PS_WATER_ALPHA"));
