@@ -7,6 +7,7 @@
 | its entry point called. It stays in work RAM while the menu's word RAM is replaced.
 | home (offset 2): A+B+C+Start in a game (games/home.s) has group 0 loaded - the menu and a copy of this IP,
 | which build_disc.py stores in it at $23F000 - copies the IP to work RAM and enters here: the menu again.
+	.equ	BIOSLEN, 0x150
 	.text
 	.globl	_start
 _start:
@@ -16,6 +17,9 @@ home:	lea	launch(%pc), %a5
 boot:	move.w	#0x2700, %sr
 0:	cmp.b	#0x10, 0xA1200F                 | sub flag $10: word RAM is in 2M mode
 	bne.s	0b
+	lea	0xFFFD00, %a0                   | the BIOS's jump slots and variables as it left them ($FFFD00-$FFFE4F),
+	lea	0x03FF00, %a1                   |  kept in program RAM ($1FF00, bank 0: nothing is loaded there) for a
+	bsr	bios                            |  Mega CD game launched later (scdboot)
 	bsr.s	togive
 	move.b	#0x5A, 0xA1200E                 | main flag $5A: load group 0
 	moveq	#0x5A, %d1
@@ -30,13 +34,43 @@ boot:	move.w	#0x2700, %sr
 2:	lea	launch(%pc), %a5
 	jmp	0x200000
 
+| BIOSLEN bytes a0 -> a1 with program RAM bank 0 at $020000: the sub CPU halted meanwhile (SBRQ), its bus ours
+bios:	bset	#1, 0xA12001                    | SBRQ: halt the sub CPU
+1:	btst	#1, 0xA12001
+	beq.s	1b
+	move.b	0xA12003, %d1                   | the bank selected now (bits 6-7), put back after
+	andi.b	#0xC0, %d1
+	andi.b	#0x3F, 0xA12003                 | program RAM bank 0
+	moveq	#BIOSLEN / 4 - 1, %d0
+2:	move.l	(%a0)+, (%a1)+
+	dbra	%d0, 2b
+	or.b	%d1, 0xA12003
+	bclr	#1, 0xA12001                    | the sub CPU runs again
+3:	btst	#1, 0xA12001
+	bne.s	3b
+	rts
 togive:	bset	#1, 0xA12003                    | DMNA: word RAM to the sub CPU
 1:	btst	#0, 0xA12003                    | RET drops to 0 once the sub CPU has it
 	bne.s	1b
 	rts
 waitload:                                       | d1: the sub flag that means "loaded"
+	.ifdef	SPINLOAD                        | the menu's Sonic (sprite 3, menu.s loading) rolls meanwhile:
+	moveq	#0, %d4                          |  a frame every 8192 turns
+1:	addq.l	#1, %d4
+	move.l	%d4, %d3
+	moveq	#13, %d2
+	lsr.l	%d2, %d3
+	andi.w	#15, %d3
+	lsl.w	#4, %d3
+	addi.w	#(YPAL << 13) + 0x8000 + 1140, %d3   | menu.s STILE
+	move.l	#0x781C0003, 0xC00004           | VRAM $F81C: sprite 3's tile word
+	move.w	%d3, 0xC00000
+	cmp.b	0xA1200F, %d1
+	bne.s	1b
+	.else
 1:	cmp.b	0xA1200F, %d1
 	bne.s	1b
+	.endif
 2:	btst	#0, 0xA12003                    | word RAM is ours again (RET)
 	beq.s	2b
 	rts
@@ -53,7 +87,7 @@ launch:	move.w	#0x2700, %sr
 	subq.w	#1, %d0
 	mulu	#22, %d0
 	cmp.l	#0x53434421, (%a0, %d0.w)
-	bne.s	start
+	bne	start
 	lea	scdboot(%pc), %a0               | runs from $FFF000: it overwrites this code
 	lea	0xFFF000, %a1
 	move.w	#(scdend - scdboot) / 2 - 1, %d0
@@ -64,6 +98,24 @@ launch:	move.w	#0x2700, %sr
 | $76E Europe, $784 USA, $356 Japan; build_disc.py --defsym) to $FF0000 + SECEND - $200, where the BIOS puts
 | it after the security block; then, with the sub CPU running its module, jump in
 scdboot:
+	movea.l	#0xFFFD00, %sp                  | below the block put back next (nothing here uses the stack)
+	bset	#1, 0xA12001                    | the BIOS's slots and variables back, as saved at boot: a cartridge
+5:	btst	#1, 0xA12001                    |  game's switch stub, stack and RAM overwrite them, and SHCD
+	beq.s	5b                              |  runs through them - after any other game it hung on a blue screen
+	move.b	0xA12003, %d1
+	andi.b	#0xC0, %d1
+	andi.b	#0x3F, 0xA12003
+	lea	0x03FF00, %a0
+	lea	0xFFFD00, %a1
+	moveq	#BIOSLEN / 4 - 1, %d0
+6:	move.l	(%a0)+, (%a1)+
+	dbra	%d0, 6b                         | and program RAM bank 0 stays selected, as the BIOS leaves it (a
+|  cartridge game leaves bank 1: SHCD's IP then waited forever)
+	bclr	#1, 0xA12001
+7:	btst	#1, 0xA12001
+	bne.s	7b
+	move.w	#0x100, 0xA11200                | the Z80 out of reset and its bus free, as the BIOS leaves them (a
+	move.w	#0, 0xA11100                    |  cartridge game leaves it in reset: SHCD waited for its bus)
 	lea	0x200000 + SECEND, %a0
 	lea	0xFF0000 + SECEND - 0x200, %a1
 	move.w	#(0x1000 - SECEND) / 2 - 1, %d0

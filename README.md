@@ -24,7 +24,8 @@ replay). This is not a demo that boots a title screen: **210 recorded runs, full
 included, are identical to the original at every controller poll, every night.** Also:
 - `shk1`, our own Knuckles in Sonic 1 (beta);
 - Ultimate SH, every SH title in one program behind a Mega CD-style game-select screen;
-- a Mega CD compilation disc built from your cartridges;
+- a Mega CD compilation disc built from your cartridges (**alpha**: checked in the reference player, not yet
+  on a real console; a path no test run took can still go wrong);
 - native `shcd`, in progress.
 
 ## Games covered

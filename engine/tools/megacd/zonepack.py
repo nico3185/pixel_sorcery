@@ -48,11 +48,14 @@ def bits(path, n, halves):
 
 def collect(spec, n, halves):
     d, modes = spec.rsplit(':', 1)
-    want = None if modes == '*' else {int(m, 16) for m in modes.split('+')}
+    ms = [] if modes == '*' else modes.split('+')        # "D": the key's high byte (zone, game mode);
+    hi = {int(m, 16) for m in ms if '.' not in m}         # "D.1": the whole key (zone D, act 1)
+    full = {int(m.split('.')[0], 16) << 8 | int(m.split('.')[1], 16) for m in ms if '.' in m}
     out = set()
     for dd in glob.glob(d):
         for f in glob.glob(os.path.join(dd, '*.bin')):
-            if want is None or int(os.path.basename(f)[:4], 16) >> 8 in want:
+            # the key: the name's last four hex digits before .bin (SH3 links them as start-AIZ1_0000.bin)
+            if modes == '*' or (k := int(os.path.basename(f)[:-4].split('_')[-1][:4], 16)) >> 8 in hi or k in full:
                 out |= bits(f, n, halves)
     return out
 
@@ -62,6 +65,12 @@ def main():
     n = int(a[0], 0)
     gap = int(a[a.index('--gap') + 1], 0) if '--gap' in a else 0x800
     blocks = {0}                                     # vectors + header always
+    codeb = set()                                    # --code-file FILE (LO-HI lines): every function's span
+    if '--code-file' in a:
+        for l in open(a[a.index('--code-file') + 1]):
+            if l.strip():
+                lo_, hi_ = (int(v, 16) for v in l.split('-'))
+                codeb |= set(range(lo_ // B, (hi_ + B - 1) // B))
     fixed = []
     for i, x in enumerate(a):
         if x == '--use':
@@ -80,6 +89,25 @@ def main():
             r, new = a[i + 1].split('=')
             lo, hi = (int(v, 16) for v in r.split('-'))
             fixed.append((lo, hi, int(new, 16)))
+    # DMA-only data (--dma-use) goes to the banks' free room (--dma-place) - room the fixed ranges leave: SH3's
+    # banks 2 and 3 are full with Sonic's and Tails' art, and the default 0A0000 put Marble Garden's dust on Sonic.
+    # Without room it is packed with the rest (word RAM / the window: dmaqueue_map.s sends those as they are)
+    dma_inline = False
+    dmab0 = set()
+    for i, x in enumerate(a):
+        if x == '--dma-use':
+            dmab0 |= collect(a[i + 1], n, (1,))
+    if dmab0:
+        dplace = a[a.index('--dma-place') + 1] if '--dma-place' in a else '0A0000-0C0000,0E0000-100000'
+        room = 0
+        for p in dplace.split(','):
+            plo, phi = (int(v, 16) for v in p.split('-'))
+            taken = sum(max(0, min(phi, new + hi - lo) - max(plo, new)) for lo, hi, new in fixed)
+            room += phi - plo - taken
+        if room < len(dmab0) * B:
+            dma_inline = True                        # placed after the rest, into the holes left (below) - or,
+            if '--dma-data' in a:                    # --dma-data, packed with the rest (whole pieces before the
+                blocks |= dmab0                      # space fragments: Knuckles' 15 KB found no hole after)
     for lo, hi, _ in fixed:                          # blocks wholly inside; a block shared with
         blocks -= set(range((lo + B - 1) // B, hi // B))   # other data is packed too (relocate.py
                                                      # takes the first range holding an address)
@@ -225,11 +253,11 @@ def main():
                 continue
             out_rigid.append((lo * B, min(hi * B, n), new))
             k = lo if '--no-holes' not in a else hi  # its holes become free space (--no-holes:
-            while k < hi:                            # they stay unused)
-                if k in blocks:
-                    k += 1; continue
+            while k < hi:                            # they stay unused; --code-file: blocks of known
+                if k in blocks or k in codeb:        # functions are never holes - a path no run took
+                    k += 1; continue                 # still jumps there: Angel Island's water entry)
                 h = k
-                while h < hi and h not in blocks:
+                while h < hi and h not in blocks and h not in codeb:
                     h += 1
                 free.append([new + (k - lo) * B, new + (h - lo) * B]); holes += (h - k) * B
                 k = h
@@ -255,22 +283,24 @@ def main():
     # default 0A0000-0C0000 = bank 2, 0E0000-100000 = bank 3). Each blob moves whole (merged
     # across gaps < 16 KB: art is addressed as base + offset).
     out_dma = []
-    dmab = set()
-    for i, x in enumerate(a):
-        if x == '--dma-use':
-            dmab |= collect(a[i + 1], n, (1,))
+    dmab = set(dmab0)
     dmab -= blocks
     for lo, hi, _ in fixed:
         dmab -= set(range(lo // B, (hi + B - 1) // B))
     if dmab:
         druns = []
-        for b in sorted(dmab):
-            if druns and (b - druns[-1][1]) * B < 0x4000:
+        mgap = 0x200 if dma_inline else 0x4000            # into holes: pieces split where nothing is read (each
+        for b in sorted(dmab):                         # animated-tile entry has its own pointer; character art
+            if druns and (b - druns[-1][1]) * B < mgap:   # is forced whole) - 37 KB of Launch Base found no hole
                 druns[-1][1] = b + 1
             else:
                 druns.append([b, b + 1])
-        dplace = a[a.index('--dma-place') + 1] if '--dma-place' in a else '0A0000-0C0000,0E0000-100000'
         dfree = [[int(p.split('-')[0], 16), int(p.split('-')[1], 16)] for p in dplace.split(',')]
+        for f in dfree:                                # past what fixed ranges hold there
+            for lo, hi, new in fixed:
+                if f[0] <= new < f[1]: f[0] = max(f[0], new + hi - lo)
+        if dma_inline:                                 # no room in the banks: the holes the packing left
+            dfree = [[x, y] for x, y in free]
         for lo, hi in sorted(druns, key=lambda r: r[0] - r[1]):
             sz = (hi - lo) * B
             for f in sorted(dfree):
@@ -278,7 +308,10 @@ def main():
                     out_dma.append((lo * B, min(hi * B, n), f[0])); f[0] += sz
                     break
             else:
-                sys.exit(f'DMA data does not fit: {lo * B:06X}-{hi * B:06X} ({sz // 1024} KB)')
+                if not dma_inline:
+                    sys.exit(f'DMA data does not fit: {lo * B:06X}-{hi * B:06X} ({sz // 1024} KB)')
+                print(f'# DMA-only {lo * B:06X}-{hi * B:06X} ({sz // 1024} KB) left at its cartridge address: no hole',
+                      file=sys.stderr)
         print(f'# DMA-only: {len(druns)} ranges, {sum(h - l for l, h, _ in out_dma) // 1024} KB', file=sys.stderr)
     out_data += out_dma
     tot = sum(hi - lo for lo, hi, _ in out_fixed + out_rigid + out_data)

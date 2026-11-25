@@ -30,7 +30,14 @@ mkdir -p $work/boot
 [[ -n "$(print -l $work/boot/*.bin(N))" ]] || PS_ROMUSE=$work/boot PS_ROMUSE_KEY=FFF600 $tr --headless --frames 112 --trace-out /dev/null $rom >/dev/null 2>&1
 print "1/4 evidence: $(ls $g/recordings/start-*.polls | wc -l | tr -d ' ') level-select starts, by zone and by game mode"
 i=0
-for p in $g/recordings/start-*.polls; do
+# + whole play-throughs (S2_PLAYS, default 526S: the whole game; two more made Chemical Plant 5 KB too big): the level-select starts never reach a
+# sign post, so what an act's end runs and reads (the results, the next act's load) was in no image - on the disc
+# Emerald Hill 1 crashed at its sign post (526S: the Nemesis decompressor ran off into RAM)
+plays=(${=${S2_PLAYS:-526S front-idle}})   # front-idle: no input - the title runs its whole intro (the emblem's palette fade, $1337C), then the demos
+# + the owner's plays: session_split.py's pieces of his compilation-disc sessions and his sessions on the cartridge
+for p in $g/recordings/start-*.polls ${plays/#/$g/recordings/} $g/recordings/play-*.polls(N) $g/sessions/*.polls(N); do
+  (( $(wc -l < ${p%.polls}.polls 2>/dev/null || echo 0) > 0 )) || continue
+  [[ "$p" == *.polls ]] || p=$p.polls
   [[ -n ${S2_KEEP_EV:-} && -n "$(print -l $work/evz/${p:t:r}/*.bin(N))" ]] && continue
   n=$(wc -l < $p); b=${p:t:r}; mkdir -p $work/evz/$b $work/evm/$b
   PS_ROMUSE=$work/evz/$b PS_ROMUSE_FROM=112 PS_ROMUSE_KEY=FFFE10 PS_PTRS=$work/evz/$b/ptrs.txt PS_PTRS_FROM=112 PS_PTRS_NEAR=0x80 PS_POLL_REPLAY=$p \
@@ -75,7 +82,22 @@ low_code = lambda a: a >= 0x100 and L(a) & 0xFFFFFF < 0x8000 and L(a) & 0xFFFFFF
 # tagged pointer (Oil Ocean \$1F7A: 0804 0806 became 0821 D806; Chemical Plant 2 \$2EAA)
 colours = lambda a: 0x100 <= a < 0x8000 and L(a) >> 24 and not (L(a) & 0xF111F111)
 low_code_or_colours = lambda a: low_code(a) or colours(a)
-sys.stdout.writelines('%06X\\n' % a for a in sorted(out) if not (0xC054 <= a < 0xC164 or 0x50000 <= a < 0x6FBE0 or low_code_or_colours(a)))" $rom $work > $work/ptrs.txt
+# but the title's palette changers (\$1337C: word offsets to 8 entries of 12 bytes - two pointers, then a parameter
+# long, 000F0807 among them: not an address) do point into the low engine area (\$243E, \$AD1E...: palettes there).
+# Dropped, the disc's title faded its emblem from the BIOS ROM (black wings, no SH 2 ribbon)
+fades = {0x1337C + int.from_bytes(rom[0x1337C + 2 * k:0x1337E + 2 * k], 'big') + d for k in range(8) for d in (0, 4)}
+out |= fades
+# the HUD's digits (\$4134C-\$41A74, uncompressed, read pc-relative among the code): pixel runs like 0001 1100
+# were relocated as pointers - stray pixels by the clock and the lives counter on the disc
+# DMA art bases given as immediates (addi.l #ART,d1 before QueueDMATransfer): the splash and dust's \$71FFC
+# (\$1DF20), \$7A18A (\$19576) and \$7AF80 (\$1D5E6). Left as they were, the disc's water splash and spin-dash
+# dust were DMA'd from whatever sits at those cartridge addresses (Aquatic Ruin: 68000 code as tiles). relocate.py
+# leaves addi.l operands alone: the two in use are patched below (--patch 1DF22 / 1D5E8)
+# Their art goes to program-RAM bank 2 after the load screen's frames (the same in every image: loaded once;
+# dmaqueue_map.s selects the bank), Chemical Plant 2 having no 7 KB piece free. Exact bounds: Tails' mappings
+# start at \$739E2, right after the dust (a 256-byte round-up took 30 bytes of them and Tails' sprite crashed the level)
+# (\$7A18A's loader runs in two-player mode only, \$FFD8: its art is not forced in - Chemical Plant 2 has no room)
+sys.stdout.writelines('%06X\\n' % a for a in sorted(out) if a in fades or not (0xC054 <= a < 0xC164 or 0x4134C <= a < 0x41A74 or 0x50000 <= a < 0x6FBE0 or low_code_or_colours(a)))" $rom $work > $work/ptrs.txt
 force=(); for r in $(cat $work/plc_force.txt); do force+=(--force $r); done
 ex=(); for f in $work/evz/*/*.bin; do ex+=(--exec $f); done
 print "2/4 references (relative, fall-through) and named tables"
@@ -84,14 +106,18 @@ $py $here/code_refs.py $rom $work/refs.txt $work/evz/*/*.bin
     --map 000000-100000=200000 --targets-out $work/targets.txt >/dev/null 2>&1 )
 print "3/4 helpers"
 m68k-elf-as -m68000 -o $work/home.o $here/games/home.s && m68k-elf-ld -Ttext=0x200200 --oformat=binary -o $work/home.bin $work/home.o   # A+B+C+Start: the menu
-m68k-elf-as -m68000 --defsym ABSORB=${S2_ABSORB:-1} --defsym LOADSCREEN=1 -o $work/sw.o $here/swap.s; m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $work/swap.bin $work/sw.o
+python3 $here/spinner.py $rom sh2 $work/spinf.bin --pulse >/dev/null   # the load screen: its roll frames, from your ROM,
+m68k-elf-as -m68000 -o $work/spins.o $here/games/spinsetup.s; m68k-elf-ld -Ttext=0x034400 --oformat=binary -o $work/spins.bin $work/spins.o
+m68k-elf-as -m68000 -o $work/spinr.o $here/games/spinrest.s; m68k-elf-ld -Ttext=0x03FFC0 --oformat=binary -o $work/spinr.bin $work/spinr.o   # after its set-up
+python3 -c "import sys; c = open(sys.argv[1], 'rb').read(); assert len(c) <= 0x100, len(c); open(sys.argv[3], 'wb').write(c.ljust(0x100, b'\\0') + open(sys.argv[2], 'rb').read())" $work/spins.bin $work/spinf.bin $work/spin.bin
+m68k-elf-as -m68000 --defsym ABSORB=${S2_ABSORB:-1} --defsym SPIN=1 -o $work/sw.o $here/swap.s; m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $work/swap.bin $work/sw.o
 # the images: NAME GROUP USE... (zonepack --use values); zones and modes -> group, for the switch tables
-names=(front ehz mtz wfz htz ooz mcz cnz cpz dez arz scz ss)
-typeset -A grp=(front 2 ehz 35 mtz 24 wfz 25 htz 26 ooz 27 mcz 28 cnz 29 cpz 30 dez 31 arz 32 scz 33 ss 34)
-typeset -A zof=(0 ehz 1 ehz 2 ehz 3 ehz 4 mtz 5 mtz 6 wfz 7 htz 8 ehz 9 ehz 10 ooz 11 mcz 12 cnz 13 cpz 14 dez 15 arz 16 scz)
+names=(front ehz mtz wfz htz ooz mcz cnz cpz1 cpz2 dez arz scz ss)
+typeset -A grp=(front 2 ehz 35 mtz 24 wfz 25 htz 26 ooz 27 mcz 28 cnz 29 cpz1 30 cpz2 46 dez 31 arz 32 scz 33 ss 34)
+typeset -A zof=(0 ehz 1 ehz 2 ehz 3 ehz 4 mtz 5 mtz 6 wfz 7 htz 8 ehz 9 ehz 10 ooz 11 mcz 12 cnz 13 cpz1 14 dez 15 arz 16 scz)
 typeset -A use=(   # captures, under $work: GLOB:KEYS (zonepack.py --use; the key's high byte: zone or game mode)
-  front "evm/*:0+4+24+28 x:boot:0" ehz "evm/start-EHZ*:8+C+88+8C"
-  mtz "evz/*:4+5" wfz "evz/*:6" htz "evz/*:7" ooz "evz/*:A" mcz "evz/*:B" cnz "evz/*:C" cpz "evz/*:D"
+  front "evm/*:0+4+24+28 x:boot:0" ehz "evm/start-EHZ*:8+C+88+8C evz/526S:0"
+  mtz "evz/*:4+5" wfz "evz/*:6" htz "evz/*:7" ooz "evz/*:A" mcz "evz/*:B" cnz "evz/*:C" cpz1 "evz/*:D.0" cpz2 "evz/*:D.1"
   dez "evz/*:E" arz "evz/*:F" scz "evz/*:10" ss "evm/*:10+90")
 print "4/4 images"
 args=()
@@ -110,15 +136,19 @@ elif me == 'ss':  modes = [G('front')] * 2 + [0xFF, 0xFF, 0] + [G('front')] * 6
 else:             modes = [G('front')] * 2 + [0, 0, G('ss')] + [G('front')] * 6
 print('modes:\t.byte\t' + ', '.join('0x%02X' % m for m in modes))
 print('zones:\t.byte\t' + ', '.join('0x%02X' % G(zof[z]) for z in range(17)))
+act2 = {13: 'cpz2'}     # zones cut into an image per act (Chemical Plant: act 2 and its boss in their own)
+print('zones2:\t.byte\t' + ', '.join('0x%02X' % G(act2.get(z, zof[z])) for z in range(17)))
 P
   uargs=(); for u in ${=use[$name]}; do [[ $u == x:* ]] && uargs+=(--exec-only $work/${${u#x:}%%:*}:${u##*:}) || uargs+=(--use $work/$u); done
   exm=(${(f)"$(python3 -c "
 import glob, os, sys   # the captures this image is made of: --use GLOB:KEYS (the key's high byte)
 a = sys.argv[1:]
 for g, keys in (x.rsplit(':', 1) for x in a if x not in ('--use', '--exec-only')):
-    ks = {int(k, 16) for k in keys.split('+')}
+    ks = {int(k, 16) for k in keys.split('+') if '.' not in k}   # D: zone D; D.1: zone D act 1
+    kf = {int(k.split('.')[0], 16) << 8 | int(k.split('.')[1], 16) for k in keys.split('+') if '.' in k}
     for f in sorted(glob.glob(g + '/*.bin')):
-        if int(os.path.basename(f)[:2], 16) in ks: print('--exec'); print(f)" $uargs)"})
+        k = int(os.path.basename(f)[:4], 16)
+        if k >> 8 in ks or k in kf: print('--exec'); print(f)" $uargs)"})
   ( cd $g && $py $here/relocate.py $rom recomp.json $work/probe_$name $exm \
       --map 000000-100000=200000 --funcs-out $work/funcs_$name.txt >/dev/null 2>&1 )
   # the ties of this image's own code only (all the zones' together chain the whole code area into one
@@ -128,7 +158,7 @@ for g, keys in (x.rsplit(':', 1) for x in a if x not in ('--use', '--exec-only')
   # collision (curve map $42D50, height arrays $42E50/$43E50, the zone's own block indexes): read as
   # base + index, so a play's captures touch a few entries only - an untouched one (a slope taken another way)
   # read whatever the image put there and Sonic left the floor (EHZ1 on the disc, poll 37). Whole, in every level image
-  typeset -A zids=(ehz "0" mtz "4 5" wfz "6" htz "7" ooz "A" mcz "B" cnz "C" cpz "D" dez "E" arz "F" scz "10")
+  typeset -A zids=(ehz "0" mtz "4 5" wfz "6" htz "7" ooz "A" mcz "B" cnz "C" cpz1 "D" cpz2 "D" dez "E" arz "F" scz "10")
   coll=(); [[ -n ${zids[$name]:-} ]] && coll=($(python3 - $rom ${=zids[$name]} <<'C'
 import sys
 r = open(sys.argv[1], 'rb').read(); L = lambda a: int.from_bytes(r[a:a + 4], 'big')
@@ -140,13 +170,22 @@ for z in sys.argv[2:]:
 print(' '.join(out))
 C
 ))
+  # Obj_Index ($16008 + ID * 4, read pc-relative: the captures never see it) is forced too - left to the
+  # captures, CPZ2's image put other code over object $7C's entry and the level start jumped to $B41C0000
   tabf=(--force-file $work/tables_$name.txt); [[ ${S2_TABLES:-1} == 0 ]] && tabf=()   # S2_TABLES=0: indexed tables not forced
+  # the SEGA screen (front) builds its running Sonic by reading Sonic's art with the CPU (lea \$50000,a3 at \$3A238,
+  # frames \$556B8-\$56038): that art lives in program-RAM bank 2, which only the DMA queue reaches through its
+  # virtual address - the CPU read noise there (the SEGA screen's Sonic a block of garbage). The front image gets a
+  # copy of those 2432 bytes at \$225E00 (out of its packing) and the lea points so its offsets land in it
+  pend=226800; sega=(); if [[ $name == front ]]; then
+    pend=225E00; python3 -c "import sys; sys.stdout.buffer.write(open('$rom','rb').read()[0x556B8:0x56038])" > $work/segasonic.bin
+    sega=(--blob 225E00=$work/segasonic.bin --patch 3A23A=$(printf %08X $((0x225E00 - 0x56B8)))); fi
   pack() {  # NEAR GAP: table margin, data merge gap; an image that does not fit is packed again tighter
     python3 $here/zonepack.py 0x100000 --rom $rom $uargs --near $work/targets.txt:$1 --gap $2 \
-      $force $coll --fixed E6800-E8000=226800 --fixed E8000-100000=228000 --fixed 50000-64320=0A0000 --fixed 64320-6FBE0=0E0000 \
-      --force 000200-000410 --refs $work/refs_$name.txt --force-file $work/funcs_$name.txt $tabf \
-      --place ${S2_SIZES:+400000-600000,}200C00-226800,020000-040000 > $work/map_$name.txt 2> $work/pack_$name.txt; }
-  pack 0x200 0x800 || pack 0x100 0x200 || { print -u2 "$name: does not fit ($(tail -1 $work/pack_$name.txt))"; exit 1; }   # tighter: s3engine_disc.sh's values for 4 MB
+      $force $coll --fixed E6800-E8000=226800 --fixed E8000-100000=228000 --fixed 50000-64320=0A0000 --fixed 64320-6FBE0=0E0000 --fixed 71FFC-7393C=0B6600 --fixed 7AF80-7B400=0B8000 \
+      --force 000200-000410 --force 016008-016378 --refs $work/refs_$name.txt --force-file $work/funcs_$name.txt $tabf \
+      --place ${S2_SIZES:+400000-600000,}200C00-${pend:-226800},020000-03FFC0 > $work/map_$name.txt 2> $work/pack_$name.txt; }
+  pack 0x200 0x800 || pack 0x100 0x200 || pack 0x80 0x40 || { print -u2 "$name: does not fit ($(tail -1 $work/pack_$name.txt))"; exit 1; }   # tighter: s3engine_disc.sh's values for 4 MB
   [[ -n ${S2_SIZES:-} ]] && { print "  $name: $(tail -1 $work/pack_$name.txt)"; continue; }   # S2_SIZES=1: what each image needs, no limit
   # where the map put an address
   at() { python3 -c "
@@ -156,7 +195,7 @@ v=int(sys.argv[1],16); print('%X' % next((new+v-lo for lo,hi,new in m if lo<=v<h
   v() { python3 -c "import sys; print('%X' % int.from_bytes(open('$rom','rb').read()[$1*4:$1*4+4],'big'))"; }
   python3 -c "import sys; sys.stdout.buffer.write(b''.join(int(x,16).to_bytes(4,'big') for x in sys.argv[1:]))" \
     $(at $(v 30)) $(at $(v 28)) $(at 394) FFFFFE00 > $work/desc_$name.bin
-  m68k-elf-as -m68000 -I $work --defsym TABLE=0x$(at 3A2) --defsym LEVELREST=0x$(at 3ECA) --defsym FAR1=0x$(at BFBC) --defsym FAR2=0x$(at 4F52) -o $work/z.o $here/games/sh2_zone.s
+  m68k-elf-as -m68000 -I $work --defsym SPIN=1 --defsym TABLE=0x$(at 3A2) --defsym LEVELREST=0x$(at 3ECA) --defsym FAR1=0x$(at BFBC) --defsym FAR2=0x$(at 4F52) -o $work/z.o $here/games/sh2_zone.s
   m68k-elf-ld -Ttext=0x200510 --oformat=binary -o $work/zone_$name.bin $work/z.o
   snd=$(at EC000)
   m68k-elf-as -m68000 -I $here/games --defsym SNDLOAD=0x$snd --defsym ZB1D=0x45 --defsym ZB1E=0x46 --defsym ZB1F=0x47 \
@@ -175,12 +214,16 @@ v=int(sys.argv[1],16); print('%X' % next((new+v-lo for lo,hi,new in m if lo<=v<h
     cnzl=(--blob 200900=$work/cnzlists.bin --patch 173D2=43F900200904 --patch 173DE=43F900200A48); fi
   # the hit boxes of the touch code ($3FB28..$3FC34: move.l #$00040004,d1 - two sizes, not $40004) stay as they
   # are: relocated, Aquatic Ruin 2's arrow missed Sonic on the disc where it hits him on the cartridge
-  ( cd $g && $py $here/relocate.py $rom recomp.json $out.$name --ptrs $work/ptrs.txt $ex --all-code --map $(cat $work/map_$name.txt) \
+  # the object table (Obj_Index, \$16008, \$DC entries): every entry relocated, and an object whose code this image
+  # does not hold pointed at DeleteObject (\$164E6) - objguard.py (SH3's unmet object jumped into its renderer)
+  og=($(python3 $here/objguard.py $rom $work/map_$name.txt 16008 220 164E6 2>> $work/pack_$name.txt))
+  ( cd $g && $py $here/relocate.py $rom recomp.json $out.$name --ptrs $work/ptrs.txt $ex --all-code --map $(cat $work/map_$name.txt) $og \
       --patch 3FB2A=00040004 --patch 3FBA0=00080010 --patch 3FC00=00060008 --patch 3FC36=0008000C \
+      --patch 1DF22=$(printf %08X 0x$(at 71FFC)) --patch 1D5E8=$(printf %08X 0x$(at 7AF80)) \
       --patch 346=4E714E71 --patch 362=0080 --patch 37A=3F3F --patch 17B0A=003E \
       --patch 394=4EB9002005104E714E714E71 --patch 3EC4=4EF900200514 --patch 411A=4EB9002005184E71 \
       --patch 130C=4EF9$sl --patch 14AC=4EF9$dq --blob 200700=$work/h_$name.bin --patch 111C=4EF900200200 --blob 200200=$work/home.bin \
-      --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin $cnzl | head -1 )
+      --blob 200500=$work/desc_$name.bin --blob 200510=$work/zone_$name.bin --blob 0B4400=$work/spin.bin --blob 03FFC0=$work/spinr.bin $cnzl $sega | head -1 )
   print "  $name: $(tail -1 $work/pack_$name.txt)"
   [[ $name == front ]] && args+=(--game 2:$out.front) || args+=(--image $grp[$name]:$out.$name)
 done

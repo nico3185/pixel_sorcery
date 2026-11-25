@@ -41,6 +41,7 @@ static void write_play(void) {
     printf("ref: %ld frames of play -> %s\n", s_play_n, out);
 }
 
+static unsigned s_cur_frame;   /* the frame being run (PS_ITRACE, PS_WWATCH; set in every build) */
 #ifdef HOOK_CPU
 /* PS_PCRING=1 (builds with HOOK_CPU, e.g. build-trace): the main CPU's last 512 instruction
  * addresses, appended to PS_RAMDUMP_AT's dump (oldest first) - the path into a crash */
@@ -49,10 +50,24 @@ static uint32_t s_pcring[512]; static unsigned s_pcpos;
 static int s_spmin_on; static uint32_t s_spmin = 0xFFFFFF; static int s_badread;
 static void pc_hook(hook_type_t t, int w, unsigned int a, unsigned int v) {
     (void)w; (void)v;
+    {   /* PS_ITRACE=FROM-TO: every main 68000 instruction of those frames (stderr: frame PC SR SP) */
+        static long f0 = -2, f1; static long n;
+        if (f0 == -2) { const char *e = getenv("PS_ITRACE"); f0 = -1; if (e) sscanf(e, "%ld-%ld", &f0, &f1); }
+        if (t == HOOK_M68K_E && f0 >= 0 && s_cur_frame >= f0 && s_cur_frame <= f1 && n++ < 2000000)
+            fprintf(stderr, "it %u %06X %04X %06X d0 %08X a0 %08X a1 %08X d1 %08X d2 %08X d7 %08X a4 %08X a5 %08X\n", s_cur_frame, a & 0xFFFFFF, m68k_get_reg(M68K_REG_SR), m68k_get_reg(M68K_REG_SP) & 0xFFFFFF, m68k_get_reg(M68K_REG_D0), m68k_get_reg(M68K_REG_A0), m68k_get_reg(M68K_REG_A1), m68k_get_reg(M68K_REG_D1), m68k_get_reg(M68K_REG_D2), m68k_get_reg(M68K_REG_D7), m68k_get_reg(M68K_REG_A4), m68k_get_reg(M68K_REG_A5));
+    }
     /* stops once a game running from program/word RAM ($020000-$23FFFF) reaches the BIOS
      * ROM below $020000 or its error slots ($FFFD18-$FFFD1F): a jump the relocation missed */
     static int frozen, game; static unsigned prev, lastpc;
     if (t == HOOK_M68K_E) lastpc = a & 0xFFFFFF;
+    {   /* PS_WWATCH=ADDR (with PS_PCRING=1): every main-CPU write to that RAM long (stderr: frame, PC, address, value) */
+        static long ww = -2, we; if (ww == -2) { const char *e = getenv("PS_WWATCH"); char *x = 0; ww = e ? strtol(e, &x, 16) : -1;
+            we = (x && *x == '-') ? strtol(x + 1, 0, 16) : (ww & 0xFFFFFF) + 4; static long wv = -2; (void)wv; }
+        static long wval = -2; if (wval == -2) { const char *e = getenv("PS_WWATCH_VAL"); wval = e ? strtol(e, 0, 16) : -1; }
+        if (ww >= 0 && t == HOOK_M68K_W && ((a & 0xFFFFFF) >= (unsigned)(ww & 0xFFFFFF)) && ((a & 0xFFFFFF) < (unsigned)(we & 0xFFFFFF))
+            && (wval < 0 || (long)(v & 0xFFFF) == wval || (long)v == wval))
+            fprintf(stderr, "ww %u %06X %06X %X w%d\n", s_cur_frame, lastpc, a & 0xFFFFFF, v, w);
+    }
     /* PS_BADREAD: a disc game's reads where none of its data is (BIOS ROM $000200-$01FFFF, $040000-$1FFFFF)
      * while its own code runs: a pointer the relocation left at its cartridge address (first 64, distinct) */
     if (t == HOOK_M68K_R && s_badread && ((lastpc >= 0x020000 && lastpc < 0x040000) || (lastpc >= 0x200200 && lastpc < 0x240000))) {   /* not the menu ($200000+) */
@@ -79,7 +94,7 @@ static void pc_hook(hook_type_t t, int w, unsigned int a, unsigned int v) {
     a &= 0xFFFFFF;
     prev = a;
     if (a >= 0x020000 && a < 0x240000) game = 1;
-    else if (game && (a < 0x020000 || (a >= 0xFFFD18 && a < 0xFFFD20))) frozen = 1;   /* $FFFD20+: an image switch stub (swap.s) */
+    else if (game && (a < 0x020000 || (a >= 0xFFFD18 && a < 0xFFFD20)) && !getenv("PS_PCRING_NOFREEZE")) frozen = 1;   /* $FFFD20+: an image switch stub (swap.s) */
     {   /* PS_PCRING_STOP=LO-HI: also freeze when the PC enters that range (SH2 on the disc: an exception lands in
          * the BIOS's slots past $FFFD7E, inside the switch stub's area, so the default rule never fires) */
         static unsigned lo = 1, hi; if (lo == 1) { const char *e = getenv("PS_PCRING_STOP"); if (!e || sscanf(e, "%x-%x", &lo, &hi) != 2) lo = hi = 0; }
@@ -223,11 +238,24 @@ int main(int argc, char *argv[]) {
                     if (f) { for (int i = 0; i < 0x40000; i += 2) { fputc(scd.word_ram_2M[i + 1], f); fputc(scd.word_ram_2M[i], f); } fclose(f); }
                 }
             }
-            if (pf) fprintf(pf, "%u %06X %04X %08X sub %06X %X %02X\n", s_frame_n, m68k_get_reg(M68K_REG_PC) & 0xFFFFFF,
+            {   /* PS_VRAM_AT=FRAME:FILE: video RAM (64 KB, VDP byte order) at that frame */
+                static long vat = -2; static const char *vfn;
+                if (vat == -2) { const char *e = getenv("PS_VRAM_AT"); vat = -1; if (e && strchr(e, ':')) { vat = atol(e); vfn = strchr(e, ':') + 1; } }
+                if ((long)s_frame_n == vat) { FILE *f = fopen(vfn, "wb"); if (f) { for (int i = 0; i < 0x10000; i++) fputc(vram[i ^ 1], f); fclose(f); } }
+            }
+            {   /* PS_PRGRAM_AT=FRAME:FILE: the Mega CD's program RAM (512 KB, byte order of the 68000s) at that frame */
+                static long pat = -2; static const char *pfn;
+                if (pat == -2) { const char *e = getenv("PS_PRGRAM_AT"); pat = -1; if (e && strchr(e, ':')) { pat = atol(e); pfn = strchr(e, ':') + 1; } }
+                if (system_hw == SYSTEM_MCD && (long)s_frame_n == pat) {
+                    FILE *f = fopen(pfn, "wb");
+                    if (f) { for (int i = 0; i < 0x80000; i += 2) { fputc(scd.prg_ram[i + 1], f); fputc(scd.prg_ram[i], f); } fclose(f); }
+                }
+            }
+            if (pf) fprintf(pf, "%u %06X %04X %08X sub %06X %X %02X m%X r%04X c%d e%d z%X\n", s_frame_n, m68k_get_reg(M68K_REG_PC) & 0xFFFFFF,
                             m68k_get_reg(M68K_REG_SR), m68k_get_reg(M68K_REG_SP),
                             system_hw == SYSTEM_MCD ? s68k_get_reg(M68K_REG_PC) & 0xFFFFFF : 0,
-                            system_hw == SYSTEM_MCD ? s68k.stopped : 0, system_hw == SYSTEM_MCD ? scd.regs[0x00].byte.l : 0);
-            s_frame_n++;
+                            system_hw == SYSTEM_MCD ? s68k.stopped : 0, system_hw == SYSTEM_MCD ? scd.regs[0x00].byte.l : 0, (unsigned)m68k.stopped, system_hw == SYSTEM_MCD ? scd.regs[0x02 >> 1].w : 0, (int)m68k.cycles, (int)m68k.cycle_end, (unsigned)zstate);
+            s_frame_n++; s_cur_frame = s_frame_n;
         }
         {   /* PS_WAV_OUT=FILE: the sound (44.1 kHz stereo, 16-bit) for recordings */
             int ns = audio_update(audio);
@@ -248,6 +276,15 @@ int main(int argc, char *argv[]) {
         for (int y = 0; y < h; y++)
             memcpy(present + y * GEN_RENDER_WIDTH * 4, src + y * bitmap.pitch, (size_t)w * 4);
         { extern long ps_frames; ps_frames++; }   /* frames since power-on: the frame column of PS_WATCH and PS_CHECKPOINTS */
+        {   /* PS_POKE=ADDR=VAL@FRAME[,...]: one work-RAM byte written at that frame (as the tracer's: put a
+             * player where a bug is, on the cartridge and on the disc alike) */
+            extern long ps_frames; static int pn = -1; static unsigned pa[64], pv[64]; static long pf[64];
+            if (pn < 0) { pn = 0;
+                for (const char *q = getenv("PS_POKE"); q && *q && pn < 64; ) {
+                    if (sscanf(q, "%x=%x@%ld", &pa[pn], &pv[pn], &pf[pn]) == 3) pn++;
+                    q = strchr(q, ','); if (q) q++; } }
+            for (int i = 0; i < pn; i++) if (pf[i] == ps_frames) work_ram[(pa[i] & 0xFFFF) ^ 1] = (unsigned char)pv[i];
+        }
         {   /* PS_FRAMES_DIR=DIR [PS_FRAMES_EVERY=N]: PNGs of the frames, for headless checks */
             static const char *fd; static long every, fn; static int init;
             if (!init) { init = 1; fd = getenv("PS_FRAMES_DIR"); every = getenv("PS_FRAMES_EVERY") ? atol(getenv("PS_FRAMES_EVERY")) : 60; if (every < 1) every = 1; }
@@ -271,6 +308,11 @@ int main(int argc, char *argv[]) {
 #endif
                          fclose(f); }
             }
+        }
+        {   /* PS_ZRAM_AT=FRAME:FILE: the Z80's 8 KB RAM at that frame (the sound driver as it runs: patched banks, its code) */
+            static long zat = -2, zn; static const char *zf;
+            if (zat == -2) { const char *e = getenv("PS_ZRAM_AT"); zat = -1; if (e && strchr(e, ':')) { zat = atol(e); zf = strchr(e, ':') + 1; } }
+            if (zn++ == zat) { FILE *f = fopen(zf, "wb"); if (f) { fwrite(zram, 1, 0x2000, f); fclose(f); } }
         }
         if (s_census) census_frame();
         platform_present_frame(present);

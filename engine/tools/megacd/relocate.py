@@ -134,12 +134,50 @@ def main():
         insns = an.instructions
     if '--funcs-out' in args and executed:        # bodies of the functions that ran (paths a run
         spans = []                                # did not take included): zonepack.py --force
+        ran = [f for f in an.functions.values() if any(x in executed for x in (f.get('insn_addrs') or []))]
+        # and the functions they call directly (bsr/jsr/bra/jmp to a known function): a path no run took still
+        # calls them - left out, their blocks were holes other data filled (SH3 Angel Island 1: entering
+        # water, bsr.w \$17412 at \$11F4C ran into data on the disc and crashed)
+        starts = {}
         for f in an.functions.values():
             ia = f.get('insn_addrs') or []
-            if any(x in executed for x in ia):
-                for x in ia:
-                    if x in an.instructions:
-                        spans.append((x, x + an.instructions[x][2]))
+            if ia: starts[min(ia)] = f
+        CALL = re.compile(r'^\$([0-9a-f]+)(?:\.l|\(pc\))?$', re.I)
+        seen = {id(f) for f in ran}; level = ran; callees = []
+        for _ in range(1):                         # one level: three made Launch Base too big for its image
+            nxt = []
+            for f in level:
+                for x in f.get('insn_addrs') or []:
+                    ins = an.instructions.get(x)
+                    if not ins or ins[0].split('.')[0] not in ('bsr', 'jsr', 'bra', 'jmp'):
+                        continue
+                    m_ = CALL.match(ins[1].strip())
+                    g = starts.get(int(m_.group(1), 16)) if m_ else None
+                    if g is not None and id(g) not in seen:
+                        seen.add(id(g)); nxt.append(g)
+            callees = nxt; level = nxt
+        for f in ran:
+            for x in f.get('insn_addrs') or []:
+                if x in an.instructions:
+                    spans.append((x, x + an.instructions[x][2]))
+        cs = sorted((x, x + an.instructions[x][2]) for f in callees for x in (f.get('insn_addrs') or []) if x in an.instructions)
+        # .reach: code reachable from what ran, 4 calls deep - never a hole (zonepack.py --code-file)
+        reach = list(callees); lv = list(callees); seen2 = set(seen)
+        for _ in range(3):
+            nx = []
+            for f in lv:
+                for x in f.get('insn_addrs') or []:
+                    ins = an.instructions.get(x)
+                    if not ins or ins[0].split('.')[0] not in ('bsr', 'jsr', 'bra', 'jmp', 'beq', 'bne', 'bcc', 'bcs', 'bpl', 'bmi', 'bge', 'blt', 'bgt', 'ble', 'bhi', 'bls', 'bvc', 'bvs'):
+                        continue
+                    m_ = CALL.match(ins[1].strip())
+                    g = starts.get(int(m_.group(1), 16)) if m_ else None
+                    if g is not None and id(g) not in seen2:
+                        seen2.add(id(g)); nx.append(g)
+            reach += nx; lv = nx
+        allc = sorted((x, x + an.instructions[x][2]) for f in reach for x in (f.get('insn_addrs') or []) if x in an.instructions)
+        open(args[args.index('--funcs-out') + 1] + '.allcode', 'w').write(''.join(f'{a:06X}-{b:06X}\n' for a, b in allc))
+        open(args[args.index('--funcs-out') + 1] + '.callees', 'w').write(''.join(f'{a:06X}-{b:06X}\n' for a, b in cs))
         spans.sort(); merged = []
         for lo_, hi_ in spans:
             if merged and lo_ <= merged[-1][1] + 16:
@@ -266,6 +304,29 @@ def main():
         cart[ad:ad + len(b)] = b
     open(out + '.trapcart.md', 'wb').write(cart)
     open(out + '.map', 'w').write(''.join(f'{lo:06X}-{hi:06X}={new:06X}\n' for lo, hi, new in regions))
+    # PC-relative references whose source and target are both in the image but moved apart: the displacement
+    # is rewritten where the new distance still fits (SH3 Angel Island 1: bsr.w \$115FE at \$18F5E, a hurt path
+    # no recording took, its function placed apart from the routine - the disc called into data and crashed)
+    redisp = 0
+    fcode = {x for f in an.functions.values() for x in (f.get('insn_addrs') or [])}   # real code only: data the
+    for a, mn, ops, t in cross:                   # decoder took for an instruction stays as it is (a table entry at
+        if reloc(t) is None or reloc(a) is None or (a not in fcode and a not in executed):   # \$C03C had been "re-aimed")
+            continue
+        w = int.from_bytes(rom.data[a:a + 2], 'big')
+        d = reloc(t) - (reloc(a) + 2)
+        if (w & 0xF000) == 0x6000 and (w & 0xFF) == 0:              # bra/bsr/bcc.w: 16-bit at +2
+            ok = -0x8000 <= d < 0x8000
+            if ok: data[a + 2:a + 4] = (d & 0xFFFF).to_bytes(2, 'big')
+        elif (w & 0xF000) == 0x6000:                                 # .s: 8-bit in the opcode
+            ok = -0x80 <= d < 0x80 and d not in (0, -1)
+            if ok: data[a + 1] = d & 0xFF
+        elif (w & 0xF0F8) == 0x50C8 or w in (0x4EBA, 0x4EFA, 0x487A) or (w & 0xF1FF) == 0x41FA:   # dbcc, jsr/jmp/pea/lea d16(pc)
+            ok = -0x8000 <= d < 0x8000
+            if ok: data[a + 2:a + 4] = (d & 0xFFFF).to_bytes(2, 'big')
+        else:
+            ok = False
+        redisp += ok
+    print(f'{redisp} PC-relative references re-aimed (both ends here, moved apart)')
     print(f'{len(executed) or len(an.instructions)} instructions considered, {tables} PC-relative table entries; {fixed} absolute ROM references rewritten '
           f'({imm_fixed} of them immediates); {data_fixed} data pointers (of {len(ptrs)} seen); '
           f'{len(short_refs)} .w ROM references (not rewritable); {scanned} table pointers found in data:')

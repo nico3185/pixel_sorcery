@@ -29,6 +29,21 @@ _start:
 3:	btst	#0, 3(%a2)
 	bne.s	3b
 	move.b	%d7, 14(%a2)                    | main flag $80 + group: load it
+	.ifdef	SPIN                            | --defsym SPIN=1: the load screen - Sonic spinning bottom-right. The
+	lea	0xC00004, %a4                   |  image set it up before the switch (the planes blank, his roll
+	moveq	#0, %d4                         |  frames at VRAM $F000, sprite 0 at $F800, his colours in line 0):
+4:	addq.l	#1, %d4                         |  here only sprite 0's tile changes, a frame every 8192 turns
+	move.l	%d4, %d3                        |  (~1/12 s); interrupts and the display untouched
+	moveq	#13, %d1
+	lsr.l	%d1, %d3
+	andi.w	#15, %d3                        | 16 frames: 4 turns at 4 sizes (the ball breathes)
+	lsl.w	#4, %d3
+	addi.w	#0x8500, %d3                    | priority, palette line 0, tile $500 (VRAM $A000) + 16 per frame
+	move.l	#0x78040003, (%a4)              | VRAM $F804: sprite 0's tile word
+	move.w	%d3, -4(%a4)
+	cmp.b	15(%a2), %d7                    | echoed once loaded
+	bne.s	4b
+	.else
 	.ifdef	LOADSCREEN                      | --defsym LOADSCREEN=1: the load screen - all 64 colours one pulsing
 	lea	0xC00004, %a4                   |  blue (a plain screen), the display registers untouched: switching
 	moveq	#0, %d4                         |  the picture off ran the next frames' DMA faster and lost SH1 a
@@ -47,12 +62,16 @@ _start:
 4:	cmp.b	15(%a2), %d7                    | echoed once loaded
 	bne.s	4b
 	.endif
+	.endif
 6:	btst	#0, 3(%a2)                      | word RAM back (RET)
 	beq.s	6b
 	bset	#1, 1(%a2)                      | SBRQ: halt the sub CPU (program RAM is ours)
 6:	btst	#1, 1(%a2)
 	beq.s	6b
 	move.b	#0x40, 3(%a2)                   | program RAM bank 1 at $020000
+	.ifdef	SPIN
+	jsr	0x03FFC0                        | the new image puts the load screen away (games/spinrest.s)
+	.endif
 	move.w	#0xFD0C, 6(%a2)                 | HBlank vector register: the BIOS's HBlank slot
 	lea	DESC, %a0                       | descriptor: VBlank, HBlank, entry, stack
 	lea	0xFFFD06, %a1

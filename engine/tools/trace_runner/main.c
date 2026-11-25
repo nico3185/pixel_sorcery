@@ -73,13 +73,14 @@ static int ru_slot(void) {
 static void ru_mark(uint8_t *bm, uint32_t a, uint32_t n) {
     for (uint32_t i = 0; i < n; i++, a++) if (a < s_rom_size) bm[a >> 3] |= (uint8_t)(1u << (a & 7));
 }
+static int s_ru_rec = 1;                                /* DMA sources recorded (PS_ROMUSE_LEVEL: in a level only) */
 static void ru_vdp_word(uint16_t v) {                  /* a word written to the VDP control port */
     if (s_ru_pend) {                                   /* second half of a command */
         s_ru_pend = 0;
         if ((v & 0x80) && (s_ru_reg[1] & 0x10) && !(s_ru_reg[23] & 0x80)) {   /* 68K-bus DMA */
             uint32_t len = (uint32_t)(s_ru_reg[19] | s_ru_reg[20] << 8); if (!len) len = 0x10000;
             uint32_t src = ((uint32_t)s_ru_reg[21] | s_ru_reg[22] << 8 | (s_ru_reg[23] & 0x7F) << 16) << 1;
-            int k = ru_slot(); if (k >= 0 && !s_ru_cpuonly) ru_mark(s_ru_read[k], src, len * 2);
+            int k = ru_slot(); if (k >= 0 && !s_ru_cpuonly && s_ru_rec) ru_mark(s_ru_read[k], src, len * 2);
         }
         return;
     }
@@ -117,7 +118,17 @@ static void ru_hook(hook_type_t type, int width, unsigned int address, unsigned 
     {   /* PS_ROMUSE_LEVEL=1: only while the game mode ($FFF600, loading bit aside) is a level ($08 demo, $0C) -
          * a zone's own needs, without the title and menus that run with the same zone value (SH2/3) */
         static int lv = -1; if (lv < 0) lv = getenv("PS_ROMUSE_LEVEL") && atoi(getenv("PS_ROMUSE_LEVEL"));
-        if (lv) { unsigned m = READ_BYTE(work_ram, 0xF600) & 0x7C; if (m != 0x08 && m != 0x0C) return; }
+        if (lv) { unsigned m = READ_BYTE(work_ram, 0xF600) & 0x7C;
+            if (m != 0x08 && m != 0x0C) {   /* outside a level: nothing recorded, but the VDP's registers still followed -
+                                             * the DMA length/source/enable set there would be missing (SH3's DMA
+                                             * captures came out empty: its zones' DMA-only art never reached the images) */
+                if (type == HOOK_M68K_W && ((address & 0xFFFFFF) & 0xE0001C) == 0xC00004) {
+                    s_ru_rec = 0;
+                    if (width == 4) { ru_vdp_word((uint16_t)(value >> 16)); ru_vdp_word((uint16_t)value); }
+                    else ru_vdp_word((uint16_t)value);
+                    s_ru_rec = 1;
+                }
+                return; } }
     }
     unsigned a = address & 0xFFFFFF;
     if (type == HOOK_M68K_E) { int k = ru_slot(); if (k >= 0) ru_mark(s_ru_exec[k], a, 2); }
@@ -533,6 +544,22 @@ int main(int argc, char *argv[]) {
                         FILE *f = fopen(fn, "wb");
                         if (f) { for (int i = 0; i < 0x10000; i++) fputc(work_ram[i ^ 1], f);
                             for (int i = 0; i < 0x10000; i++) fputc(vram[i ^ 1], f); fwrite(cram, 1, 0x80, f); fwrite(reg, 1, 0x20, f); fwrite(vsram, 1, 0x80, f); fclose(f); }
+                    }
+                }
+                {   /* PS_SWEEP=CAMX,PLX,STEP,EVERY: once in a level (mode $0C at $F600) for 120 frames, the camera
+                     * (word at CAMX) and the player (word at PLX) move right by STEP every EVERY frames up to $8000 -
+                     * every object of the act's layout spawns and runs at least its start, for the evidence (an object
+                     * no run met had its code left out: SH3's object $2D in Angel Island 1 jumped into the renderer) */
+                    static int sw = -1; static unsigned scx, spx, sst, sev; static long sin_; static unsigned sx;
+                    if (sw < 0) { sw = 0; const char *e = getenv("PS_SWEEP"); if (e && sscanf(e, "%x,%x,%x,%u", &scx, &spx, &sst, &sev) == 4 && sev) sw = 1; }
+                    if (sw) {
+                        int lvl = (work_ram[0xF600 ^ 1] & 0x7F) == 0x0C;
+                        if (!lvl) sin_ = 0; else if (!sin_) { sin_ = ps_frames; sx = 0; }
+                        if (lvl && ps_frames - sin_ >= 120 && (ps_frames - sin_) % sev == 0 && sx < 0x8000) {
+                            sx += sst; unsigned cx = sx > 0xA0 ? sx - 0xA0 : 0;
+                            work_ram[(scx & 0xFFFF) ^ 1] = cx >> 8; work_ram[((scx + 1) & 0xFFFF) ^ 1] = cx & 0xFF;
+                            work_ram[(spx & 0xFFFF) ^ 1] = sx >> 8; work_ram[((spx + 1) & 0xFFFF) ^ 1] = sx & 0xFF;
+                        }
                     }
                 }
                 for (int i = 0; i < pn; i++) if (pf[i] == ps_frames) { work_ram[(pa[i] & 0xFFFF) ^ 1] = (unsigned char)pv[i]; if (getenv("PS_POKE_LOG")) fprintf(stderr, "poke f%ld %04X=%02X mode %02X\n", ps_frames, pa[i] & 0xFFFF, pv[i], work_ram[0xF600 ^ 1]); }

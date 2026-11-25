@@ -11,7 +11,8 @@
  *   PS_CHECKPOINT_DUMP=N:dir   full 68K RAM (and Z80 RAM) at poll N into dir/ram_N.bin
  *   PS_RESUME=file:N      replay the first N polls of a recorded session at full speed, then
  *                         hand control to the player (resume a run; PS_POLL_RECORD keeps the
- *                         whole session, replayed part included, so it still replays exactly)
+ *                         whole session, replayed part included, so it still replays exactly;
+ *                         PS_RESUME_PAUSE=1: the pause menu opens there, the game waits for the player)
  *   PS_POLL_STOP=N        exit after poll N (replay to a divergence and stop)
  *   PS_STATE_DUMP=dir:N   (PS_STATE_MCD=1: + Mega CD PRG-RAM 512K | 2M Word RAM 256K) every N polls: dir/state_<poll>.bin = 68K RAM 64K | Z80 RAM 8K | VRAM 64K |
  *                         CRAM 128 | VSRAM 128 | VDP regs 32 (GPGX native byte order)
@@ -100,12 +101,25 @@ static void on_poll(void)
     if (s_play && s_live_after && n >= s_play_n) {
         free(s_play); s_play = NULL;
         fprintf(stderr, "ps_poll: resumed at poll %ld, live input\n", n);
+        if (getenv("PS_RESUME_PAUSE")) { extern void ps_menu_request(void); ps_menu_request(); }   /* paused there, waiting for the player */
     }
     if (s_play) {
         if (n < s_play_n) { s_cur[0] = s_play[n][0]; s_cur[1] = s_play[n][1]; }
         else { s_cur[0] = s_cur[1] = 0; }
         input.pad[0] = s_cur[0]; input.pad[PS_PAD_INDEX(1)] = s_cur[1];
     }
+#ifndef PS_NATIVE
+    {   /* PS_STATE_AT_READ=N:FILE: work RAM (64 KB, 68000 order), video RAM (64 KB) and the palette (128 bytes) at pad
+         * read N - the one point where a disc build and its cartridge have run the same game logic, whatever their
+         * timing (render_compare.py: a palette written mid-frame lands a few cycles apart) */
+        static long sr = -2; static const char *sf;
+        if (sr == -2) { const char *e = getenv("PS_STATE_AT_READ"); sr = -1; if (e && strchr(e, ':')) { sr = atol(e); sf = strchr(e, ':') + 1; } }
+        if (n == sr) { FILE *f = fopen(sf, "wb");
+            if (f) { for (int i = 0; i < 0x10000; i++) fputc(READ_BYTE(work_ram, i), f);
+                     for (int i = 0; i < 0x10000; i++) fputc(READ_BYTE(vram, i), f);
+                     fwrite(cram, 1, 0x80, f); fclose(f); } }
+    }
+#endif
     if (s_rec) {
         fprintf(s_rec, "%04X %04X\n", input.pad[0], input.pad[PS_PAD_INDEX(1)]);
         if (n % 60 == 0) fflush(s_rec);             /* crash reports keep the last second of input */

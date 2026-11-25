@@ -52,7 +52,7 @@ for n in $starts; do
     PS_WATCH_PIC=1 PS_POLL_REPLAY=$r PS_WATCH=$o/$n.cart:F600,FE10+2,$px+2,$pal $R --headless --frames $((L * 2 + 300)) $rom >/dev/null 2>&1
     pk=(); [[ -f $rec/start-$n.poke ]] && pk=(GENRECOMP_POKE="$(< $rec/start-$n.poke)")   # a RAM start (SHK: no level select of its own)
     env $pk PS_WATCH_PIC=1 PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,$px+2,$pal \
-      $R --headless --frames $((L * 2 + 3000)) $cue >/dev/null 2>&1 ) &
+      $R --headless --frames $((L * 2 + 3600)) $cue >/dev/null 2>&1 ) &
   i=$((i + 1)); (( i % 6 == 0 )) && wait
 done; wait
 python3 - $o $ct $dt $starts <<'P'
