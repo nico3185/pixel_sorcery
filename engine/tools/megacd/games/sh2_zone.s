@@ -47,12 +47,20 @@ zone:	moveq	#0, %d0
 	bls.s	2f
 	moveq	#0, %d0
 2:	lea	zones(%pc), %a0
-	move.b	(%a0, %d0.w), %d7
+	tst.b	0xFFFFFE11                      | act 2 (and its boss) of a zone cut by act: zones2
+	beq.s	3f
+	lea	zones2(%pc), %a0
+3:	move.b	(%a0, %d0.w), %d7
 	rts
 switch:
 	move.w	#0x2700, %sr
 	lea	0xFFFE00, %sp                   | Level is reached with a deep stack: it would run over the
 	                                        | copied stub - nothing on it has to survive the switch
+	.ifdef	SPIN
+	move.b	#0x80, 0xA12003                 | program RAM bank 2 (Sonic's art, the load screen's frames)
+	jsr	0x034400                        | the load screen (games/spinsetup.s)
+	move.b	#0x40, 0xA12003                 | bank 1 again
+	.endif
 	lea	stub(%pc), %a0
 	lea	0xFFFD20, %a1
 	move.w	#(stubend - stub) / 2 - 1, %d0

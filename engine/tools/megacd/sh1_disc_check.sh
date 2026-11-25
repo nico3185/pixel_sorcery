@@ -11,18 +11,18 @@ cue=${cue:A}; mkdir -p $o; o=${o:A}
 root=${0:A:h}/../../..; cd $root
 R=${PS_REF:-build/ci-mac/genrecomp_ref}; rom=${ROM:-$root/../roms/sh1.bin}; rec=games/sh1/recordings
 starts=(GHZ1 GHZ2 GHZ3 MZ1 MZ2 MZ3 SYZ1 SYZ2 SYZ3 LZ1 LZ2 LZ3 SLZ1 SLZ2 SLZ3 SBZ1 SBZ2 SBZ3 FZ SS1)
-# the disc's boot: Start on the BIOS screen (300), CD-ROM (420), Start on the menu's card 1 (800)
+# the disc's boot: Start on the BIOS screen (300), CD-ROM (420), Start on the menu's card 1 (1100: after the 3 s splash)
 python3 -c "
-m = {i: 0x80 for a in (300, 420, 800) for i in range(a, a + 4)}
-open('$o/boot.mv', 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(1300)))"
-GENRECOMP_MOVIE=$o/boot.mv PS_POLL_RECORD=$o/boot.polls $R --headless --frames 1300 $cue >/dev/null 2>&1
+m = {i: 0x80 for a in (300, 420, 1100) for i in range(a, a + 4)}
+open('$o/boot.mv', 'w').write(''.join('%x\n' % m.get(i, 0) for i in range(1600)))"
+GENRECOMP_MOVIE=$o/boot.mv PS_POLL_RECORD=$o/boot.polls $R --headless --frames 1600 $cue >/dev/null 2>&1
 i=0
 for n in $starts; do
   ( r=$rec/start-$n.polls; L=$(wc -l < $r)
     { head -350 $o/boot.polls; tail -n +129 $r; } > $o/$n.rp
     PS_POLL_REPLAY=$r PS_WATCH=$o/$n.cart:F600,FE10+2,D008+2 $R --headless --frames $((L * 2 + 300)) $rom >/dev/null 2>&1
     PS_POLL_REPLAY=$o/$n.rp PS_WATCH=$o/$n.disc:F600,FE10+2,D008+2 \
-      $R --headless --frames $((L * 2 + 3000)) $cue >/dev/null 2>&1 ) &
+      $R --headless --frames $((L * 2 + 3600)) $cue >/dev/null 2>&1 ) &
   i=$((i + 1)); (( i % 6 == 0 )) && wait
 done; wait
 python3 - $o $starts <<'P'
@@ -38,7 +38,11 @@ for n in starts:
         res.append(None if k is None else [x[2:] for x in w[k:]])
     c, d = res
     if d is None: print(n, 'disc: never loads'); continue
-    m = min(len(c), len(d)); diff = next((j for j in range(m) if c[j] != d[j]), None)
+    m = min(len(c), len(d))
+    # \$D008 is Sonic's x in a level, but the special stage writes it only once Sonic moves: until then it holds
+    # the title screen's Sonic, which the disc's own boot leaves elsewhere (SS1 "differed at poll 0")
+    s0 = next((j for j in range(m) if c[j][2] != c[0][2] or d[j][2] != d[0][2]), m) if c and c[0][0] == '10' else 0
+    diff = next((j for j in range(m) if (c[j] if j >= s0 else c[j][:2]) != (d[j] if j >= s0 else d[j][:2])), None)
     if diff is None and len(d) >= len(c) - 2: ok += 1; print(n, 'identical at all %d polls' % m)
     elif diff is None: print(n, 'identical for %d polls, then the disc stops (of %d)' % (len(d), len(c)))
     else: print(n, 'differs at poll %d of %d: cart %s disc %s' % (diff, m, c[diff], d[diff]))

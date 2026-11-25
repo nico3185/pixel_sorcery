@@ -177,7 +177,7 @@ Every later step reads `ROMS` only, so `make all` can be re-run any time; it reb
 | `make shbs-rom` | `../roms/shk_sh1.bin`, SHBS for a Genesis | SHK, SH1 |
 | `make shcd` | `games/shcd/build/shcd_native` | a SHCD disc + its BIOS |
 | `make shcd-reference` | the same plus the emulator-core reference build | a SHCD disc + its BIOS |
-| `make sh-compilation` | `~/Documents/PixelSorcery/Ultimate SH (US)/ultimate.cue`, the Ultimate SH Mega CD disc (built in `build/ultimate-sh-US`) | a SHCD disc (US by default), SH1 (2, 3, SHK: their cards) |
+| `make sh-compilation` | `~/Documents/PixelSorcery/Ultimate SH (US)/ultimate.cue`, the Ultimate SH Mega CD disc, **alpha** (built in `build/ultimate-sh-US`; README: known issues) | a SHCD disc (US by default), SH1 (2, 3, SHK: their cards) |
 | `make sh-compilation-all` | one disc per region of SHCD you have | SHCD discs |
 | `make derived-all` | the four rows above, each when its inputs are there | |
 | `make all` | setup, prepare-roms, build-all, derived-all | |
@@ -191,8 +191,8 @@ anywhere under `ROM_DIR` or `ROMS` (`engine/tools/megacd/find_disc.py`). Its gam
 `menu.png` (or a converted `menu.bin`) in `ROM_DIR` if you have one, else a plain 4x2 card menu is
 drawn (`engine/tools/megacd/menu_default.py`). Overrides, on the make command line only (a variable
 left exported in your shell is ignored): `COMPILATION_DISC=/path/disc.cue`, `MENU_IMAGE=/path/menu.png`
-(`-` = the plain menu), `SONIC_COMPILATION_OUT=dir`. It takes about 20 minutes (evidence runs of every
-game on the tracer).
+(`-` = the plain menu), `SONIC_COMPILATION_OUT=dir`. It takes about 1 h 30 from scratch (evidence runs of
+every game on the tracer, your own disc sessions included).
 
 **Where to find what was made.** The finished disc (its `.cue` and tracks) and the ROMs made from your
 dumps are copied to `EXPORT_DIR`, by default `Documents/PixelSorcery` (`Ultimate SH (US)/ultimate.cue`,

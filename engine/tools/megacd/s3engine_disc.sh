@@ -9,8 +9,8 @@
 # presses pause the game), randomised play, and long straight runs past the act's art switch.
 # Layout:
 #   word RAM $200000-$200400  free (SH3's save RAM writes land at $200001+, odd bytes)
-#   $200400  DMA queue helper (games/dmaqueue.s, queue at $FFFB00)   $200500  image descriptor
-#   $200510  switch thunk + stub (thunk.s, swap.s)                    $200600+ code/data
+#   $200600  DMA queue helper (games/dmaqueue_map.s, queue at $FFFB00)   $200500  image descriptor
+#   $200510  switch thunk + stub (thunk.s, swap.s)                    $200800+ code/data
 #   the Z80's banks in word RAM windows $44-$47; program-RAM bank 1 code/data; banks 2/3 the
 #   game's DMA'd art window(s), unchanged (art is base + offset)
 # Per game: patches (region lock, save-RAM enable, version register NTSC, boot RAM clear count),
@@ -30,11 +30,14 @@ case $game in
   shk)
     rom=${ROM:-$root/../roms/shk.bin}; starts=(400 700)
     patches=(344=72FF6000014C4E71 C32A=4E714E714E714E71 C342=4E714E714E714E71 C38A=4E714E714E714E71 C3AE=4E714E714E714E71 484=0080 33C=3F3F
-             4CEB6=4E714E714E71)                # NO WAY's A+B+C: skip its tst.b $0 (the cartridge's
+             4CEB6=4E714E714E71 41F8=4E714E71 53BE=4E714E71)                # NO WAY's A+B+C: skip its tst.b $0 (the cartridge's
     dmaq=1588; mainloop=4B6; modetab=4C6; llb=91F0C   # first byte, the BIOS's on the disc)
-    artfix=(--fixed 100000-120000=0A0000); rigid=(--rigid BA100-BDA00 --rigid 166500-166B00 --rigid 18BB00-18C800)
+    artfix=(--fixed 100000-120000=0A0000 --fixed 120000-140000=0E0000);   # Knuckles' art whole in bank 3 (art base + frame offset)
+    rigid=(--rigid BA100-BDA00 --rigid 166500-166B00 --rigid 18BB00-18C800)
     vbl=584; hbl=FFFFF6                            # vectors point to RAM jump stubs: VBlank's
-    driver=ram:12D0:D6:48:B65:33; front=0+4; frontsw=8,C; zone=C+8C; zonesw=0,4; card=4; zgroup=11 ;;
+    driver=ram:12D0:D6:48:B65:33; front=0+4; frontsw=8,C; zone=C+8C; zonesw=0,4; card=4; zgroup=11; ptrtab=98100:30; objtab=952A2:185:1ABB6; kpress=650:DOWN:6 ;;
+    # (\$41F8, \$53BE: the title's attract demo never starts - its demos play Mushroom Hill, Flying Battery and Sandopolis,
+    # and the disc holds Mushroom Hill 1 alone, which has no room left for the demo's data: the title stays up)
   sh3k)                                       # SHK's code + SH3 locked on ($200000-$3FFFFF)
     rom=${ROM:-$root/../roms/sh3k.bin}; starts=(400 700 1000)
     patches=(344=72006000014C4E71 C32A=4E714E714E714E71 C342=4E714E714E714E71 C38A=4E714E714E714E71 C3AE=4E714E714E714E71 20B63C=4E714E714E714E71 484=0080 33C=3F3F)
@@ -92,18 +95,62 @@ for i in 0 1 2 3 4 5; do cap cpu $i & done; wait
 for i in 0 1 2; do cap dma $i & cap z80 $i & done; wait
 for i in 0 1 2 3; do straight cpu $i & straight dma $i & straight z80 $i & done; wait
 for i in 4 5 6 7; do straight cpu $i & straight dma $i & done; wait
+# the second character (kpress: SHK's title, Down before the second START = Knuckles): the same runs as him - his
+# code, art and moves were in no run, and choosing Knuckles hung the disc as Mushroom Hill 1 loaded
+kstraight() { kind=$1; i=$2; d=$work/$kind/k$i; mkdir -p $d; st=$((go + offs[i + 1]))
+  pr=(--press $kpress $title --press $st:RIGHT:18000)
+  for t in $(seq $((st + 100 + i * 23)) $((60 + i * 15)) 20000); do pr+=(--press $t:C:$((10 + i * 4))); done
+  pk=""; for f in $(seq $go 600 20000); do (( nopoke )) || pk="$pk,FE12=09@$f"; done
+  env PS_ROMUSE_${(U)kind}ONLY=1 PS_ROMUSE=$d PS_ROMUSE_KEY=FFF600 PS_PTRS=$d/ptrs.txt PS_POKE=${pk#,} \
+    $tr --headless --frames 20000 $pr --trace-out /dev/null $evrom >/dev/null 2>&1; }
+[[ -n ${kpress:-} ]] && { for i in 0 1 2 3; do kstraight cpu $i & kstraight dma $i & kstraight z80 $i & done; wait; }
 die() { kind=$1; d=$work/$kind/die; mkdir -p $d                      # deaths and restarts: the timer
   pk="FE12=09@$go"; for f in $(seq $((go + 2000)) 4000 20000); do      # set to 9:59 (time over),
     pk="$pk,FE23=09@$f,FE24=3B@$f,FE12=09@$((f + 10))"; done           # lives kept up
   env PS_ROMUSE_${(U)kind}ONLY=1 PS_ROMUSE=$d PS_ROMUSE_KEY=FFF600 PS_PTRS=$d/ptrs.txt PS_POKE=$pk \
     $tr --headless --frames 20000 $title --press $go:RIGHT:18000 --trace-out /dev/null $evrom >/dev/null 2>&1; }
 (( nopoke )) || { die cpu & die dma & die z80 & wait }
+# the title left alone: the whole intro, the title and its first attract demo (every other run presses START, so the
+# intro's compressed art was read only in part - SHK's Kosinski stream at \$D0E14 runs to \$D149F, the image had it
+# to \$D1100 and the rest was other data: the intro decompressed garbage over RAM and the disc froze after SEGA)
+idle() { kind=$1; d=$work/$kind/idle; mkdir -p $d
+  env PS_ROMUSE_${(U)kind}ONLY=1 PS_ROMUSE=$d PS_ROMUSE_KEY=FFF600 PS_PTRS=$d/ptrs.txt \
+    $tr --headless --frames 4500 ${extra[@]:-} --trace-out /dev/null $evrom >/dev/null 2>&1; }   # to the first demo's end
+idle cpu & idle dma & idle z80 & wait
+# the owner's own plays (session_split.py's pieces of his compilation-disc sessions, games/<g>/recordings/play-*):
+# what he chose and where he went on the disc - no test run covers it all
+pg=$g; [[ $game == shbs ]] && pg=$root/games/shk1
+plays=($pg/recordings/play-*.polls(N))   # not his cartridge sessions (games/shk/sessions): they go past Mushroom Hill 1
+                                         # and this evidence is by game mode - 6 KB more than the level image holds
+playrun() { kind=$1; p=$2; n=$(wc -l < $p); (( n > 0 )) || return 0; d=$work/$kind/play-${p:t:r}; mkdir -p $d
+  env PS_ROMUSE_${(U)kind}ONLY=1 PS_ROMUSE=$d PS_ROMUSE_KEY=FFF600 PS_PTRS=$d/ptrs.txt PS_POLL_REPLAY=$p \
+    $tr --headless --frames $((n * 2 + 600)) --trace-out /dev/null $evrom >/dev/null 2>&1; }
+print "  the owner's plays: ${#plays}"
+for p in $plays; do playrun cpu $p & playrun dma $p & playrun z80 $p & wait; done
 # the level-load table (24-byte entries of tagged pointers, indexed by zone/act and special cases
 # such as an intro or a restart): every entry's pointers, read or not
 python3 -c "
 r=open('$rom','rb').read(); t=0x$llb
 print('\n'.join('%06X' % a for a in range(t, t + 24 * 64, 4) if 0x200 <= int.from_bytes(r[a+1:a+4],'big') < len(r)))" > $work/llb_ptrs.txt
-cat $work/cpu/*/ptrs.txt $work/llb_ptrs.txt | sort -u > $work/ptrs.txt
+# a per-game table of pointers read once and then used as a base (ptrtab=ADDR:COUNT longs): SHK's collision
+# indexes (\$98100, two per zone/act) - Mushroom Hill 1's pair was left at its cartridge address, Sonic fell
+# through the floor two seconds in
+python3 -c "
+r=open('$rom','rb').read(); a0,n=(int(x,16) for x in '${ptrtab:-0:0}'.split(':'))
+print('\n'.join('%06X' % a for a in range(a0, a0 + 4 * n, 4) if n and 0x200 <= int.from_bytes(r[a:a+4],'big') < len(r)))" >> $work/llb_ptrs.txt
+cat $work/cpu/*/ptrs.txt $work/llb_ptrs.txt | sort -u > $work/ptrs.all
+# two "pointers" 2 bytes apart cannot both be: a word before a pointer (a count, an index) and the pointer's high word
+# were read as one long (SHK's art list \$924DC: count 3 and \$0019.. read as \$00030019 and relocated - the count
+# became \$22, the load queue overflowed into the decompressor's state, Knuckles' level load crashed). The earlier
+# one goes when its high word is small (a count), else the later one
+python3 -c "
+r = open('$rom', 'rb').read(); a = sorted(int(l, 16) for l in open('$work/ptrs.all') if l.strip()); s = set(a)
+L = lambda x: int.from_bytes(r[x:x + 4], 'big')
+drop = set()
+for x in a:
+    if x + 2 in s and x not in drop: drop.add(x if L(x) >> 16 < 0x100 else x + 2)
+open('$work/ptrs.txt', 'w').writelines('%06X\n' % x for x in a if x not in drop)
+print('  %d overlapping pointer guesses dropped' % len(drop))"
 ex=(); for f in $work/cpu/*/*.bin $work/dma/*/*.bin; do ex+=(--exec $f); done
 print "2/5 code ties, named tables"
 ( cd $g && $py $here/relocate.py $rom recomp.json $work/probe $ex --all-code \
@@ -128,8 +175,14 @@ open('$work/z80patch.bin','wb').write(out)"
 fi
 fixed=(); for r in $(cat $work/z80fixed.txt); do fixed+=(--fixed $r); done
 print "4/5 helpers"
-m68k-elf-as -m68000 --defsym QBASE=0xFB00 --defsym QEND=0xFBFC -o $work/dq.o $here/games/dmaqueue.s
-m68k-elf-ld -Ttext=0x200400 -o $work/dq.elf $work/dq.o; m68k-elf-objcopy -O binary $work/dq.elf $work/dq.bin
+# the DMA queue: games/dmaqueue_map.s, as SH2 and 3 (dmaqueue.s sent a word-RAM source as it was - it reaches the
+# VDP one word late: Knuckles' Mushroom Hill drew its background tiles shifted, noise), at \$200600 (up to \$200 bytes),
+# the images from \$200800. Its art ranges: artfix's ranges fixed in banks 2 (\$0A0000) and 3 (\$0E0000)
+a2=(1 1); a3=(1 1); for x in $artfix; do [[ $x == *=0A0000 ]] && a2=(${(s:-:)${x%%=*}}); [[ $x == *=0E0000 ]] && a3=(${(s:-:)${x%%=*}}); done
+m68k-elf-as -m68000 --defsym QBASE=0xFB00 --defsym QEND=0xFBFC --defsym ART2LO=0x$a2[1] --defsym ART2HI=0x$a2[2] \
+  --defsym ART3LO=0x$a3[1] --defsym ART3HI=0x$a3[2] -o $work/dq.o $here/games/dmaqueue_map.s
+m68k-elf-ld -Ttext=0x200600 -o $work/dq.elf $work/dq.o; m68k-elf-objcopy -O binary $work/dq.elf $work/dq.bin
+(( $(wc -c < $work/dq.bin) <= 0x200 )) || { print -u2 "dmaqueue_map.s: over 512 bytes (images start at \$200800)"; exit 1; }
 m68k-elf-as -m68000 --defsym LOADSCREEN=1 -o $work/sw.o $here/swap.s; m68k-elf-ld -Ttext=0xFFFD20 --oformat=binary -o $work/swap.bin $work/sw.o
 # image NAME MODES TARGET_GROUP SWITCH_MODES
 image() { name=$1; modes=$2; tg=$3; sw=$4
@@ -137,10 +190,13 @@ image() { name=$1; modes=$2; tg=$3; sw=$4
   exm=(); for f in $work/cpu/*/*.bin; do (( ${mm[(Ie)${${f:t}[1,2]}]} )) && exm+=(--exec $f); done
   ( cd $g && $py $here/relocate.py $rom recomp.json $work/probe_$name $exm \
       --map 000000-400000=400000 --funcs-out $work/funcs_$name.txt >/dev/null 2>&1 )
-  python3 $here/zonepack.py $romsize --rom $rom \
-    --use "$work/cpu/*:$modes" --use "$work/dma/*:$modes" $artfix $rigid \
-    --near $work/targets.txt:$nearsz --gap $gapsz $fixed --refs $work/refs.txt --force $llb-$(printf '%X' $((0x$llb + 24 * 64))) \
-    --force-file $work/funcs_$name.txt --place 200600-23F000,020000-040000 > $work/map_$name.txt
+  dsel=(--use); dpl=(); [[ -n ${dmabank:-} ]] && { dsel=(--dma-use); dpl=(--dma-place $dmabank); }
+  zp_() { python3 $here/zonepack.py $romsize --rom $rom \
+    --use "$work/cpu/*:$modes" $dsel "$work/dma/*:$modes" $dpl $artfix $rigid \
+    --near $work/targets.txt:$nearsz --gap $1 $fixed --refs $work/refs.txt --force $llb-$(printf '%X' $((0x$llb + 24 * 64))) \
+    --force-file $work/funcs_$name.txt --place 200800-23F000,020000-040000 > $work/map_$name.txt; }
+  # an image that does not fit is packed again with data split where nothing is read (smaller merge gaps)
+  zp_ $gapsz 2>/dev/null || zp_ 0x200 2>/dev/null || zp_ 0x80
   python3 - $rom $work/map_$name.txt $work/desc_$name.bin $mainloop $vbl $hbl <<'PY'
 import sys
 rom = open(sys.argv[1], 'rb').read()
@@ -177,9 +233,24 @@ v=0x$loader; print('%X'%next(new+v-lo for lo,hi,new in m if lo<=v<hi))")
     python3 -c "r=open('$lockhdr','rb').read(); open('$work/lockhdr.bin','wb').write(r[0x100:0x200])"   # ($200100 name,
     pt+=(--blob 200100=$work/lockhdr.bin)         # $200180 serial: SH1 = SHBS's full game)
   fi
+  # the object table (objtab=ADDR:COUNT:DELETE): every entry relocated, and an object whose code this image does not
+  # hold (no run met it) pointed at DeleteObject - it removes itself as it spawns (SH3's object \$2D in Angel
+  # Island 1 had kept its cartridge address and the disc jumped into its sprite renderer)
+  ot=(); if [[ -n ${objtab:-} ]]; then
+    ota=${objtab%%:*}; otn=${${objtab#*:}%%:*}; otd=${objtab##*:}
+    ot=(--data $ota-$(printf %X $((0x$ota + 4 * otn))))
+    for e in $(python3 -c "
+r = open('$rom', 'rb').read()
+m = [(int(a.split('-')[0], 16), int(a.split('-')[1].split('=')[0], 16), int(a.split('=')[1], 16)) for a in open('$work/map_$name.txt').read().strip().split(',')]
+d = next(new + 0x$otd - lo for lo, hi, new in m if lo <= 0x$otd < hi)
+for t in range(0x$ota, 0x$ota + 4 * $otn, 4):
+    v = int.from_bytes(r[t:t + 4], 'big')
+    if 0x200 <= v < len(r) and not any(lo <= v < hi for lo, hi, _ in m): print('%X=%08X' % (t, d))"); do ot+=(--patch $e); done
+    print -u2 "  $name: $(( (${#ot} - 2) / 2 )) object entries without their code -> DeleteObject"
+  fi
   ( cd $g && $py $here/relocate.py $rom recomp.json $out.$name --strict-imm --scan-tables --ptrs $work/ptrs.txt $ex --all-code --map $(cat $work/map_$name.txt) \
-      $pt --patch $dmaq=4EF900200400 $zp $tp $zb \
-      --blob 200400=$work/dq.bin --blob 200500=$work/desc_$name.bin --blob 200510=$work/thunk_$name.bin | head -1 ) }
+      $pt --patch $dmaq=4EF900200600 $zp $tp $zb $ot \
+      --blob 200600=$work/dq.bin --blob 200500=$work/desc_$name.bin --blob 200510=$work/thunk_$name.bin | head -1 ) }
 print "5/5 images"
 if [[ -n $zone ]]; then
   image front $front $zgroup $frontsw

@@ -41,7 +41,8 @@ def main():
     sec = boot[0x200:0x200 + SEC_LEN[region]]
     # --game N:PREFIX (repeatable; a bare PREFIX is game 1): relocate.py's PREFIX.trapcart.md -
     # word RAM ($200000-$23FFFF) and program RAM bank 1 (main $020000-$03FFFF). --menu ART:
-    # menu_art.py's output, shown by menu.s; without it a single game starts directly.
+    # menu_art.py's output, shown by menu.s; without it a single game starts directly. --splash SPLASH: splash.py's
+    # output, the PixelSorcery splash menu.s shows before the menu (3 s).
     games = {}
     for i, a_ in enumerate(sys.argv):
         if a_ == '--game':
@@ -51,7 +52,8 @@ def main():
     menu_art = sys.argv[sys.argv.index('--menu') + 1] if '--menu' in sys.argv else None
     with tempfile.TemporaryDirectory() as tmp:
         open(os.path.join(tmp, 'swap.bin'), 'wb').write(assemble('swap.s', tmp, 0xFFFD18))   # ip.s includes it
-        ip, sp = bytearray(assemble('ip.s', tmp, defs=[f'SECEND={0x200 + SEC_LEN[region]:#x}'])), bytearray(assemble('sp.s', tmp))
+        sp = bytearray(assemble('sp.s', tmp))
+        ipdefs = [f'SECEND={0x200 + SEC_LEN[region]:#x}']
         hello = assemble('hello.s', tmp, 0x200000)
         menu = None
         if menu_art:
@@ -61,14 +63,52 @@ def main():
             best = min((i for i in range(64) if i % 16), key=lambda i: sum((x - y) ** 2 for x, y in zip(rgb(cram[i]), (7, 7, 0))))
             import shutil
             shutil.copy(menu_art, os.path.join(tmp, 'menu_art.bin'))
+            splash = sys.argv[sys.argv.index('--splash') + 1] if '--splash' in sys.argv else None   # splash.py's output
+            if splash: shutil.copy(splash, os.path.join(tmp, 'splash.bin'))
+            # the LOADING banner menu.s shows once a game is picked: 96 x 24 px, three 4 x 3-tile sprites, the art's
+            # yellow on its darkest colour of the same palette (Menlo Bold 12; a plain bar without it)
+            yp = best // 16
+            dark = min(range(1, 16), key=lambda i: sum(rgb(cram[yp * 16 + i])))
+            px = [[dark] * 96 for _ in range(24)]
+            try:
+                from PIL import Image, ImageDraw, ImageFont
+                f = ImageFont.truetype('/System/Library/Fonts/Menlo.ttc', 12, index=1)
+                im = Image.new('L', (96, 24), 0); d = ImageDraw.Draw(im)
+                d.text(((96 - d.textlength('LOADING...', font=f)) // 2, 5), 'LOADING...', fill=255, font=f)
+                for y in range(24):
+                    for x in range(96):
+                        if im.getpixel((x, y)) > 110: px[y][x] = best % 16
+            except (ImportError, OSError):
+                for x in range(8, 88): px[11][x] = px[12][x] = best % 16
+            lb = bytearray()
+            for k in range(3):                     # sprite k: columns 4k..4k+3, each column top to bottom
+                for cx in range(4 * k, 4 * k + 4):
+                    for cy in range(3):
+                        for y in range(8):
+                            for x in range(0, 8, 2):
+                                lb.append(px[cy * 8 + y][cx * 8 + x] << 4 | px[cy * 8 + y][cx * 8 + x + 1])
+            open(os.path.join(tmp, 'loading.bin'), 'wb').write(lb)
+            # Sonic rolling bottom-right while the game loads (the IP's wait turns him): the splash's 16 roll frames,
+            # his colours mapped to the nearest of the menu palette's (its own colours stay as they are)
+            sb = open(splash, 'rb').read() if splash else b''
+            spin = bytearray(16 * 512)
+            if sb:
+                sh = [int.from_bytes(sb[96 + 2 * i:98 + 2 * i], 'big') for i in range(16)]
+                near = [0] + [min(range(1, 16), key=lambda j: sum((x - y) ** 2 for x, y in zip(rgb(cram[yp * 16 + j]), rgb(sh[i]))))
+                              for i in range(1, 16)]
+                o = 128 + 20 * (512 + 8192)            # splash.py: CRAM, NF = 20 frames, then the roll frames
+                spin = bytearray(near[b >> 4] << 4 | near[b & 15] for b in sb[o:o + 16 * 512])
+                ipdefs += ['SPINLOAD=1', f'YPAL={yp}']
+            open(os.path.join(tmp, 'spinld.bin'), 'wb').write(spin)
             o, bn = os.path.join(tmp, 'menu.o'), os.path.join(tmp, 'menu.bin')
-            subprocess.run(['m68k-elf-as', '-m68000', '-I', tmp, f'--defsym=YPAL={best // 16}', f'--defsym=YIDX={best % 16}',
-                            '-o', o, os.path.join(here, 'menu.s')], check=True)
+            subprocess.run(['m68k-elf-as', '-m68000', '-I', tmp, f'--defsym=YPAL={best // 16}', f'--defsym=YIDX={best % 16}']
+                           + (['--defsym=SPLASH=1'] if splash else []) + ['-o', o, os.path.join(here, 'menu.s')], check=True)
             subprocess.run(['m68k-elf-ld', '-Ttext=0x200000', '--oformat=binary', '-o', bn, o], check=True)
             menu = bytearray(open(bn, 'rb').read())
             av = menu.find(b'AVAIL!!!') + 8
             for n_ in games:
                 menu[av + n_ - 1] = 1
+        ip = bytearray(assemble('ip.s', tmp, defs=ipdefs))
     groups = [[] for _ in range(48)]              # group: [(bytes, sub-CPU destination)]; sp.s holds 48
     entries = {}
     def image(cart):                              # word RAM, program-RAM bank 1, and banks 2/3:

@@ -10,7 +10,7 @@
 	.equ	CDCREAD, 0x008B
 	.equ	CDCTRN, 0x008C
 	.equ	CDCACK, 0x008D
-	.equ	ROMPAUSEON, 0x0003
+	.equ	ROMPAUSEON, 0x0008
 	.equ	GROUPSZ, 6 * 12 + 4
 _start:
 	.ascii	"MAIN       "              | module name (11 bytes)
@@ -85,6 +85,10 @@ main:	move.b	0xFF800E, %d7                   | the BIOS leaves its own values: n
 	bra	3b
 6:	move.w	#ROMPAUSEON, %d0                | pause the drive: left playing it reads on past
 	jsr	CDBIOS                          |  the data track into the audio tracks (music)
+	move.l	#0x40000, %d0                   | ...and give the BIOS time to send it (~0.3 s): it talks to the
+5:	subq.l	#1, %d0                         |  drive on the drive's interrupt (75 a second), and once we echo,
+	bne.s	5b                              |  the main CPU halts this CPU for the whole game - the command,
+	                                        |  queued, was never sent (SHCD's tracks played over the games)
 	bset	#0, 0xFF8003                    | RET: word RAM to the main CPU
 	move.b	%d7, 0xFF800F                   | echo: loaded
 	cmp.b	chainon(%pc), %d7               | a Mega CD game's own boot (group N = chainon):

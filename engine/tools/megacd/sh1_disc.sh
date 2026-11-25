@@ -56,6 +56,11 @@ for l in sys.stdin:   # look like ROM addresses to the tracer - never pointers
     a = int(l, 16); v = int.from_bytes(rom[a:a + 4], 'big')
     if 0x5F1C <= a < 0x5F1C + 12 * 28: continue
     if a >= 0x20000 and v < 0x10000: continue   # art and collision maps (\$2222, \$EEEE ...): data, not low-ROM pointers
+    if 0x1CADA <= a < 0x1CF1A: continue         # the HUD's digits (uncompressed, among the code): 0066 1000 runs
+    if v >> 16 and not v & 0xF111F111: continue  # two colour words (\$1C54 palettes: 0006 0066 -> a colour changed)
+    if 0x21AFE <= a < 0x70000: continue         # Sonic's art (\$21AFE-\$2BC1E) up to the sound driver: art, Nemesis streams,
+                                                #  layouts - no long pointers. Pixel runs like 0003 3332 were "relocated"
+                                                #  (318 bytes of Sonic's art, Green Hill's Nemesis art): stray pixels on the disc
     sys.stdout.write(l)" > $t/ptrs.txt
 # code ties and the addresses code names (tables come whole with them, offset tables to their last entry):
 # a probe relocation over every capture, then code_refs.py

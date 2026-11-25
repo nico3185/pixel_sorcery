@@ -6,7 +6,7 @@
 #   DISC.cue     your SHCD disc - its data track is the disc's base, and its region the disc's: Japan
 #                (NTSC, 60 Hz, the Japanese BIOS) or Europe (PAL, 50 Hz: every game runs and sounds at 50 Hz)
 #                (files, security block) and its audio tracks are the disc's audio tracks
-#   MENU.png     the game-select picture, or MENU.bin already converted by menu_art.py (4x2 cards; MENU_UNFRAME=x0,y0,x1,y1 removes a
+#   MENU.png     (used with MENU_COMPOSE=0 only: by default menu_compose.py builds the screen from the games' own graphics) the game-select picture, or MENU.bin already converted by menu_art.py (4x2 cards; MENU_UNFRAME=x0,y0,x1,y1 removes a
 #                highlight baked into the picture, default 92,176,432,504); "-" draws a plain one (menu_default.py)
 #   ROM          sh1 (REV00), default ../roms/sh1.bin
 #   ROM2         sh2 (REV01), default ../roms/sh2.bin (card 2: title, level select, one image per zone - 0.7.2, in progress)
@@ -49,7 +49,7 @@ run() {  # item: level select ($FFE0 = 1, cursor $FF83), A+START at the title, S
     --trace-out /dev/null $rom >/dev/null 2>&1
 }
 for i in $(seq 0 19); do run $i & if (( (i + 1) % 4 == 0 )); then wait; fi; done; wait
-for p in $g/sessions/*.polls(N) $g/recordings/start-*.polls(N); do   # your sessions, the level-select starts
+for p in $g/sessions/*.polls(N) $g/recordings/play-*.polls(N) $g/recordings/start-*.polls(N); do   # your sessions (and session_split.py's pieces of your disc sessions), the level-select starts
   d=$work/ev/rec-$(basename $p .polls); mkdir -p $d; n=$(wc -l < $p)
   PS_ROMUSE=$d PS_ROMUSE_FROM=60 PS_PTRS=$d/ptrs.txt PS_POLL_REPLAY=$p \
     $tr --headless --frames $((n * 2 + 600)) --trace-out /dev/null $rom >/dev/null 2>&1 &
@@ -65,9 +65,14 @@ print "3/5 relocation: one image per zone (sh1_disc.sh)"
 ROM=$rom $here/sh1_disc.sh $work $work/s1 | tail -1
 
 print "4/5 menu art"
-if [[ $pic == - ]]; then $py $here/menu_default.py $work/menu.png && $py $here/menu_art.py $work/menu.png $work/menu_art.bin
+compose=0
+if [[ ${MENU_COMPOSE:-1} != 0 && -f ${rom:h}/sh1.bin && -f ${rom:h}/sh2.bin ]]; then   # only the games' own graphics
+  compose=1; print "  (made once the games are built: only their cards)"   # menu_compose.py, below
+elif [[ $pic == - ]]; then $py $here/menu_default.py $work/menu.png && $py $here/menu_art.py $work/menu.png $work/menu_art.bin
 elif [[ $pic == *.bin ]]; then cp $pic $work/menu_art.bin    # an already converted menu (menu_art.py's output)
-else $py $here/menu_art.py $pic $work/menu_art.bin --unframe ${MENU_UNFRAME:-92,176,432,504}; fi
+else                                                         # each card's picture: that game, as you play it (MENU_SHOTS=0: the picture as it is)
+  shots=$pic; [[ ${MENU_SHOTS:-1} != 0 ]] && $py $here/menu_shots.py $pic $work/menu_shots.png ${rom:h} $scd && shots=$work/menu_shots.png
+  $py $here/menu_art.py $shots $work/menu_art.bin --unframe ${MENU_UNFRAME:-92,176,432,504}; fi
 
 print "5/5 SH2 (games/sh2: ../roms/sh2.bin, REV01) and the disc"
 s2=(); if [[ -f ${ROM2:-$root/../roms/sh2.bin} ]]; then
@@ -93,7 +98,14 @@ failed=()
 [[ -f ${ROM3:-$root/../roms/sh3.bin} && ! -f $work/s3.args ]] && failed+=("SH3")
 have() { for x in "$@"; do [[ $x == *:* && $x != --* ]] && { [[ -f ${x#*:}.trapcart.md ]] || return 1; }; done; return 0; }
 for v in s2 s3 sk k3 bs; do eval "a=(\${$v[@]:-})"; (( ${#a} )) && ! have $a && { print -u2 "  card left out ($v): its images did not build"; eval "$v=()"; }; done
-python3 $here/build_disc.py $scd $out/ultimate.iso --region $region --menu $work/menu_art.bin \
+if (( compose )); then                                       # the menu: a card for each game this disc holds
+  cards=1; for v n in s2 2 s3 3 sk 4 bs 5 k3 7; do eval "a=(\${$v[@]:-})"; (( ${#a} )) && cards+=,$n; done; cards+=,8
+  $py $here/menu_compose.py ${rom:h} $scd $work/menu_art.bin --cards $cards | tail -1   # Green Hill's parallax, SH2's boxes
+fi                                                           # and font, the title screens
+# the PixelSorcery splash before the menu (3 s): the repository's icon turning in, Sonic rolling bottom-right
+# (his frames and colours from the SH1 ROM); SPLASH=0 leaves it out
+spl=(); if [[ ${SPLASH:-1} != 0 ]] && $py $here/splash.py $root/img/sorpix.png $rom $work/splash.bin >/dev/null; then spl=(--splash $work/splash.bin); fi
+$py $here/build_disc.py $scd $out/ultimate.iso --region $region --menu $work/menu_art.bin $spl \
   --game 1:$work/s1.front --image 13:$work/s1.zone1 --image 14:$work/s1.zone2 --image 15:$work/s1.zone3 \
   --image 16:$work/s1.zone4 --image 17:$work/s1.zone5 --image 18:$work/s1.zone6 $s2 $s3 $sk $bs $k3 --scd $scd | tail -2
 [[ $region == E ]] && hz=50 || hz=60
